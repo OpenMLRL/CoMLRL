@@ -5,8 +5,8 @@ from functools import partial
 from datasets import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from examples.rewards.texts_comparison import proper_length_ratio_reward
-from comlrl.rewards.processor import RewardProcessors
+from rewards.texts_comparison import proper_length_ratio_reward
+from comlrl.utils.reward_processor import RewardProcessors
 from comlrl.trainers.magrpo import MAGRPOConfig, MAGRPOTrainer
 
 
