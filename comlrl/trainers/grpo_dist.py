@@ -12,7 +12,7 @@ from datasets import Dataset, IterableDataset
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-from comlrl.trainers.magrpo_config import MAGRPOConfig  # Reuse the same config
+from comlrl.trainers.magrpo import MAGRPOConfig  # Reuse the same config
 
 RewardFunc = Union[PreTrainedModel, Callable[[List[str]], float]]
 
