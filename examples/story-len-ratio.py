@@ -1,13 +1,42 @@
 # Shuo: Tested on a 5090, at least 24GB VRAM is required
 
+import math
 from functools import partial
 
 from datasets import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from rewards.texts_comparison import proper_length_ratio_reward
 from comlrl.utils.reward_processor import RewardProcessors
 from comlrl.trainers.magrpo import MAGRPOConfig, MAGRPOTrainer
+
+
+def proper_length_ratio_reward(
+    completions1, completions2, target_min=2.0, target_max=3.0
+):
+    """Reward based on length ratio between completions (default: 2-3x)."""
+    rewards = []
+    for c1, c2 in zip(completions1, completions2):
+        len1, len2 = len(c1), len(c2)
+
+        if len1 == 0:
+            rewards.append(0.0)
+            continue
+
+        ratio = len2 / len1
+
+        if target_min <= ratio <= target_max:
+            reward = 1.0
+        else:
+            if ratio < target_min:
+                distance = target_min - ratio
+            else:
+                distance = ratio - target_max
+
+            reward = math.exp(-distance)
+
+        rewards.append(float(reward))
+
+    return rewards
 
 
 def example_usage():

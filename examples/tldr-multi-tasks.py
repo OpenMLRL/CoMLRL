@@ -1,5 +1,7 @@
 # Shuo: Tested on an A40, at least 40GB VRAM is required
 
+import math
+import re
 from functools import partial
 
 from datasets import load_dataset
@@ -8,10 +10,100 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from comlrl.trainers.magrpo import MAGRPOConfig, MAGRPOTrainer
 
-from .rewards.texts_comparison import (
-    proper_length_ratio_reward,
-    vocabulary_richness_reward,
-)
+# fmt: off
+# Stopwords set for vocabulary analysis
+STOPWORDS = {
+    "a", "an", "the", "and", "but", "or", "if", "because", "as", "what", "which",
+    "this", "that", "these", "those", "then", "just", "so", "than", "such", "when",
+    "who", "how", "where", "why", "is", "am", "are", "was", "were", "be", "been",
+    "being", "have", "has", "had", "having", "do", "does", "did", "doing", "to",
+    "for", "with", "about", "against", "between", "into", "through", "during",
+    "before", "after", "above", "below", "from", "up", "down", "in", "out", "on",
+    "off", "over", "under", "again", "further", "then", "once", "here", "there",
+    "all", "any", "both", "each", "few", "more", "most", "other", "some", "such",
+    "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "can",
+    "will", "should", "now", "of"
+}
+# fmt: on
+
+
+def proper_length_ratio_reward(
+    completions1, completions2, target_min=2.0, target_max=3.0
+):
+    """Reward based on length ratio between completions (default: 2-3x)."""
+    rewards = []
+    for c1, c2 in zip(completions1, completions2):
+        len1, len2 = len(c1), len(c2)
+
+        if len1 == 0:
+            rewards.append(0.0)
+            continue
+
+        ratio = len2 / len1
+
+        if target_min <= ratio <= target_max:
+            reward = 1.0
+        else:
+            if ratio < target_min:
+                distance = target_min - ratio
+            else:
+                distance = ratio - target_max
+
+            reward = math.exp(-distance)
+
+        rewards.append(float(reward))
+
+    return rewards
+
+
+def vocabulary_richness_reward(completions1, completions2):
+    """Reward based on vocabulary richness improvement (Type-Token Ratio)."""
+
+    def calculate_ttr(text, stopwords):
+        """Calculate Type-Token Ratio excluding stopwords."""
+        words = re.findall(r"\b\w+\b", text.lower())
+
+        if stopwords:
+            content_words = [word for word in words if word not in stopwords]
+        else:
+            content_words = words
+
+        if not content_words:
+            return 0.0
+
+        types = len(set(content_words))
+        tokens = len(content_words)
+
+        return types / tokens if tokens > 0 else 0.0
+
+    vocabulary_richness_reward.calculate_ttr = calculate_ttr
+    rewards = []
+    for c1, c2 in zip(completions1, completions2):
+        ttr1 = calculate_ttr(c1, STOPWORDS)
+        ttr2 = calculate_ttr(c2, STOPWORDS)
+
+        if ttr1 == 0:
+            if ttr2 > 0:
+                reward = 1.0
+            else:
+                reward = 0.0
+        else:
+            improvement = ttr2 / ttr1
+
+            target_min = 1.2
+            target_max = 2.0
+
+            if improvement >= target_max:
+                reward = 1.0
+            elif improvement >= target_min:
+                reward = (improvement - target_min) / (target_max - target_min)
+            else:
+                distance = target_min - improvement
+                reward = math.exp(-2 * distance)
+
+        rewards.append(float(reward))
+
+    return rewards
 
 
 def example_usage():
