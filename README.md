@@ -2,6 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/release/python-3100/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-red.svg)](https://opensource.org/licenses/MIT)
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/OpenMLRL/CoMLRL/main.svg)](https://results.pre-commit.ci/latest/github/OpenMLRL/CoMLRL/main)
 [![code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Hugging Face](https://img.shields.io/badge/huggingface-Transformers-yellow.svg)](https://huggingface.co/CoMLRL)
 
