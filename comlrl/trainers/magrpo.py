@@ -9,7 +9,6 @@ from datasets import Dataset, IterableDataset
 from torch.utils.data import DataLoader
 from transformers import PreTrainedModel, PreTrainedTokenizerBase, TrainingArguments
 
-from comlrl.trainers.external import get_expert_feedback
 
 RewardFunc = Union[PreTrainedModel, Callable[[List[str]], float]]
 
@@ -117,6 +116,7 @@ class MAGRPOTrainer:
         formatters: Optional[Union[Callable, List[Callable]]] = None,
         args: Optional[MAGRPOConfig] = None,
         train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
+        external_transition: Optional[Callable] = None,
         eval_dataset: Optional[Union[Dataset, IterableDataset]] = None,
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
         wandb_config: Optional[Dict[str, Any]] = None,
@@ -199,6 +199,12 @@ class MAGRPOTrainer:
                 "MAGRPO requires num_generations to be at least 2 for multi-agent training."
             )
 
+        # Check for external_transition requirement in multi-turn training
+        if self.args.num_turns > 1 and external_transition is None:
+            raise ValueError(
+                "Multi-turn training requires an external_transition function."
+            )
+
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
         if tokenizer is not None:
@@ -206,6 +212,7 @@ class MAGRPOTrainer:
 
         self.eval_logger = eval_logger
         self.eval_aggregator = eval_aggregator
+        self.external_transition = external_transition
 
         self.optimizers = [
             torch.optim.AdamW(
@@ -604,28 +611,13 @@ class MAGRPOTrainer:
                             and previous_best_main is not None
                         ):
                             # Get expert feedback based on previous turn's best result
-                            from comlrl.utils import (
-                                concatenate_functions,
-                                extract_imports_from_prompt,
-                            )
-
-                            imports = extract_imports_from_prompt(
-                                batch_item.get("prompt", "")
-                            )
-                            combined_code = concatenate_functions(
-                                previous_best_aux, previous_best_main, imports
-                            )
-
                             aux_expert_feedback, main_expert_feedback = (
-                                get_expert_feedback(
+                                self.external_transition(
                                     prompt=batch_item.get("prompt", ""),
-                                    test=batch_item.get("test", ""),
-                                    combined_code=combined_code,
                                     best_reward=previous_best_reward,
                                     aux_completion=previous_best_aux,
                                     main_completion=previous_best_main,
-                                    entry_point=batch_item.get("entry_point", ""),
-                                    expert_model=self.args.expert_model,
+                                    batch_item=batch_item,  # Pass full batch_item for flexibility
                                 )
                             )
 
@@ -907,28 +899,13 @@ class MAGRPOTrainer:
                             and previous_best_main is not None
                         ):
                             # Get expert feedback based on previous turn's best result
-                            from comlrl.utils import (
-                                concatenate_functions,
-                                extract_imports_from_prompt,
-                            )
-
-                            imports = extract_imports_from_prompt(
-                                batch_item.get("prompt", "")
-                            )
-                            combined_code = concatenate_functions(
-                                previous_best_aux, previous_best_main, imports
-                            )
-
                             aux_expert_feedback, main_expert_feedback = (
-                                get_expert_feedback(
+                                self.external_transition(
                                     prompt=batch_item.get("prompt", ""),
-                                    test=batch_item.get("test", ""),
-                                    combined_code=combined_code,
                                     best_reward=previous_best_reward,
                                     aux_completion=previous_best_aux,
                                     main_completion=previous_best_main,
-                                    entry_point=batch_item.get("entry_point", ""),
-                                    expert_model=self.args.expert_model,
+                                    batch_item=batch_item,  # Pass full batch_item for flexibility
                                 )
                             )
 
