@@ -15,7 +15,3 @@ extend-exclude = '''
   | dist
 )/
 '''
-
-
-[tool.ruff.lint]
-ignore = ["PLC3002", "E731"]

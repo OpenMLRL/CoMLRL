@@ -21,6 +21,10 @@ class MAGRPOConfig(TrainingArguments):
     """
 
     # Core MAGRPO parameters
+    num_agents: int = field(
+        default=2,
+        metadata={"help": "Number of agents for multi-agent training."},
+    )
     num_generations: int = field(
         default=4,
         metadata={"help": "Number of generations to sample per prompt for each agent."},
@@ -53,7 +57,7 @@ class MAGRPOConfig(TrainingArguments):
         default=1,
         metadata={
             "help": "Number of turns per episode. Default is 1 for single-turn training. "
-            "Set > 1 to enable multi-turn training with expert feedback between turns."
+            "Set > 1 to enable multi-turn training with external transitions between turns."
         },
     )
     turn_gradient_weights: Optional[List[float]] = field(
@@ -70,22 +74,15 @@ class MAGRPOConfig(TrainingArguments):
             "Only used in multi-turn training."
         },
     )
-    expert_model: Optional[str] = field(
-        default="claude-3-5-sonnet-20241022",
-        metadata={
-            "help": "Expert model to use for feedback between turns in multi-turn training. "
-            "Options: claude-3-5-sonnet-20241022, deepseek-coder, qwen3-coder, etc."
-        },
-    )
 
 
 class MAGRPOTrainer:
     """
     Multi-Agent Group Relative Policy Optimization Trainer (MAGRPO).
-    Supports both single-turn and multi-turn training with expert feedback.
+    Supports both single-turn and multi-turn training with external transitions.
 
     When num_turns=1, this trainer behaves as a standard MAGRPO trainer.
-    When num_turns>1, it adds multi-turn capabilities with expert feedback between turns.
+    When num_turns>1, it adds multi-turn capabilities with external transitions between turns.
 
     Args:
         model: The model to be trained for homogeneous agents
@@ -103,6 +100,7 @@ class MAGRPOTrainer:
         model_config: Model configuration dict
         eval_logger: Evaluation logger function
         eval_aggregator: Evaluation aggregator function
+        external_transition: Function that provides external transitions between turns
     """
 
     def __init__(
@@ -250,19 +248,45 @@ class MAGRPOTrainer:
             )
 
     def _setup_mt_formatters(self, formatters, num_agents):
-        """Set up format functions for each agent that can handle expert feedback."""
-        default_format_func = lambda x, expert_feedback=None: x.get("prompt", "")
+        """Set up format functions for each agent that can handle external transitions."""
+        default_format_func = (
+            lambda x, external_prompts=None, expert_feedback=None: x.get("prompt", "")
+        )
 
         if formatters is None:
             self.formatters = [default_format_func] * num_agents
         elif callable(formatters) and not isinstance(formatters, list):
-            # Wrap the formatter to accept expert_feedback parameter
+            # Wrap the formatter to accept external_info parameter
             original_formatter = formatters
-            wrapped_formatter = lambda x, expert_feedback=None: (
-                original_formatter(x, expert_feedback=expert_feedback)
-                if expert_feedback is not None
-                else original_formatter(x)
-            )
+            # Support both parameter names for backward compatibility
+            import inspect
+
+            sig = inspect.signature(original_formatter)
+            if "external_prompts" in sig.parameters:
+                wrapped_formatter = (
+                    lambda x, external_prompts=None, expert_feedback=None: (
+                        original_formatter(
+                            x, external_prompts=external_prompts or expert_feedback
+                        )
+                        if (external_prompts is not None or expert_feedback is not None)
+                        else original_formatter(x)
+                    )
+                )
+            elif "expert_feedback" in sig.parameters:
+                # Keep compatibility with baselines that use expert_feedback
+                wrapped_formatter = (
+                    lambda x, external_prompts=None, expert_feedback=None: (
+                        original_formatter(
+                            x, expert_feedback=external_prompts or expert_feedback
+                        )
+                        if (external_prompts is not None or expert_feedback is not None)
+                        else original_formatter(x)
+                    )
+                )
+            else:
+                wrapped_formatter = lambda x, external_prompts=None, expert_feedback=None: original_formatter(
+                    x
+                )
             self.formatters = [wrapped_formatter] * num_agents
         elif isinstance(formatters, list):
             if len(formatters) != num_agents:
@@ -270,17 +294,39 @@ class MAGRPOTrainer:
                     f"Number of formatters ({len(formatters)}) must match "
                     f"number of agents ({num_agents})"
                 )
-            # Ensure all formatters can accept expert_feedback
+            # Ensure all formatters can accept external_info
             wrapped_formatters = []
             for formatter in formatters:
                 import inspect
 
                 sig = inspect.signature(formatter)
-                if "expert_feedback" in sig.parameters:
-                    wrapped_formatters.append(formatter)
+                if "external_prompts" in sig.parameters:
+                    # Modern formatter with external_prompts
+                    def make_wrapper(f):
+                        def wrapped(x, external_prompts=None, expert_feedback=None):
+                            return f(
+                                x, external_prompts=external_prompts or expert_feedback
+                            )
+
+                        return wrapped
+
+                    wrapped_formatters.append(make_wrapper(formatter))
+                elif "expert_feedback" in sig.parameters:
+                    # Keep compatibility with baselines that use expert_feedback
+                    def make_wrapper(f):
+                        def wrapped(x, external_prompts=None, expert_feedback=None):
+                            return f(
+                                x, expert_feedback=external_prompts or expert_feedback
+                            )
+
+                        return wrapped
+
+                    wrapped_formatters.append(make_wrapper(formatter))
                 else:
-                    # Wrap to accept but ignore expert_feedback
-                    wrapped = lambda x, expert_feedback=None, f=formatter: f(x)
+                    # Wrap to accept but ignore both parameters
+                    wrapped = lambda x, external_prompts=None, expert_feedback=None, f=formatter: f(
+                        x
+                    )
                     wrapped_formatters.append(wrapped)
             self.formatters = wrapped_formatters
         else:
@@ -366,7 +412,7 @@ class MAGRPOTrainer:
                     {
                         "turn_gradient_weights": self.args.turn_gradient_weights,
                         "early_termination_weight": self.args.early_termination_weight,
-                        "expert_model": self.args.expert_model,
+                        # External model configuration is handled by the calling code
                     }
                 )
 
@@ -558,7 +604,7 @@ class MAGRPOTrainer:
         return eval_metrics
 
     def _evaluate_multi_turn(self, num_eval_samples: int = 4) -> Dict[str, float]:
-        """Multi-turn evaluation with expert feedback."""
+        """Multi-turn evaluation with external transitions."""
         if self.eval_dataset is None:
             return {}
 
@@ -572,9 +618,10 @@ class MAGRPOTrainer:
 
         eval_dataloader = self.get_eval_dataloader()
 
-        # Storage for multi-turn completions
-        all_completions1_turns = []  # [sample][turn]
-        all_completions2_turns = []  # [sample][turn]
+        # Storage for multi-turn completions for all agents
+        all_agent_completions_turns = [
+            [] for _ in range(self.num_agents)
+        ]  # [agent][sample][turn]
         all_test_cases = []
         all_entry_points = []
         all_prompts = []
@@ -586,92 +633,140 @@ class MAGRPOTrainer:
                     break
 
                 for batch_item in batch:
-                    sample_completions1 = []
-                    sample_completions2 = []
+                    # Storage for each agent's completions across turns
+                    agent_sample_completions = [[] for _ in range(self.num_agents)]
 
                     # Store sample information
                     all_test_cases.append(batch_item.get("test", ""))
                     all_entry_points.append(batch_item.get("entry_point", ""))
                     all_prompts.append(batch_item.get("prompt", ""))
 
-                    # Store best completions from previous turn for expert feedback
-                    previous_best_aux = None
-                    previous_best_main = None
+                    # Store best completions from previous turn for external transitions
+                    previous_best_completions = [None] * self.num_agents
                     previous_best_reward = 0.0
 
                     # Run multi-turn episode
                     for turn_idx in range(self.args.num_turns):
-                        # Prepare expert feedback for turns after the first
-                        aux_expert_feedback = None
-                        main_expert_feedback = None
+                        # Prepare external prompts for turns after the first
+                        agent_external_prompts = [None] * self.num_agents
 
-                        if (
-                            turn_idx > 0
-                            and previous_best_aux is not None
-                            and previous_best_main is not None
+                        if turn_idx > 0 and all(
+                            c is not None for c in previous_best_completions
                         ):
-                            # Get expert feedback based on previous turn's best result
-                            aux_expert_feedback, main_expert_feedback = (
-                                self.external_transition(
-                                    prompt=batch_item.get("prompt", ""),
-                                    best_reward=previous_best_reward,
-                                    aux_completion=previous_best_aux,
-                                    main_completion=previous_best_main,
-                                    batch_item=batch_item,  # Pass full batch_item for flexibility
-                                )
+                            # Get external transitions based on previous turn's best result
+                            transition_result = self.external_transition(
+                                prompt=batch_item.get("prompt", ""),
+                                best_reward=previous_best_reward,
+                                agent_completions=previous_best_completions,
+                                batch_item=batch_item,
+                                turn_idx=turn_idx,
+                                num_agents=self.num_agents,
                             )
+
+                            # External transition should return prompts for each agent
+                            if isinstance(transition_result, (list, tuple)):
+                                if len(transition_result) != self.num_agents:
+                                    raise ValueError(
+                                        f"External transition returned {len(transition_result)} values but expected {self.num_agents}"
+                                    )
+                                agent_external_prompts = list(transition_result)
+                            else:
+                                raise ValueError(
+                                    "External transition must return a list or tuple of external prompts for each agent"
+                                )
 
                         # Generate one completion from each agent for evaluation
                         all_completions = []
-                        expert_feedbacks = [aux_expert_feedback, main_expert_feedback]
 
                         for agent_idx in range(self.num_agents):
                             agent_completions = (
-                                self._generate_completions_with_feedback(
+                                self._generate_completions_with_external_prompts(
                                     self.agents[agent_idx],
                                     [batch_item],
                                     agent_idx=agent_idx,
                                     num_return_sequences=1,  # Only one for evaluation
                                     max_new_tokens=self.args.max_new_tokens,
-                                    expert_feedback=expert_feedbacks[agent_idx],
+                                    external_prompts=agent_external_prompts[agent_idx],
                                 )
                             )
                             all_completions.append(agent_completions)
 
-                        # Extract completions
-                        completion1 = all_completions[0]["completions"][0][0]
-                        completion2 = all_completions[1]["completions"][0][0]
-
-                        sample_completions1.append(completion1)
-                        sample_completions2.append(completion2)
+                        # Extract completions for all agents
+                        for agent_idx in range(self.num_agents):
+                            completion = all_completions[agent_idx]["completions"][0][0]
+                            agent_sample_completions[agent_idx].append(completion)
 
                         # Check for early termination
+                        agent_completions_for_reward = [
+                            [agent_sample_completions[i][-1]]
+                            for i in range(self.num_agents)
+                        ]
                         rewards, _ = self._compute_rewards(
                             [all_completions[0]["prompts"][0]],
-                            [[completion1], [completion2]],
+                            agent_completions_for_reward,
                             batch_items=[batch_item],
                         )
 
                         if rewards:
                             previous_best_reward = rewards[0]
-                            previous_best_aux = completion1
-                            previous_best_main = completion2
+                            for agent_idx in range(self.num_agents):
+                                previous_best_completions[agent_idx] = (
+                                    agent_sample_completions[agent_idx][-1]
+                                )
 
                         if rewards[0] == 4.0:
                             # Early termination
                             break
 
-                    all_completions1_turns.append(sample_completions1)
-                    all_completions2_turns.append(sample_completions2)
+                    # Store completions for all agents
+                    for agent_idx in range(self.num_agents):
+                        all_agent_completions_turns[agent_idx].append(
+                            agent_sample_completions[agent_idx]
+                        )
 
         # Get detailed multi-turn metrics
-        detailed_metrics = self.eval_logger(
-            all_completions1_turns,
-            all_completions2_turns,
-            all_test_cases,
-            all_entry_points,
-            all_prompts,
-        )
+        # Dynamically call eval_logger based on its signature
+        import inspect
+
+        sig = inspect.signature(self.eval_logger)
+        params = sig.parameters
+
+        # Check if the logger accepts a generic list of agent completions
+        if "agent_completions_turns" in params:
+            # Modern N-agent logger interface
+            detailed_metrics = self.eval_logger(
+                agent_completions_turns=all_agent_completions_turns,
+                test_cases=all_test_cases,
+                entry_points=all_entry_points,
+                prompts=all_prompts,
+            )
+        else:
+            # Legacy interface expecting individual agent arguments
+            # Count how many positional parameters before test_cases
+            param_list = list(params.keys())
+            num_agent_params = 0
+            for param_name in param_list:
+                if param_name in ["test_cases", "all_test_cases"]:
+                    break
+                if params[param_name].kind in [
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                ]:
+                    num_agent_params += 1
+
+            # Prepare arguments based on the expected number of agent parameters
+            args = []
+            for i in range(min(num_agent_params, len(all_agent_completions_turns))):
+                args.append(all_agent_completions_turns[i])
+
+            # Pad with empty lists if needed
+            while len(args) < num_agent_params:
+                args.append([])
+
+            # Add the common parameters
+            args.extend([all_test_cases, all_entry_points, all_prompts])
+
+            detailed_metrics = self.eval_logger(*args)
 
         # Aggregate metrics
         aggregated_metrics = self.eval_aggregator(
@@ -878,9 +973,8 @@ class MAGRPOTrainer:
                     turn_data = []
                     early_termination = False
 
-                    # Store best completions from previous turn for expert feedback
-                    previous_best_aux = None
-                    previous_best_main = None
+                    # Store best completions from previous turn for external transitions
+                    previous_best_completions = [None] * self.num_agents
                     previous_best_reward = 0.0
 
                     # Execute multi-turn episode
@@ -889,39 +983,46 @@ class MAGRPOTrainer:
                         for optimizer in self.optimizers:
                             optimizer.zero_grad()
 
-                        # Prepare expert feedback for turns after the first
-                        aux_expert_feedback = None
-                        main_expert_feedback = None
+                        # Prepare external prompts for turns after the first
+                        agent_external_prompts = [None] * self.num_agents
 
-                        if (
-                            turn_idx > 0
-                            and previous_best_aux is not None
-                            and previous_best_main is not None
+                        if turn_idx > 0 and all(
+                            c is not None for c in previous_best_completions
                         ):
-                            # Get expert feedback based on previous turn's best result
-                            aux_expert_feedback, main_expert_feedback = (
-                                self.external_transition(
-                                    prompt=batch_item.get("prompt", ""),
-                                    best_reward=previous_best_reward,
-                                    aux_completion=previous_best_aux,
-                                    main_completion=previous_best_main,
-                                    batch_item=batch_item,  # Pass full batch_item for flexibility
-                                )
+                            # Get external transitions based on previous turn's best result
+                            transition_result = self.external_transition(
+                                prompt=batch_item.get("prompt", ""),
+                                best_reward=previous_best_reward,
+                                agent_completions=previous_best_completions,
+                                batch_item=batch_item,
+                                turn_idx=turn_idx,
+                                num_agents=self.num_agents,
                             )
+
+                            # External transition should return prompts for each agent
+                            if isinstance(transition_result, (list, tuple)):
+                                if len(transition_result) != self.num_agents:
+                                    raise ValueError(
+                                        f"External transition returned {len(transition_result)} values but expected {self.num_agents}"
+                                    )
+                                agent_external_prompts = list(transition_result)
+                            else:
+                                raise ValueError(
+                                    "External transition must return a list or tuple of external prompts for each agent"
+                                )
 
                         # Generate completions from each agent
                         all_completions = []
-                        expert_feedbacks = [aux_expert_feedback, main_expert_feedback]
 
                         for agent_idx in range(self.num_agents):
                             agent_completions = (
-                                self._generate_completions_with_feedback(
+                                self._generate_completions_with_external_prompts(
                                     self.agents[agent_idx],
                                     [batch_item],
                                     agent_idx=agent_idx,
                                     num_return_sequences=self.args.num_generations,
                                     max_new_tokens=self.args.max_new_tokens,
-                                    expert_feedback=expert_feedbacks[agent_idx],
+                                    external_prompts=agent_external_prompts[agent_idx],
                                     **kwargs,
                                 )
                             )
@@ -944,11 +1045,13 @@ class MAGRPOTrainer:
                             batch_items=[batch_item],
                         )
 
-                        # Find the best completion pair (highest reward)
+                        # Find the best completion set (highest reward)
                         if rewards:
                             best_idx = rewards.index(max(rewards))
-                            previous_best_aux = agent_completions_list[0][best_idx]
-                            previous_best_main = agent_completions_list[1][best_idx]
+                            for agent_idx in range(self.num_agents):
+                                previous_best_completions[agent_idx] = (
+                                    agent_completions_list[agent_idx][best_idx]
+                                )
                             previous_best_reward = rewards[best_idx]
 
                         # Calculate turn mean reward
@@ -1313,24 +1416,25 @@ class MAGRPOTrainer:
             "logits": logits,
         }
 
-    def _generate_completions_with_feedback(
+    def _generate_completions_with_external_prompts(
         self,
         agent,
         batch_items,
         agent_idx=0,
         num_return_sequences=1,
         max_new_tokens=128,
-        expert_feedback=None,
+        external_prompts=None,
         **kwargs,
     ):
         """
-        Generate completions with optional expert feedback.
-        This wraps the _generate_completions method to handle expert feedback.
+        Generate completions with optional external prompts.
+        This wraps the _generate_completions method to handle external transitions.
 
-        When num_turns=1 or expert_feedback is None, behaves like _generate_completions.
+        When num_turns=1 or external_prompts is None, behaves like _generate_completions.
         """
-        # If single-turn or no expert feedback, use standard method directly
-        if self.args.num_turns == 1 or expert_feedback is None:
+
+        # If single-turn or no external prompts, use standard method directly
+        if self.args.num_turns == 1 or external_prompts is None:
             return self._generate_completions(
                 agent,
                 batch_items,
@@ -1340,13 +1444,18 @@ class MAGRPOTrainer:
                 **kwargs,
             )
 
-        # Multi-turn with expert feedback
+        # Multi-turn with external prompts
 
         format_func = self.formatters[agent_idx]
 
-        # Apply formatter with expert feedback if provided
+        # Apply formatter with external prompts if provided
         prompts = [
-            format_func(item, expert_feedback=expert_feedback) for item in batch_items
+            format_func(
+                item,
+                external_prompts=external_prompts,
+                expert_feedback=external_prompts,
+            )
+            for item in batch_items
         ]
 
         # Temporarily replace prompts in batch_items
