@@ -460,10 +460,7 @@ class MAGRPOTrainer:
 
     def evaluate(self, num_eval_samples: int = 4) -> Dict[str, float]:
         """
-        Evaluation that supports both single-turn and multi-turn.
-
-        When num_turns=1, performs standard single-turn evaluation.
-        When num_turns>1, performs multi-turn evaluation with expert feedback.
+        Unified evaluation that supports both single-turn and multi-turn.
 
         Args:
             num_eval_samples: Number of samples to evaluate
@@ -471,15 +468,6 @@ class MAGRPOTrainer:
         Returns:
             Dictionary containing evaluation metrics
         """
-        # For single-turn evaluation
-        if self.args.num_turns == 1:
-            return self._evaluate_single_turn(num_eval_samples)
-
-        # Multi-turn evaluation
-        return self._evaluate_multi_turn(num_eval_samples)
-
-    def _evaluate_single_turn(self, num_eval_samples: int = 4) -> Dict[str, float]:
-        """Single-turn evaluation (original MAGRPO evaluate method)."""
         if self.eval_dataset is None:
             return {}
 
@@ -487,15 +475,20 @@ class MAGRPOTrainer:
         eval_reward_components = [[] for _ in range(len(self.reward_funcs))]
         eval_agent_rewards = [[] for _ in range(self.num_agents)]
 
-        # Get evaluation dataloader
-        eval_dataloader = self.get_eval_dataloader()
+        # Multi-turn specific storage
+        all_agent_completions_turns = (
+            [[] for _ in range(self.num_agents)] if self.args.num_turns > 1 else None
+        )
 
-        # Store completions for detailed logging
+        # Storage for single-turn detailed logging
         all_completions_agent1 = []
         all_completions_agent2 = []
         all_test_cases = []
         all_entry_points = []
         all_prompts = []
+
+        # Get evaluation dataloader
+        eval_dataloader = self.get_eval_dataloader()
 
         # Evaluate on specified number of samples
         with torch.no_grad():
@@ -505,55 +498,123 @@ class MAGRPOTrainer:
 
                 # Process each batch item
                 for batch_item in batch:
-                    # Generate one completion from each agent (no multiple generations for eval)
-                    all_completions = []
-                    for agent_idx in range(self.num_agents):
-                        agent_completions = self._generate_completions(
-                            self.agents[agent_idx],
-                            [batch_item],  # Single item batch
-                            agent_idx=agent_idx,
-                            num_return_sequences=1,  # Only one completion for evaluation
-                            max_new_tokens=self.args.max_new_tokens,
+                    if self.args.num_turns == 1:
+                        # Single-turn evaluation
+                        self._evaluate_single_turn_sample(
+                            batch_item,
+                            eval_rewards,
+                            eval_reward_components,
+                            eval_agent_rewards,
+                            all_completions_agent1,
+                            all_completions_agent2,
+                            all_test_cases,
+                            all_entry_points,
+                            all_prompts,
                         )
-                        all_completions.append(agent_completions)
+                    else:
+                        # Multi-turn evaluation
+                        self._evaluate_multi_turn_sample(
+                            batch_item,
+                            all_agent_completions_turns,
+                            all_test_cases,
+                            all_entry_points,
+                            all_prompts,
+                        )
 
-                    # Extract completions for reward calculation
-                    agent_completions_list = []
-                    for agent_idx in range(self.num_agents):
-                        # Get the single completion from each agent
-                        completion = all_completions[agent_idx]["completions"][0][0]
-                        agent_completions_list.append(completion)
+        # Calculate and log metrics
+        if self.args.num_turns == 1:
+            return self._log_single_turn_eval_metrics(
+                eval_rewards,
+                eval_reward_components,
+                eval_agent_rewards,
+                all_completions_agent1,
+                all_completions_agent2,
+                all_test_cases,
+                all_entry_points,
+                all_prompts,
+            )
+        else:
+            return self._log_multi_turn_eval_metrics(
+                all_agent_completions_turns,
+                all_test_cases,
+                all_entry_points,
+                all_prompts,
+            )
 
-                    # Store completions for detailed logging (assuming 2 agents)
-                    if len(agent_completions_list) >= 2:
-                        all_completions_agent1.append(agent_completions_list[0])
-                        all_completions_agent2.append(agent_completions_list[1])
+    def _evaluate_single_turn_sample(
+        self,
+        batch_item,
+        eval_rewards,
+        eval_reward_components,
+        eval_agent_rewards,
+        all_completions_agent1,
+        all_completions_agent2,
+        all_test_cases,
+        all_entry_points,
+        all_prompts,
+    ):
+        """Evaluate a single sample in single-turn mode."""
+        # Generate one completion from each agent (no multiple generations for eval)
+        all_completions = []
+        for agent_idx in range(self.num_agents):
+            agent_completions = self._generate_completions(
+                self.agents[agent_idx],
+                [batch_item],  # Single item batch
+                agent_idx=agent_idx,
+                num_return_sequences=1,  # Only one completion for evaluation
+                max_new_tokens=self.args.max_new_tokens,
+            )
+            all_completions.append(agent_completions)
 
-                        # Store test cases, entry points, and prompts for detailed logging
-                        all_test_cases.append(batch_item.get("test", ""))
-                        all_entry_points.append(batch_item.get("entry_point", ""))
-                        all_prompts.append(batch_item.get("prompt", ""))
+        # Extract completions for reward calculation
+        agent_completions_list = []
+        for agent_idx in range(self.num_agents):
+            # Get the single completion from each agent
+            completion = all_completions[agent_idx]["completions"][0][0]
+            agent_completions_list.append(completion)
 
-                    # Get the formatted prompt for logging
-                    formatted_prompt = all_completions[0]["prompts"][0]
+        # Store completions for detailed logging (assuming 2 agents)
+        if len(agent_completions_list) >= 2:
+            all_completions_agent1.append(agent_completions_list[0])
+            all_completions_agent2.append(agent_completions_list[1])
 
-                    # Compute rewards using existing reward functions
-                    rewards, reward_components = self._compute_rewards(
-                        [formatted_prompt],
-                        [[comp] for comp in agent_completions_list],  # Wrap in lists
-                        batch_items=[batch_item],
-                    )
+            # Store test cases, entry points, and prompts for detailed logging
+            all_test_cases.append(batch_item.get("test", ""))
+            all_entry_points.append(batch_item.get("entry_point", ""))
+            all_prompts.append(batch_item.get("prompt", ""))
 
-                    eval_rewards.extend(rewards)
+        # Get the formatted prompt for logging
+        formatted_prompt = all_completions[0]["prompts"][0]
 
-                    # Track reward components
-                    for i, component in enumerate(reward_components):
-                        eval_reward_components[i].extend(component)
+        # Compute rewards using existing reward functions
+        rewards, reward_components = self._compute_rewards(
+            [formatted_prompt],
+            [[comp] for comp in agent_completions_list],  # Wrap in lists
+            batch_items=[batch_item],
+        )
 
-                    # Track rewards per agent
-                    for agent_idx in range(self.num_agents):
-                        eval_agent_rewards[agent_idx].append(rewards[0])
+        eval_rewards.extend(rewards)
 
+        # Track reward components
+        for i, component in enumerate(reward_components):
+            eval_reward_components[i].extend(component)
+
+        # Track rewards per agent
+        for agent_idx in range(self.num_agents):
+            eval_agent_rewards[agent_idx].append(rewards[0])
+
+    def _log_single_turn_eval_metrics(
+        self,
+        eval_rewards,
+        eval_reward_components,
+        eval_agent_rewards,
+        all_completions_agent1,
+        all_completions_agent2,
+        all_test_cases,
+        all_entry_points,
+        all_prompts,
+    ) -> Dict[str, float]:
+        """Log evaluation metrics for single-turn evaluation."""
         # Calculate standard evaluation metrics
         eval_metrics = {
             "eval/avg_reward": np.mean(eval_rewards) if eval_rewards else 0,
@@ -593,9 +654,9 @@ class MAGRPOTrainer:
             # Aggregate metrics for logging
             aggregated_detailed_metrics = self.eval_aggregator(detailed_metrics)
 
-            # Add to eval_metrics with details panel prefix
+            # Add to eval_metrics - using unified format
             for key, value in aggregated_detailed_metrics.items():
-                eval_metrics[f"eval/details/{key}"] = value
+                eval_metrics[f"eval/{key}"] = value
 
         # Log evaluation metrics
         if self.wandb_initialized:
@@ -603,11 +664,105 @@ class MAGRPOTrainer:
 
         return eval_metrics
 
-    def _evaluate_multi_turn(self, num_eval_samples: int = 4) -> Dict[str, float]:
-        """Multi-turn evaluation with external transitions."""
-        if self.eval_dataset is None:
-            return {}
+    def _evaluate_multi_turn_sample(
+        self,
+        batch_item,
+        all_agent_completions_turns,
+        all_test_cases,
+        all_entry_points,
+        all_prompts,
+    ):
+        """Evaluate a single sample in multi-turn mode."""
+        # Storage for each agent's completions across turns
+        agent_sample_completions = [[] for _ in range(self.num_agents)]
 
+        # Store sample information
+        all_test_cases.append(batch_item.get("test", ""))
+        all_entry_points.append(batch_item.get("entry_point", ""))
+        all_prompts.append(batch_item.get("prompt", ""))
+
+        # Store best completions from previous turn for external transitions
+        previous_best_completions = [None] * self.num_agents
+        previous_best_reward = 0.0
+
+        # Run multi-turn episode
+        for turn_idx in range(self.args.num_turns):
+            # Prepare external prompts for turns after the first
+            agent_external_prompts = [None] * self.num_agents
+
+            if turn_idx > 0 and all(c is not None for c in previous_best_completions):
+                # Get external transitions based on previous turn's best result
+                transition_result = self.external_transition(
+                    prompt=batch_item.get("prompt", ""),
+                    best_reward=previous_best_reward,
+                    agent_completions=previous_best_completions,
+                    batch_item=batch_item,
+                    turn_idx=turn_idx,
+                    num_agents=self.num_agents,
+                )
+
+                # External transition should return prompts for each agent
+                if isinstance(transition_result, (list, tuple)):
+                    if len(transition_result) != self.num_agents:
+                        raise ValueError(
+                            f"External transition returned {len(transition_result)} values but expected {self.num_agents}"
+                        )
+                    agent_external_prompts = list(transition_result)
+                else:
+                    raise ValueError(
+                        "External transition must return a list or tuple of external prompts for each agent"
+                    )
+
+            # Generate one completion from each agent for evaluation
+            all_completions = []
+
+            for agent_idx in range(self.num_agents):
+                agent_completions = self._generate_completions_with_external_prompts(
+                    self.agents[agent_idx],
+                    [batch_item],
+                    agent_idx=agent_idx,
+                    num_return_sequences=1,  # Only one for evaluation
+                    max_new_tokens=self.args.max_new_tokens,
+                    external_prompts=agent_external_prompts[agent_idx],
+                )
+                all_completions.append(agent_completions)
+
+            # Extract completions for all agents
+            for agent_idx in range(self.num_agents):
+                completion = all_completions[agent_idx]["completions"][0][0]
+                agent_sample_completions[agent_idx].append(completion)
+
+            # Check for early termination
+            agent_completions_for_reward = [
+                [agent_sample_completions[i][-1]] for i in range(self.num_agents)
+            ]
+            rewards, _ = self._compute_rewards(
+                [all_completions[0]["prompts"][0]],
+                agent_completions_for_reward,
+                batch_items=[batch_item],
+            )
+
+            if rewards:
+                previous_best_reward = rewards[0]
+                for agent_idx in range(self.num_agents):
+                    previous_best_completions[agent_idx] = agent_sample_completions[
+                        agent_idx
+                    ][-1]
+
+            if rewards[0] == 4.0:
+                # Early termination
+                break
+
+        # Store completions for all agents
+        for agent_idx in range(self.num_agents):
+            all_agent_completions_turns[agent_idx].append(
+                agent_sample_completions[agent_idx]
+            )
+
+    def _log_multi_turn_eval_metrics(
+        self, all_agent_completions_turns, all_test_cases, all_entry_points, all_prompts
+    ) -> Dict[str, float]:
+        """Log evaluation metrics for multi-turn evaluation."""
         # Use the logger functions passed as parameters
         if self.eval_logger is None or self.eval_aggregator is None:
             # If loggers are not provided, skip evaluation logging
@@ -615,114 +770,6 @@ class MAGRPOTrainer:
                 "Warning: Evaluation logger functions not provided, skipping detailed evaluation logging"
             )
             return {}
-
-        eval_dataloader = self.get_eval_dataloader()
-
-        # Storage for multi-turn completions for all agents
-        all_agent_completions_turns = [
-            [] for _ in range(self.num_agents)
-        ]  # [agent][sample][turn]
-        all_test_cases = []
-        all_entry_points = []
-        all_prompts = []
-
-        # Evaluate samples
-        with torch.no_grad():
-            for eval_idx, batch in enumerate(eval_dataloader):
-                if eval_idx >= num_eval_samples:
-                    break
-
-                for batch_item in batch:
-                    # Storage for each agent's completions across turns
-                    agent_sample_completions = [[] for _ in range(self.num_agents)]
-
-                    # Store sample information
-                    all_test_cases.append(batch_item.get("test", ""))
-                    all_entry_points.append(batch_item.get("entry_point", ""))
-                    all_prompts.append(batch_item.get("prompt", ""))
-
-                    # Store best completions from previous turn for external transitions
-                    previous_best_completions = [None] * self.num_agents
-                    previous_best_reward = 0.0
-
-                    # Run multi-turn episode
-                    for turn_idx in range(self.args.num_turns):
-                        # Prepare external prompts for turns after the first
-                        agent_external_prompts = [None] * self.num_agents
-
-                        if turn_idx > 0 and all(
-                            c is not None for c in previous_best_completions
-                        ):
-                            # Get external transitions based on previous turn's best result
-                            transition_result = self.external_transition(
-                                prompt=batch_item.get("prompt", ""),
-                                best_reward=previous_best_reward,
-                                agent_completions=previous_best_completions,
-                                batch_item=batch_item,
-                                turn_idx=turn_idx,
-                                num_agents=self.num_agents,
-                            )
-
-                            # External transition should return prompts for each agent
-                            if isinstance(transition_result, (list, tuple)):
-                                if len(transition_result) != self.num_agents:
-                                    raise ValueError(
-                                        f"External transition returned {len(transition_result)} values but expected {self.num_agents}"
-                                    )
-                                agent_external_prompts = list(transition_result)
-                            else:
-                                raise ValueError(
-                                    "External transition must return a list or tuple of external prompts for each agent"
-                                )
-
-                        # Generate one completion from each agent for evaluation
-                        all_completions = []
-
-                        for agent_idx in range(self.num_agents):
-                            agent_completions = (
-                                self._generate_completions_with_external_prompts(
-                                    self.agents[agent_idx],
-                                    [batch_item],
-                                    agent_idx=agent_idx,
-                                    num_return_sequences=1,  # Only one for evaluation
-                                    max_new_tokens=self.args.max_new_tokens,
-                                    external_prompts=agent_external_prompts[agent_idx],
-                                )
-                            )
-                            all_completions.append(agent_completions)
-
-                        # Extract completions for all agents
-                        for agent_idx in range(self.num_agents):
-                            completion = all_completions[agent_idx]["completions"][0][0]
-                            agent_sample_completions[agent_idx].append(completion)
-
-                        # Check for early termination
-                        agent_completions_for_reward = [
-                            [agent_sample_completions[i][-1]]
-                            for i in range(self.num_agents)
-                        ]
-                        rewards, _ = self._compute_rewards(
-                            [all_completions[0]["prompts"][0]],
-                            agent_completions_for_reward,
-                            batch_items=[batch_item],
-                        )
-
-                        if rewards:
-                            previous_best_reward = rewards[0]
-                            for agent_idx in range(self.num_agents):
-                                previous_best_completions[agent_idx] = (
-                                    agent_sample_completions[agent_idx][-1]
-                                )
-
-                        if rewards[0] == 4.0:
-                            # Early termination
-                            break
-
-                    # Store completions for all agents
-                    for agent_idx in range(self.num_agents):
-                        all_agent_completions_turns[agent_idx].append(
-                            agent_sample_completions[agent_idx]
-                        )
 
         # Get detailed multi-turn metrics
         # Dynamically call eval_logger based on its signature
@@ -786,20 +833,8 @@ class MAGRPOTrainer:
 
     def train(self, **kwargs):
         """
-        Train method that supports both single-turn and multi-turn training.
-
-        When num_turns=1, performs standard single-turn training.
-        When num_turns>1, performs multi-turn training with expert feedback.
+        Unified train method that supports both single-turn and multi-turn training.
         """
-        # For single-turn, use standard train method
-        if self.args.num_turns == 1:
-            return self._train_single_turn(**kwargs)
-
-        # Multi-turn training
-        return self._train_multi_turn(**kwargs)
-
-    def _train_single_turn(self, **kwargs):
-        """Single-turn training (original MAGRPO train method)."""
         # Initialize wandb if not already done
         if self.wandb_config is not None and not self.wandb_initialized:
             self._init_wandb()
@@ -821,417 +856,438 @@ class MAGRPOTrainer:
             # Track individual reward components
             epoch_reward_components = [[] for _ in range(len(self.reward_funcs))]
 
-            for batch_idx, batch in enumerate(self.get_train_dataloader()):
-                # evaluate every 4 batches
-                if batch_idx % 4 == 0:
-                    eval_metrics = self.evaluate(num_eval_samples=4)
-                    wandb.log(eval_metrics)
-
-                # Process each batch item separately
-                for item_idx, batch_item in enumerate(batch):
-                    # Generate completions from each agent for this batch item
-                    all_completions = []
-                    for agent_idx in range(self.num_agents):
-                        # Zero gradients for each agent
-                        self.optimizers[agent_idx].zero_grad()
-
-                        agent_completions = self._generate_completions(
-                            self.agents[agent_idx],
-                            batch,
-                            agent_idx=agent_idx,  # Pass the agent index
-                            num_return_sequences=self.args.num_generations,
-                            max_new_tokens=self.args.max_new_tokens,
-                            **kwargs,
-                        )
-                        all_completions.append(agent_completions)
-
-                    # Extract completions for reward calculation
-                    agent_completions_list = []
-                    for agent_idx in range(self.num_agents):
-                        agent_completions_list.append(
-                            all_completions[agent_idx]["completions"][0]
-                        )
-
-                    # Get the formatted prompt for logging purposes
-                    formatted_prompt = all_completions[0]["prompts"][0]
-
-                    # Compute rewards based on all agents' completions for this batch item
-                    rewards, reward_components = self._compute_rewards(
-                        [formatted_prompt],
-                        agent_completions_list,
-                        batch_items=[batch_item],
-                    )
-                    epoch_rewards.extend(rewards)
-
-                    # Track reward components
-                    for i, component in enumerate(reward_components):
-                        epoch_reward_components[i].extend(component)
-
-                    # Track rewards per agent for more detailed logging
-                    for agent_idx in range(self.num_agents):
-                        for reward in rewards:
-                            epoch_agent_rewards[agent_idx].append(reward)
-
-                    # Update each agent using the rewards with proper gradient tracking
-                    batch_loss = 0.0
-                    agent_losses = []
-                    for agent_idx in range(self.num_agents):
-                        # Compute loss with the new function that enables proper gradient tracking
-                        agent_loss = self._compute_loss_with_gradients(
-                            self.agents[agent_idx],
-                            all_completions[agent_idx],
-                            rewards,
-                        )
-
-                        # Backward pass and optimization
-                        agent_loss.backward()
-                        self.optimizers[agent_idx].step()
-
-                        batch_loss += agent_loss.detach().item()
-                        agent_losses.append(agent_loss.detach().item())
-
-                    epoch_loss += batch_loss
-
-                    # Log to wandb per batch
-                    log_data = {
-                        "batch_loss": batch_loss,
-                        "batch_rewards_mean": (np.mean(rewards) if rewards else 0),
-                    }
-
-                    # Log individual agent losses
-                    for i, loss in enumerate(agent_losses):
-                        log_data[f"agent{i + 1}_loss"] = loss
-
-                    # Log individual reward components
-                    for i, component in enumerate(reward_components):
-                        component_mean = np.mean(component) if component else 0
-                        log_data[f"reward_{i + 1}_mean"] = component_mean
-
-                    wandb.log(log_data)
-
-            # Log epoch summary
-            avg_reward = sum(epoch_rewards) / len(epoch_rewards) if epoch_rewards else 0
-            avg_agent_rewards = [
-                sum(rewards) / len(rewards) if rewards else 0
-                for rewards in epoch_agent_rewards
-            ]
-            # Calculate average reward components
-            avg_reward_components = [
-                sum(comp) / len(comp) if comp else 0 for comp in epoch_reward_components
-            ]
-
-            # Store epoch average reward for conditional saving
-            epoch_rewards_history.append(avg_reward)
-
-            epoch_log = {
-                "epoch": epoch,
-                "epoch_loss": (
-                    epoch_loss / len(self.get_train_dataloader()) if epoch_loss else 0
-                ),
-                "epoch_avg_reward": avg_reward,
-            }
-
-            # Add agent-specific reward tracking
-            for i, avg_agent_reward in enumerate(avg_agent_rewards):
-                epoch_log[f"agent{i + 1}_avg_reward"] = avg_agent_reward
-
-            # Add component-specific reward tracking
-            for i, avg_component in enumerate(avg_reward_components):
-                epoch_log[f"reward_{i + 1}_avg"] = avg_component
-
-            wandb.log(epoch_log)
-
-    def _train_multi_turn(self, **kwargs):
-        """Multi-turn training with expert feedback."""
-        if self.wandb_config is not None and not self.wandb_initialized:
-            self._init_wandb()
-
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        for agent in self.agents:
-            agent.to(device)
-            agent.train()
-
-        # Track epoch rewards for conditional saving
-        epoch_rewards_history = []
-
-        for epoch in range(int(self.args.num_train_epochs)):
-            epoch_loss = 0.0
-            epoch_rewards = []
-            epoch_turn_rewards = [[] for _ in range(self.args.num_turns)]
+            # Multi-turn specific tracking
+            epoch_turn_rewards = (
+                [[] for _ in range(self.args.num_turns)]
+                if self.args.num_turns > 1
+                else None
+            )
             epoch_early_terminations = 0
 
             for batch_idx, batch in enumerate(self.get_train_dataloader()):
-                # Evaluate every 4 batches
+                # evaluate every 4 batches
                 if batch_idx % 4 == 0:
                     eval_metrics = self.evaluate(num_eval_samples=4)
                     if self.wandb_initialized:
                         wandb.log(eval_metrics)
 
-                # Process each batch item
+                # Process each batch item separately
                 for item_idx, batch_item in enumerate(batch):
-                    # Store turn data for sequential updates
-                    turn_data = []
-                    early_termination = False
-
-                    # Store best completions from previous turn for external transitions
-                    previous_best_completions = [None] * self.num_agents
-                    previous_best_reward = 0.0
-
-                    # Execute multi-turn episode
-                    for turn_idx in range(self.args.num_turns):
-                        # Zero gradients for each agent at the start of each turn
-                        for optimizer in self.optimizers:
-                            optimizer.zero_grad()
-
-                        # Prepare external prompts for turns after the first
-                        agent_external_prompts = [None] * self.num_agents
-
-                        if turn_idx > 0 and all(
-                            c is not None for c in previous_best_completions
-                        ):
-                            # Get external transitions based on previous turn's best result
-                            transition_result = self.external_transition(
-                                prompt=batch_item.get("prompt", ""),
-                                best_reward=previous_best_reward,
-                                agent_completions=previous_best_completions,
-                                batch_item=batch_item,
-                                turn_idx=turn_idx,
-                                num_agents=self.num_agents,
+                    if self.args.num_turns == 1:
+                        # Single-turn training logic
+                        batch_loss, rewards, reward_components = (
+                            self._train_single_turn_step(
+                                batch_item,
+                                batch,
+                                epoch_rewards,
+                                epoch_agent_rewards,
+                                epoch_reward_components,
+                                **kwargs,
                             )
-
-                            # External transition should return prompts for each agent
-                            if isinstance(transition_result, (list, tuple)):
-                                if len(transition_result) != self.num_agents:
-                                    raise ValueError(
-                                        f"External transition returned {len(transition_result)} values but expected {self.num_agents}"
-                                    )
-                                agent_external_prompts = list(transition_result)
-                            else:
-                                raise ValueError(
-                                    "External transition must return a list or tuple of external prompts for each agent"
-                                )
-
-                        # Generate completions from each agent
-                        all_completions = []
-
-                        for agent_idx in range(self.num_agents):
-                            agent_completions = (
-                                self._generate_completions_with_external_prompts(
-                                    self.agents[agent_idx],
-                                    [batch_item],
-                                    agent_idx=agent_idx,
-                                    num_return_sequences=self.args.num_generations,
-                                    max_new_tokens=self.args.max_new_tokens,
-                                    external_prompts=agent_external_prompts[agent_idx],
-                                    **kwargs,
-                                )
-                            )
-                            all_completions.append(agent_completions)
-
-                        # Extract completions for reward calculation
-                        agent_completions_list = []
-                        for agent_idx in range(self.num_agents):
-                            agent_completions_list.append(
-                                all_completions[agent_idx]["completions"][0]
-                            )
-
-                        # Get formatted prompt
-                        formatted_prompt = all_completions[0]["prompts"][0]
-
-                        # Compute rewards
-                        rewards, reward_components = self._compute_rewards(
-                            [formatted_prompt],
-                            agent_completions_list,
-                            batch_items=[batch_item],
                         )
-
-                        # Find the best completion set (highest reward)
-                        if rewards:
-                            best_idx = rewards.index(max(rewards))
-                            for agent_idx in range(self.num_agents):
-                                previous_best_completions[agent_idx] = (
-                                    agent_completions_list[agent_idx][best_idx]
-                                )
-                            previous_best_reward = rewards[best_idx]
-
-                        # Calculate turn mean reward
-                        turn_mean_reward = np.mean(rewards) if rewards else 0
-                        epoch_turn_rewards[turn_idx].append(turn_mean_reward)
-
-                        # Store turn data
-                        turn_data.append(
-                            {
-                                "completions": all_completions,
-                                "rewards": rewards,
-                                "reward_components": reward_components,
-                                "mean_reward": turn_mean_reward,
-                            }
+                    else:
+                        # Multi-turn training logic
+                        batch_loss, rewards, turn_data, early_termination = (
+                            self._train_multi_turn_step(
+                                batch_item,
+                                batch,
+                                epoch_rewards,
+                                epoch_turn_rewards,
+                                **kwargs,
+                            )
                         )
+                        if early_termination:
+                            epoch_early_terminations += 1
 
-                        # Log turn metrics
-                        if self.wandb_initialized:
-                            turn_log_data = {
-                                f"turn_{turn_idx + 1}/batch_rewards_mean": turn_mean_reward,
-                            }
-
-                            # Log reward components
-                            for i, component in enumerate(reward_components):
-                                component_mean = np.mean(component) if component else 0
-                                turn_log_data[
-                                    f"turn_{turn_idx + 1}/reward_{i + 1}_mean"
-                                ] = component_mean
-
-                            # Check for early termination
-                            if turn_mean_reward == 4.0:
-                                early_termination = True
-                                epoch_early_terminations += 1
-                                turn_log_data[
-                                    f"turn_{turn_idx + 1}/early_termination"
-                                ] = 1
-                                wandb.log(turn_log_data)
-
-                                # Fill remaining turns with max values
-                                for future_turn in range(
-                                    turn_idx + 1, self.args.num_turns
-                                ):
-                                    # Log perfect metrics for skipped turns
-                                    perfect_metrics = {
-                                        f"turn_{future_turn + 1}/batch_rewards_mean": 4.0,
-                                        f"turn_{future_turn + 1}/early_termination_filled": 1,
-                                        f"turn_{future_turn + 1}/reward_1_mean": 4.0,
-                                    }
-                                    wandb.log(perfect_metrics)
-                                    epoch_turn_rewards[future_turn].append(4.0)
-
-                                    # Log improvement as 0
-                                    if future_turn > 0:
-                                        wandb.log(
-                                            {
-                                                f"turn_{future_turn + 1}/improvement_from_turn_{future_turn}": 0.0
-                                            }
-                                        )
-
-                                break
-
-                            wandb.log(turn_log_data)
-
-                    # Log turn-to-turn improvements
-                    if self.wandb_initialized:
-                        if len(turn_data) >= 2:
-                            for i in range(1, len(turn_data)):
-                                improvement = (
-                                    turn_data[i]["mean_reward"]
-                                    - turn_data[i - 1]["mean_reward"]
-                                )
-                                wandb.log(
-                                    {
-                                        f"turn_{i + 1}/improvement_from_turn_{i}": improvement
-                                    }
-                                )
-                        elif early_termination and self.args.num_turns >= 2:
-                            # If early terminated at turn 1, still log 0 improvement for turn 2
-                            wandb.log({"turn_2/improvement_from_turn_1": 0.0})
-
-                    # Sequential model updates after episode ends
-                    batch_loss = 0.0
-
-                    # Use turn-specific gradient weights from config
-                    turn_weights = self.args.turn_gradient_weights
-
-                    for turn_idx, turn_info in enumerate(turn_data):
-                        # Get turn-specific weight
-                        turn_gradient_weight = (
-                            turn_weights[turn_idx]
-                            if turn_idx < len(turn_weights)
-                            else 1.0
-                        )
-
-                        # Apply termination weight if needed (for early termination bonus)
-                        if early_termination and turn_idx == len(turn_data) - 1:
-                            # Combine turn weight with early termination weight
-                            final_weight = (
-                                turn_gradient_weight
-                                * self.args.early_termination_weight
-                            )
-                        else:
-                            final_weight = turn_gradient_weight
-
-                        # Update each agent for this turn
-                        turn_loss = 0.0
-                        agent_losses = []
-
-                        for agent_idx in range(self.num_agents):
-                            # Compute loss with gradients
-                            agent_loss = self._compute_loss_with_gradients(
-                                self.agents[agent_idx],
-                                turn_info["completions"][agent_idx],
-                                turn_info["rewards"],
-                            )
-
-                            # Apply weight
-                            weighted_loss = agent_loss * final_weight
-
-                            # Backward pass and optimization
-                            weighted_loss.backward()
-                            self.optimizers[agent_idx].step()
-                            self.optimizers[agent_idx].zero_grad()
-
-                            turn_loss += agent_loss.detach().item()
-                            agent_losses.append(agent_loss.detach().item())
-
-                        batch_loss += turn_loss
-
-                        # Log turn update info
-                        if self.wandb_initialized:
-                            wandb.log(
-                                {
-                                    f"turn_{turn_idx + 1}/update_loss": turn_loss,
-                                    f"turn_{turn_idx + 1}/gradient_weight": turn_gradient_weight,
-                                    f"turn_{turn_idx + 1}/final_weight": final_weight,
-                                }
-                            )
+                        # Track reward components for multi-turn
+                        for turn_info in turn_data:
+                            for i, component in enumerate(
+                                turn_info["reward_components"]
+                            ):
+                                epoch_reward_components[i].extend(component)
 
                     epoch_loss += batch_loss
 
-                    # Collect all rewards for epoch tracking
-                    for turn_info in turn_data:
-                        epoch_rewards.extend(turn_info["rewards"])
-
-                    # Log episode summary
-                    if self.wandb_initialized:
-                        wandb.log(
-                            {
-                                "episode_loss": batch_loss,
-                                "episode_num_turns": len(turn_data),
-                                "episode_early_termination": early_termination,
-                            }
-                        )
-
             # Log epoch summary
-            avg_reward = sum(epoch_rewards) / len(epoch_rewards) if epoch_rewards else 0
-            epoch_rewards_history.append(avg_reward)
+            self._log_epoch_summary(
+                epoch,
+                epoch_loss,
+                epoch_rewards,
+                epoch_agent_rewards,
+                epoch_reward_components,
+                epoch_turn_rewards,
+                epoch_early_terminations,
+                epoch_rewards_history,
+            )
 
+    def _train_single_turn_step(
+        self,
+        batch_item,
+        batch,
+        epoch_rewards,
+        epoch_agent_rewards,
+        epoch_reward_components,
+        **kwargs,
+    ):
+        """Execute a single training step for single-turn training."""
+        # Generate completions from each agent for this batch item
+        all_completions = []
+        for agent_idx in range(self.num_agents):
+            # Zero gradients for each agent
+            self.optimizers[agent_idx].zero_grad()
+
+            agent_completions = self._generate_completions(
+                self.agents[agent_idx],
+                [batch_item],  # Single item
+                agent_idx=agent_idx,
+                num_return_sequences=self.args.num_generations,
+                max_new_tokens=self.args.max_new_tokens,
+                **kwargs,
+            )
+            all_completions.append(agent_completions)
+
+        # Extract completions for reward calculation
+        agent_completions_list = []
+        for agent_idx in range(self.num_agents):
+            agent_completions_list.append(all_completions[agent_idx]["completions"][0])
+
+        # Get the formatted prompt for logging purposes
+        formatted_prompt = all_completions[0]["prompts"][0]
+
+        # Compute rewards based on all agents' completions for this batch item
+        rewards, reward_components = self._compute_rewards(
+            [formatted_prompt],
+            agent_completions_list,
+            batch_items=[batch_item],
+        )
+        epoch_rewards.extend(rewards)
+
+        # Track reward components
+        for i, component in enumerate(reward_components):
+            epoch_reward_components[i].extend(component)
+
+        # Track rewards per agent for more detailed logging
+        for agent_idx in range(self.num_agents):
+            for reward in rewards:
+                epoch_agent_rewards[agent_idx].append(reward)
+
+        # Update each agent using the rewards with proper gradient tracking
+        batch_loss = 0.0
+        agent_losses = []
+        for agent_idx in range(self.num_agents):
+            # Compute loss with the new function that enables proper gradient tracking
+            agent_loss = self._compute_loss_with_gradients(
+                self.agents[agent_idx],
+                all_completions[agent_idx],
+                rewards,
+            )
+
+            # Backward pass and optimization
+            agent_loss.backward()
+            self.optimizers[agent_idx].step()
+
+            batch_loss += agent_loss.detach().item()
+            agent_losses.append(agent_loss.detach().item())
+
+        # Log to wandb per batch
+        if self.wandb_initialized:
+            # Use unified logging format with turn_1 prefix for single-turn
+            log_data = {
+                "turn_1/batch_loss": batch_loss,
+                "turn_1/batch_rewards_mean": (np.mean(rewards) if rewards else 0),
+            }
+
+            # Log individual agent losses
+            for i, loss in enumerate(agent_losses):
+                log_data[f"turn_1/agent{i + 1}_loss"] = loss
+
+            # Log individual reward components
+            for i, component in enumerate(reward_components):
+                component_mean = np.mean(component) if component else 0
+                log_data[f"turn_1/reward_{i + 1}_mean"] = component_mean
+
+            wandb.log(log_data)
+
+        return batch_loss, rewards, reward_components
+
+    def _train_multi_turn_step(
+        self, batch_item, batch, epoch_rewards, epoch_turn_rewards, **kwargs
+    ):
+        """Execute a single training step for multi-turn training."""
+        # Store turn data for sequential updates
+        turn_data = []
+        early_termination = False
+
+        # Store best completions from previous turn for external transitions
+        previous_best_completions = [None] * self.num_agents
+        previous_best_reward = 0.0
+
+        # Execute multi-turn episode
+        for turn_idx in range(self.args.num_turns):
+            # Zero gradients for each agent at the start of each turn
+            for optimizer in self.optimizers:
+                optimizer.zero_grad()
+
+            # Prepare external prompts for turns after the first
+            agent_external_prompts = [None] * self.num_agents
+
+            if turn_idx > 0 and all(c is not None for c in previous_best_completions):
+                # Get external transitions based on previous turn's best result
+                transition_result = self.external_transition(
+                    prompt=batch_item.get("prompt", ""),
+                    best_reward=previous_best_reward,
+                    agent_completions=previous_best_completions,
+                    batch_item=batch_item,
+                    turn_idx=turn_idx,
+                    num_agents=self.num_agents,
+                )
+
+                # External transition should return prompts for each agent
+                if isinstance(transition_result, (list, tuple)):
+                    if len(transition_result) != self.num_agents:
+                        raise ValueError(
+                            f"External transition returned {len(transition_result)} values but expected {self.num_agents}"
+                        )
+                    agent_external_prompts = list(transition_result)
+                else:
+                    raise ValueError(
+                        "External transition must return a list or tuple of external prompts for each agent"
+                    )
+
+            # Generate completions from each agent
+            all_completions = []
+
+            for agent_idx in range(self.num_agents):
+                agent_completions = self._generate_completions_with_external_prompts(
+                    self.agents[agent_idx],
+                    [batch_item],
+                    agent_idx=agent_idx,
+                    num_return_sequences=self.args.num_generations,
+                    max_new_tokens=self.args.max_new_tokens,
+                    external_prompts=agent_external_prompts[agent_idx],
+                    **kwargs,
+                )
+                all_completions.append(agent_completions)
+
+            # Extract completions for reward calculation
+            agent_completions_list = []
+            for agent_idx in range(self.num_agents):
+                agent_completions_list.append(
+                    all_completions[agent_idx]["completions"][0]
+                )
+
+            # Get formatted prompt
+            formatted_prompt = all_completions[0]["prompts"][0]
+
+            # Compute rewards
+            rewards, reward_components = self._compute_rewards(
+                [formatted_prompt],
+                agent_completions_list,
+                batch_items=[batch_item],
+            )
+
+            # Find the best completion set (highest reward)
+            if rewards:
+                best_idx = rewards.index(max(rewards))
+                for agent_idx in range(self.num_agents):
+                    previous_best_completions[agent_idx] = agent_completions_list[
+                        agent_idx
+                    ][best_idx]
+                previous_best_reward = rewards[best_idx]
+
+            # Calculate turn mean reward
+            turn_mean_reward = np.mean(rewards) if rewards else 0
+            epoch_turn_rewards[turn_idx].append(turn_mean_reward)
+
+            # Store turn data
+            turn_data.append(
+                {
+                    "completions": all_completions,
+                    "rewards": rewards,
+                    "reward_components": reward_components,
+                    "mean_reward": turn_mean_reward,
+                }
+            )
+
+            # Log turn metrics
             if self.wandb_initialized:
-                epoch_log = {
-                    "epoch": epoch,
-                    "epoch_loss": (
-                        epoch_loss / len(self.get_train_dataloader())
-                        if epoch_loss
-                        else 0
-                    ),
-                    "epoch_avg_reward": avg_reward,
-                    "epoch_early_termination_rate": epoch_early_terminations
-                    / len(self.get_train_dataloader()),
+                turn_log_data = {
+                    f"turn_{turn_idx + 1}/batch_rewards_mean": turn_mean_reward,
                 }
 
-                # Log average rewards per turn
-                for turn_idx in range(self.args.num_turns):
-                    if epoch_turn_rewards[turn_idx]:
-                        epoch_log[f"epoch_turn_{turn_idx + 1}_avg_reward"] = np.mean(
-                            epoch_turn_rewards[turn_idx]
-                        )
+                # Log reward components
+                for i, component in enumerate(reward_components):
+                    component_mean = np.mean(component) if component else 0
+                    turn_log_data[f"turn_{turn_idx + 1}/reward_{i + 1}_mean"] = (
+                        component_mean
+                    )
 
-                wandb.log(epoch_log)
+                # Check for early termination
+                if turn_mean_reward == 4.0:
+                    early_termination = True
+                    turn_log_data[f"turn_{turn_idx + 1}/early_termination"] = True
+                    wandb.log(turn_log_data)
+
+                    # Fill remaining turns with max values
+                    for future_turn in range(turn_idx + 1, self.args.num_turns):
+                        # Log perfect metrics for skipped turns
+                        perfect_metrics = {
+                            f"turn_{future_turn + 1}/batch_rewards_mean": 4.0,
+                            f"turn_{future_turn + 1}/reward_1_mean": 4.0,
+                        }
+                        wandb.log(perfect_metrics)
+                        epoch_turn_rewards[future_turn].append(4.0)
+
+                        # Log improvement as 0
+                        if future_turn > 0:
+                            wandb.log(
+                                {
+                                    f"turn_{future_turn + 1}/improvement_from_turn_{future_turn}": 0.0
+                                }
+                            )
+
+                    break
+
+                wandb.log(turn_log_data)
+
+        # Log turn-to-turn improvements
+        if self.wandb_initialized:
+            if len(turn_data) >= 2:
+                for i in range(1, len(turn_data)):
+                    improvement = (
+                        turn_data[i]["mean_reward"] - turn_data[i - 1]["mean_reward"]
+                    )
+                    wandb.log({f"turn_{i + 1}/improvement_from_turn_{i}": improvement})
+            elif early_termination and self.args.num_turns >= 2:
+                # If early terminated at turn 1, still log 0 improvement for turn 2
+                wandb.log({"turn_2/improvement_from_turn_1": 0.0})
+
+        # Sequential model updates after episode ends
+        batch_loss = 0.0
+
+        # Use turn-specific gradient weights from config
+        turn_weights = self.args.turn_gradient_weights
+
+        for turn_idx, turn_info in enumerate(turn_data):
+            # Get turn-specific weight
+            turn_gradient_weight = (
+                turn_weights[turn_idx] if turn_idx < len(turn_weights) else 1.0
+            )
+
+            # Apply termination weight if needed (for early termination bonus)
+            if early_termination and turn_idx == len(turn_data) - 1:
+                # Combine turn weight with early termination weight
+                final_weight = turn_gradient_weight * self.args.early_termination_weight
+            else:
+                final_weight = turn_gradient_weight
+
+            # Update each agent for this turn
+            turn_loss = 0.0
+            agent_losses = []
+
+            for agent_idx in range(self.num_agents):
+                # Compute loss with gradients
+                agent_loss = self._compute_loss_with_gradients(
+                    self.agents[agent_idx],
+                    turn_info["completions"][agent_idx],
+                    turn_info["rewards"],
+                )
+
+                # Apply weight
+                weighted_loss = agent_loss * final_weight
+
+                # Backward pass and optimization
+                weighted_loss.backward()
+                self.optimizers[agent_idx].step()
+                self.optimizers[agent_idx].zero_grad()
+
+                turn_loss += agent_loss.detach().item()
+                agent_losses.append(agent_loss.detach().item())
+
+            batch_loss += turn_loss
+
+            # Log turn update info
+            if self.wandb_initialized:
+                wandb.log(
+                    {
+                        f"turn_{turn_idx + 1}/update_loss": turn_loss,
+                        f"turn_{turn_idx + 1}/gradient_weight": turn_gradient_weight,
+                        f"turn_{turn_idx + 1}/final_weight": final_weight,
+                    }
+                )
+
+        # Collect all rewards for epoch tracking
+        for turn_info in turn_data:
+            epoch_rewards.extend(turn_info["rewards"])
+
+        # Log episode summary
+        if self.wandb_initialized:
+            log_data = {
+                "system/episode_loss": batch_loss,
+                "system/episode_num_turns": len(turn_data),
+            }
+            # Only log early termination if it happened
+            if early_termination:
+                log_data["system/episode_early_termination"] = True
+            wandb.log(log_data)
+
+        return batch_loss, epoch_rewards, turn_data, early_termination
+
+    def _log_epoch_summary(
+        self,
+        epoch,
+        epoch_loss,
+        epoch_rewards,
+        epoch_agent_rewards,
+        epoch_reward_components,
+        epoch_turn_rewards,
+        epoch_early_terminations,
+        epoch_rewards_history,
+    ):
+        """Log epoch summary metrics in unified format."""
+        avg_reward = sum(epoch_rewards) / len(epoch_rewards) if epoch_rewards else 0
+        epoch_rewards_history.append(avg_reward)
+
+        if not self.wandb_initialized:
+            return
+
+        epoch_log = {
+            "system/epoch": epoch,
+            "system/epoch_loss": (
+                epoch_loss / len(self.get_train_dataloader()) if epoch_loss else 0
+            ),
+            "system/epoch_avg_reward": avg_reward,
+        }
+
+        # Add agent-specific reward tracking
+        avg_agent_rewards = [
+            sum(rewards) / len(rewards) if rewards else 0
+            for rewards in epoch_agent_rewards
+        ]
+        for i, avg_agent_reward in enumerate(avg_agent_rewards):
+            epoch_log[f"system/agent{i + 1}_avg_reward"] = avg_agent_reward
+
+        # Add component-specific reward tracking
+        avg_reward_components = [
+            sum(comp) / len(comp) if comp else 0 for comp in epoch_reward_components
+        ]
+        for i, avg_component in enumerate(avg_reward_components):
+            epoch_log[f"system/reward_{i + 1}_avg"] = avg_component
+
+        # Multi-turn specific metrics
+        if self.args.num_turns > 1 and epoch_turn_rewards:
+            epoch_log["system/epoch_early_termination_rate"] = (
+                epoch_early_terminations / len(self.get_train_dataloader())
+            )
+
+            # Log average rewards per turn
+            for turn_idx in range(self.args.num_turns):
+                if epoch_turn_rewards[turn_idx]:
+                    epoch_log[f"system/epoch_turn_{turn_idx + 1}_avg_reward"] = np.mean(
+                        epoch_turn_rewards[turn_idx]
+                    )
+
+        wandb.log(epoch_log)
 
     def _generate_completions(
         self,
