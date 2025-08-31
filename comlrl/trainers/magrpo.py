@@ -481,8 +481,7 @@ class MAGRPOTrainer:
         )
 
         # Storage for single-turn detailed logging
-        all_completions_agent1 = []
-        all_completions_agent2 = []
+        all_agent_completions = [[] for _ in range(self.num_agents)]
         all_test_cases = []
         all_entry_points = []
         all_prompts = []
@@ -505,8 +504,7 @@ class MAGRPOTrainer:
                             eval_rewards,
                             eval_reward_components,
                             eval_agent_rewards,
-                            all_completions_agent1,
-                            all_completions_agent2,
+                            all_agent_completions,
                             all_test_cases,
                             all_entry_points,
                             all_prompts,
@@ -527,8 +525,7 @@ class MAGRPOTrainer:
                 eval_rewards,
                 eval_reward_components,
                 eval_agent_rewards,
-                all_completions_agent1,
-                all_completions_agent2,
+                all_agent_completions,
                 all_test_cases,
                 all_entry_points,
                 all_prompts,
@@ -547,8 +544,7 @@ class MAGRPOTrainer:
         eval_rewards,
         eval_reward_components,
         eval_agent_rewards,
-        all_completions_agent1,
-        all_completions_agent2,
+        all_agent_completions,
         all_test_cases,
         all_entry_points,
         all_prompts,
@@ -573,15 +569,14 @@ class MAGRPOTrainer:
             completion = all_completions[agent_idx]["completions"][0][0]
             agent_completions_list.append(completion)
 
-        # Store completions for detailed logging (assuming 2 agents)
-        if len(agent_completions_list) >= 2:
-            all_completions_agent1.append(agent_completions_list[0])
-            all_completions_agent2.append(agent_completions_list[1])
+        # Store completions for detailed logging for all agents
+        for agent_idx, completion in enumerate(agent_completions_list):
+            all_agent_completions[agent_idx].append(completion)
 
-            # Store test cases, entry points, and prompts for detailed logging
-            all_test_cases.append(batch_item.get("test", ""))
-            all_entry_points.append(batch_item.get("entry_point", ""))
-            all_prompts.append(batch_item.get("prompt", ""))
+        # Store test cases, entry points, and prompts for detailed logging
+        all_test_cases.append(batch_item.get("test", ""))
+        all_entry_points.append(batch_item.get("entry_point", ""))
+        all_prompts.append(batch_item.get("prompt", ""))
 
         # Get the formatted prompt for logging
         formatted_prompt = all_completions[0]["prompts"][0]
@@ -608,8 +603,7 @@ class MAGRPOTrainer:
         eval_rewards,
         eval_reward_components,
         eval_agent_rewards,
-        all_completions_agent1,
-        all_completions_agent2,
+        all_agent_completions,
         all_test_cases,
         all_entry_points,
         all_prompts,
@@ -630,26 +624,45 @@ class MAGRPOTrainer:
         if (
             self.eval_logger is not None
             and self.eval_aggregator is not None
-            and all_completions_agent1
-            and all_completions_agent2
+            and all_agent_completions
+            and all(agent_comps for agent_comps in all_agent_completions)
         ):
-            # Check if this is a code logger (expects test_cases, entry_points, prompts)
-            # or a text logger (only expects completions)
-            if self.eval_logger.__name__ == "code_reward_logger":
-                # Code logger needs test cases, entry points, and prompts
+            # Dynamically call eval_logger based on its signature
+            import inspect
+
+            sig = inspect.signature(self.eval_logger)
+            params = sig.parameters
+
+            # Check if logger accepts a generic list of agent completions
+            if "agent_completions" in params:
+                # Modern N-agent logger interface
                 detailed_metrics = self.eval_logger(
-                    all_completions_agent1,
-                    all_completions_agent2,
-                    all_test_cases,
-                    all_entry_points,
-                    all_prompts,
+                    agent_completions=all_agent_completions,
+                    test_cases=all_test_cases,
+                    entry_points=all_entry_points,
+                    prompts=all_prompts,
                 )
             else:
-                # Text loggers (tldr, arxiv) only need completions
-                detailed_metrics = self.eval_logger(
-                    all_completions_agent1,
-                    all_completions_agent2,
-                )
+                # Legacy interface expecting individual agent arguments
+                # Build arguments based on number of agents
+                args = []
+
+                # Add agent completions up to the number expected by the logger
+                param_list = list(params.keys())
+                for i, param_name in enumerate(param_list):
+                    if param_name in ["test_cases", "all_test_cases"]:
+                        break
+                    if i < len(all_agent_completions):
+                        args.append(all_agent_completions[i])
+                    else:
+                        args.append([])  # Empty list if we have fewer agents
+
+                # Check if this is a code logger or text logger
+                if "test_cases" in params or "all_test_cases" in params:
+                    # Code logger needs test cases, entry points, and prompts
+                    args.extend([all_test_cases, all_entry_points, all_prompts])
+
+                detailed_metrics = self.eval_logger(*args)
 
             # Aggregate metrics for logging
             aggregated_detailed_metrics = self.eval_aggregator(detailed_metrics)
