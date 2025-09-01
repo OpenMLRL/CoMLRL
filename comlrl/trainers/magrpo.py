@@ -47,10 +47,6 @@ class MAGRPOConfig(TrainingArguments):
             "help": "Top-p for sampling (currently set but not used - uses model_config instead)."
         },
     )
-    beta: float = field(
-        default=0.02,
-        metadata={"help": "Beta parameter (currently set but not used in trainer)."},
-    )
 
     # Multi-turn specific parameters (optional, for MT-MAGRPO)
     num_turns: Optional[int] = field(
