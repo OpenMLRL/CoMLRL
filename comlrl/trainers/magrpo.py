@@ -532,9 +532,7 @@ class MAGRPOTrainer:
                             "External transition must return a list or tuple of external prompts for each agent"
                         )
 
-            # Generate one completion from each agent for evaluation
-            all_completions = []
-
+            # Generate and extract one completion from each agent for evaluation
             for agent_idx in range(self.num_agents):
                 agent_completions = self._generate_completions_with_external_prompts(
                     self.agents[agent_idx],
@@ -544,11 +542,8 @@ class MAGRPOTrainer:
                     max_new_tokens=self.args.max_new_tokens,
                     external_prompts=agent_external_prompts[agent_idx],
                 )
-                all_completions.append(agent_completions)
-
-            # Extract completions for all agents
-            for agent_idx in range(self.num_agents):
-                completion = all_completions[agent_idx]["completions"][0][0]
+                # Extract the completion directly
+                completion = agent_completions["completions"][0][0]
                 agent_sample_completions[agent_idx].append(completion)
 
             # Check for early termination (only relevant for multi-turn)
@@ -556,8 +551,11 @@ class MAGRPOTrainer:
                 agent_completions_for_reward = [
                     [agent_sample_completions[i][-1]] for i in range(self.num_agents)
                 ]
+                # Get the prompt from the first agent's completion data
+                # Since all agents use the same batch_item, we can use any agent's prompt
+                prompt = self.formatters[0](batch_item)
                 rewards, _ = self._compute_rewards(
-                    [all_completions[0]["prompts"][0]],
+                    [prompt],
                     agent_completions_for_reward,
                     batch_items=[batch_item],
                 )
