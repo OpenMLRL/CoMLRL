@@ -125,11 +125,8 @@ class MAGRPOTrainer:
 
         self.args = args if args is not None else MAGRPOConfig()
 
-        # Setup formatters based on whether multi-turn is enabled
-        if self.args.num_turns > 1:
-            self._setup_mt_formatters(formatters, num_agents)
-        else:
-            self._setup_formatters(formatters, num_agents)
+        # Setup formatters (unified for both single-turn and multi-turn)
+        self._setup_formatters(formatters, num_agents)
 
         self._setup_reward_functions(reward_funcs, reward_weights, reward_processors)
 
@@ -223,28 +220,8 @@ class MAGRPOTrainer:
             self._init_wandb()
 
     def _setup_formatters(self, formatters, num_agents):
-        """Set up format functions for each agent."""
-        default_format_func = lambda x: x.get("prompt", "")
-
-        if formatters is None:
-            self.formatters = [default_format_func] * num_agents
-        elif callable(formatters) and not isinstance(formatters, list):
-            self.formatters = [formatters] * num_agents
-        elif isinstance(formatters, list):
-            if len(formatters) != num_agents:
-                raise ValueError(
-                    f"Number of formatters ({len(formatters)}) must match "
-                    f"number of agents ({num_agents})"
-                )
-            self.formatters = formatters
-        else:
-            raise ValueError(
-                f"formatters must be a callable, a list of callables, or None. "
-                f"Got {type(formatters)}"
-            )
-
-    def _setup_mt_formatters(self, formatters, num_agents):
         """Set up format functions for each agent that can handle external transitions."""
+        # Use multi-turn compatible default formatter that accepts external parameters
         default_format_func = (
             lambda x, external_prompts=None, expert_feedback=None: x.get("prompt", "")
         )
@@ -330,6 +307,8 @@ class MAGRPOTrainer:
                 f"formatters must be a callable, a list of callables, or None. "
                 f"Got {type(formatters)}"
             )
+
+
 
     def _setup_reward_functions(
         self, reward_funcs, reward_weights=None, reward_processors=None
