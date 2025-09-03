@@ -1,3 +1,4 @@
+import inspect
 import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -232,8 +233,6 @@ class MAGRPOTrainer:
             # Wrap the formatter to accept external_info parameter
             original_formatter = formatters
             # Support both parameter names for backward compatibility
-            import inspect
-
             sig = inspect.signature(original_formatter)
             if "external_prompts" in sig.parameters:
                 wrapped_formatter = (
@@ -270,8 +269,6 @@ class MAGRPOTrainer:
             # Ensure all formatters can accept external_info
             wrapped_formatters = []
             for formatter in formatters:
-                import inspect
-
                 sig = inspect.signature(formatter)
                 if "external_prompts" in sig.parameters:
                     # Modern formatter with external_prompts
@@ -591,8 +588,6 @@ class MAGRPOTrainer:
             and all(agent_comps for agent_comps in all_agent_completions_turns)
         ):
             # Dynamically call eval_logger based on its signature
-            import inspect
-
             sig = inspect.signature(self.eval_logger)
             params = sig.parameters
 
@@ -1333,8 +1328,6 @@ class MAGRPOTrainer:
                         completion_args = [[comp] for comp in agent_completions]
 
                         # Check if reward function accepts batch_items parameter
-                        import inspect
-
                         sig = inspect.signature(reward_func)
                         if "batch_items" in sig.parameters:
                             func_rewards = reward_func(
