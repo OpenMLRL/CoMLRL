@@ -316,8 +316,6 @@ class MAGRPOTrainer:
                 f"Got {type(formatters)}"
             )
 
-
-
     def _setup_reward_functions(
         self, reward_funcs, reward_weights=None, reward_processors=None
     ):
@@ -713,17 +711,17 @@ class MAGRPOTrainer:
                         wandb.log(eval_metrics)
 
                 # Process single batch item (batch_size=1 enforced)
-                batch_item = batch[0]  # Since batch_size=1, take the first (and only) item
+                batch_item = batch[
+                    0
+                ]  # Since batch_size=1, take the first (and only) item
                 # Unified training step
-                batch_loss, rewards, turn_data, early_termination = (
-                    self._train_step(
-                        batch_item,
-                        epoch_rewards,
-                        epoch_turn_rewards,
-                        epoch_agent_rewards,
-                        epoch_reward_components,
-                        **kwargs,
-                    )
+                batch_loss, rewards, turn_data, early_termination = self._train_step(
+                    batch_item,
+                    epoch_rewards,
+                    epoch_turn_rewards,
+                    epoch_agent_rewards,
+                    epoch_reward_components,
+                    **kwargs,
                 )
                 if early_termination:
                     epoch_early_terminations += 1
@@ -1140,9 +1138,7 @@ class MAGRPOTrainer:
         # to properly extract just the completion part
         prompt_len = prompt_input_ids[0].shape[0]
         # Find where padding token starts if any
-        pad_positions = (
-            prompt_input_ids[0] == self.tokenizer.pad_token_id
-        ).nonzero()
+        pad_positions = (prompt_input_ids[0] == self.tokenizer.pad_token_id).nonzero()
         if pad_positions.shape[0] > 0:
             # Use the position of the first padding token
             prompt_len = pad_positions[0].item()
@@ -1300,9 +1296,7 @@ class MAGRPOTrainer:
                 )
 
         # Find minimum number of completions across all agents
-        min_completions = min(
-            len(completions_list[i]) for i in range(self.num_agents)
-        )
+        min_completions = min(len(completions_list[i]) for i in range(self.num_agents))
 
         for completion_idx in range(min_completions):
             # Extract one completion from each agent
@@ -1409,15 +1403,11 @@ class MAGRPOTrainer:
                 # Forward pass with gradients enabled
                 outputs = agent(
                     input_ids=input_ids.unsqueeze(0),  # Add batch dimension
-                    attention_mask=attention_mask.unsqueeze(
-                        0
-                    ),  # Add batch dimension
+                    attention_mask=attention_mask.unsqueeze(0),  # Add batch dimension
                 )
 
                 # Get logits for the completion part (excluding prompt)
-                completion_logits = outputs.logits[
-                    0, prompt_ids.size(0) - 1 : -1, :
-                ]
+                completion_logits = outputs.logits[0, prompt_ids.size(0) - 1 : -1, :]
 
                 # Calculate log probabilities
                 log_probs = []
