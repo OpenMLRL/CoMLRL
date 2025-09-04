@@ -447,7 +447,6 @@ def main():
         max_new_tokens=256,
         temperature=0.8,
         top_p=0.9,
-        beta=0.02,
     )
 
     generate_new_examples = True

@@ -1,3 +1,4 @@
+import inspect
 import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -46,10 +47,6 @@ class MAGRPOConfig(TrainingArguments):
         metadata={
             "help": "Top-p for sampling (currently set but not used - uses model_config instead)."
         },
-    )
-    beta: float = field(
-        default=0.02,
-        metadata={"help": "Beta parameter (currently set but not used in trainer)."},
     )
 
     # Multi-turn specific parameters (optional, for MT-MAGRPO)
@@ -135,11 +132,8 @@ class MAGRPOTrainer:
 
         self.args = args if args is not None else MAGRPOConfig()
 
-        # Setup formatters based on whether multi-turn is enabled
-        if self.args.num_turns > 1:
-            self._setup_mt_formatters(formatters, num_agents)
-        else:
-            self._setup_formatters(formatters, num_agents)
+        # Setup formatters (unified for both single-turn and multi-turn)
+        self._setup_formatters(formatters, num_agents)
 
         self._setup_reward_functions(reward_funcs, reward_weights, reward_processors)
 
@@ -202,6 +196,11 @@ class MAGRPOTrainer:
             raise ValueError(
                 "MAGRPO requires num_generations to be at least 2 for multi-agent training."
             )
+        if self.args.per_device_train_batch_size != 1:
+            raise ValueError(
+                "MAGRPO requires per_device_train_batch_size to be 1. "
+                "Current implementation only supports batch_size=1."
+            )
 
         # Check for external_transition requirement in multi-turn training
         if self.args.num_turns > 1 and external_transition is None:
@@ -233,28 +232,8 @@ class MAGRPOTrainer:
             self._init_wandb()
 
     def _setup_formatters(self, formatters, num_agents):
-        """Set up format functions for each agent."""
-        default_format_func = lambda x: x.get("prompt", "")
-
-        if formatters is None:
-            self.formatters = [default_format_func] * num_agents
-        elif callable(formatters) and not isinstance(formatters, list):
-            self.formatters = [formatters] * num_agents
-        elif isinstance(formatters, list):
-            if len(formatters) != num_agents:
-                raise ValueError(
-                    f"Number of formatters ({len(formatters)}) must match "
-                    f"number of agents ({num_agents})"
-                )
-            self.formatters = formatters
-        else:
-            raise ValueError(
-                f"formatters must be a callable, a list of callables, or None. "
-                f"Got {type(formatters)}"
-            )
-
-    def _setup_mt_formatters(self, formatters, num_agents):
         """Set up format functions for each agent that can handle external transitions."""
+        # Use multi-turn compatible default formatter that accepts external parameters
         default_format_func = (
             lambda x, external_prompts=None, expert_feedback=None: x.get("prompt", "")
         )
@@ -265,8 +244,6 @@ class MAGRPOTrainer:
             # Wrap the formatter to accept external_info parameter
             original_formatter = formatters
             # Support both parameter names for backward compatibility
-            import inspect
-
             sig = inspect.signature(original_formatter)
             if "external_prompts" in sig.parameters:
                 wrapped_formatter = (
@@ -303,8 +280,6 @@ class MAGRPOTrainer:
             # Ensure all formatters can accept external_info
             wrapped_formatters = []
             for formatter in formatters:
-                import inspect
-
                 sig = inspect.signature(formatter)
                 if "external_prompts" in sig.parameters:
                     # Modern formatter with external_prompts
@@ -340,6 +315,8 @@ class MAGRPOTrainer:
                 f"formatters must be a callable, a list of callables, or None. "
                 f"Got {type(formatters)}"
             )
+
+
 
     def _setup_reward_functions(
         self, reward_funcs, reward_weights=None, reward_processors=None
@@ -561,9 +538,7 @@ class MAGRPOTrainer:
                             "External transition must return a list or tuple of external prompts for each agent"
                         )
 
-            # Generate one completion from each agent for evaluation
-            all_completions = []
-
+            # Generate and extract one completion from each agent for evaluation
             for agent_idx in range(self.num_agents):
                 agent_completions = self._generate_completions_with_external_prompts(
                     self.agents[agent_idx],
@@ -573,11 +548,8 @@ class MAGRPOTrainer:
                     max_new_tokens=self.args.max_new_tokens,
                     external_prompts=agent_external_prompts[agent_idx],
                 )
-                all_completions.append(agent_completions)
-
-            # Extract completions for all agents
-            for agent_idx in range(self.num_agents):
-                completion = all_completions[agent_idx]["completions"][0][0]
+                # Extract the completion directly
+                completion = agent_completions["completions"][0][0]
                 agent_sample_completions[agent_idx].append(completion)
 
             # Check for early termination (only relevant for multi-turn)
@@ -585,8 +557,11 @@ class MAGRPOTrainer:
                 agent_completions_for_reward = [
                     [agent_sample_completions[i][-1]] for i in range(self.num_agents)
                 ]
+                # Get the prompt from the first agent's completion data
+                # Since all agents use the same batch_item, we can use any agent's prompt
+                prompt = self.formatters[0](batch_item)
                 rewards, _ = self._compute_rewards(
-                    [all_completions[0]["prompts"][0]],
+                    [prompt],
                     agent_completions_for_reward,
                     batch_items=[batch_item],
                 )
@@ -622,8 +597,6 @@ class MAGRPOTrainer:
             and all(agent_comps for agent_comps in all_agent_completions_turns)
         ):
             # Dynamically call eval_logger based on its signature
-            import inspect
-
             sig = inspect.signature(self.eval_logger)
             params = sig.parameters
 
@@ -739,24 +712,23 @@ class MAGRPOTrainer:
                     if self.wandb_initialized:
                         wandb.log(eval_metrics)
 
-                # Process each batch item separately
-                for item_idx, batch_item in enumerate(batch):
-                    # Unified training step
-                    batch_loss, rewards, turn_data, early_termination = (
-                        self._train_step(
-                            batch_item,
-                            batch,
-                            epoch_rewards,
-                            epoch_turn_rewards,
-                            epoch_agent_rewards,
-                            epoch_reward_components,
-                            **kwargs,
-                        )
+                # Process single batch item (batch_size=1 enforced)
+                batch_item = batch[0]  # Since batch_size=1, take the first (and only) item
+                # Unified training step
+                batch_loss, rewards, turn_data, early_termination = (
+                    self._train_step(
+                        batch_item,
+                        epoch_rewards,
+                        epoch_turn_rewards,
+                        epoch_agent_rewards,
+                        epoch_reward_components,
+                        **kwargs,
                     )
-                    if early_termination:
-                        epoch_early_terminations += 1
+                )
+                if early_termination:
+                    epoch_early_terminations += 1
 
-                    epoch_loss += batch_loss
+                epoch_loss += batch_loss
 
             # Log epoch summary
             self._log_epoch_summary(
@@ -773,7 +745,6 @@ class MAGRPOTrainer:
     def _train_step(
         self,
         batch_item,
-        batch,
         epoch_rewards,
         epoch_turn_rewards,
         epoch_agent_rewards,
@@ -1084,7 +1055,7 @@ class MAGRPOTrainer:
         # Apply the appropriate formatter to create prompts from batch items
         format_func = self.formatters[agent_idx]
         prompts = [format_func(item) for item in batch_items]
-        batch_size = len(prompts)
+        # batch_size is always 1 due to enforced constraint
 
         # Ensure tokenizer exists
         if self.tokenizer is None:
@@ -1165,63 +1136,52 @@ class MAGRPOTrainer:
         # Extract completion tokens (excluding prompt tokens)
         completion_input_ids = generation_output.sequences
 
-        # For each prompt, we need to find its actual length in tokens
+        # For single prompt, find its actual length in tokens
         # to properly extract just the completion part
-        prompt_lengths = []
-        for b in range(batch_size):
-            # Get the prompt length by finding where padding starts or using full length
-            prompt_len = prompt_input_ids[b].shape[0]
-            # Find where padding token starts if any
-            pad_positions = (
-                prompt_input_ids[b] == self.tokenizer.pad_token_id
-            ).nonzero()
-            if pad_positions.shape[0] > 0:
-                # Use the position of the first padding token
-                prompt_len = pad_positions[0].item()
-            prompt_lengths.append(prompt_len)
+        prompt_len = prompt_input_ids[0].shape[0]
+        # Find where padding token starts if any
+        pad_positions = (
+            prompt_input_ids[0] == self.tokenizer.pad_token_id
+        ).nonzero()
+        if pad_positions.shape[0] > 0:
+            # Use the position of the first padding token
+            prompt_len = pad_positions[0].item()
 
-        # Extract completion text
+        # Extract completion text for single prompt
         completions = []
         completion_tokens_list = []
 
         # Calculate total sequence count
         total_sequences = completion_input_ids.shape[0]
 
-        # Process each prompt and its multiple completions
-        for b in range(batch_size):
-            prompt_len = prompt_lengths[b]
-            batch_completions = []
-            batch_completion_tokens = []
+        # Process single prompt and its multiple completions
+        batch_completions = []
+        batch_completion_tokens = []
 
-            # Get all sequences for this prompt
-            start_idx = b * num_return_sequences
-            end_idx = start_idx + num_return_sequences
+        # Get all sequences for this prompt (start_idx=0, end_idx=num_return_sequences)
+        end_idx = min(num_return_sequences, total_sequences)
 
-            # Ensure we don't go out of bounds
-            end_idx = min(end_idx, total_sequences)
+        for s in range(end_idx):
+            # Get only the completion part (exclude the prompt tokens)
+            completion_tokens = completion_input_ids[s, prompt_len:]
+            batch_completion_tokens.append(completion_tokens)
 
-            for s in range(start_idx, end_idx):
-                # Get only the completion part (exclude the prompt tokens)
-                completion_tokens = completion_input_ids[s, prompt_len:]
-                batch_completion_tokens.append(completion_tokens)
+            # Decode to text
+            completion_text = self.tokenizer.decode(
+                completion_tokens, skip_special_tokens=True
+            )
+            batch_completions.append(completion_text)
 
-                # Decode to text
-                completion_text = self.tokenizer.decode(
-                    completion_tokens, skip_special_tokens=True
-                )
-                batch_completions.append(completion_text)
+        completions.append(batch_completions)
+        completion_tokens_list.append(batch_completion_tokens)
 
-            completions.append(batch_completions)
-            completion_tokens_list.append(batch_completion_tokens)
-
-        # Create attention masks for completions
+        # Create attention masks for completions (single batch)
         completion_attention_masks = []
-        for batch_tokens in completion_tokens_list:
-            batch_masks = []
-            for tokens in batch_tokens:
-                mask = torch.ones(len(tokens), device=device)
-                batch_masks.append(mask)
-            completion_attention_masks.append(batch_masks)
+        batch_masks = []
+        for tokens in completion_tokens_list[0]:  # Only one batch
+            mask = torch.ones(len(tokens), device=device)
+            batch_masks.append(mask)
+        completion_attention_masks.append(batch_masks)
 
         # Extract logit for computing loss
         logits = (
@@ -1329,108 +1289,63 @@ class MAGRPOTrainer:
         all_rewards = []
         all_reward_components = [[] for _ in range(len(self.reward_funcs))]
 
-        # Single prompt case
-        if len(prompts) == 1:
-            # Ensure correct structure for all agents
-            for i in range(self.num_agents):
-                if not isinstance(completions_list[i], list):
-                    completions_list[i] = (
-                        [completions_list[i]]
-                        if not isinstance(completions_list[i], list)
-                        else completions_list[i]
-                    )
+        # Single prompt case (batch_size=1 enforced)
+        # Ensure correct structure for all agents
+        for i in range(self.num_agents):
+            if not isinstance(completions_list[i], list):
+                completions_list[i] = (
+                    [completions_list[i]]
+                    if not isinstance(completions_list[i], list)
+                    else completions_list[i]
+                )
 
-            # Find minimum number of completions across all agents
-            min_completions = min(
-                len(completions_list[i]) for i in range(self.num_agents)
-            )
+        # Find minimum number of completions across all agents
+        min_completions = min(
+            len(completions_list[i]) for i in range(self.num_agents)
+        )
 
-            for completion_idx in range(min_completions):
-                # Extract one completion from each agent
-                agent_completions = [
-                    completions_list[agent_idx][completion_idx]
-                    for agent_idx in range(self.num_agents)
-                ]
+        for completion_idx in range(min_completions):
+            # Extract one completion from each agent
+            agent_completions = [
+                completions_list[agent_idx][completion_idx]
+                for agent_idx in range(self.num_agents)
+            ]
 
-                # Calculate rewards from each function and apply weights
-                weighted_reward = 0.0
-                reward_components = []
-
-                for func_idx, (reward_func, weight, processor) in enumerate(
-                    zip(self.reward_funcs, self.reward_weights, self.reward_processors)
-                ):
-                    # Call reward function with all agent completions
-                    try:
-                        completion_args = [[comp] for comp in agent_completions]
-
-                        # Check if reward function accepts batch_items parameter
-                        import inspect
-
-                        sig = inspect.signature(reward_func)
-                        if "batch_items" in sig.parameters:
-                            func_rewards = reward_func(
-                                *completion_args, batch_items=batch_items
-                            )
-                        else:
-                            func_rewards = reward_func(*completion_args)
-                    except TypeError:
-                        func_rewards = reward_func(agent_completions)
-
-                    # Apply processor to rewards
-                    processed_rewards = [processor(r) for r in func_rewards]
-
-                    # Store the raw component rewards for logging
-                    reward_components.append(processed_rewards[0])
-                    all_reward_components[func_idx].extend(processed_rewards)
-
-                    # Add weighted component to total reward
-                    weighted_reward += weight * processed_rewards[0]
-
-                all_rewards.append(weighted_reward)
-
-            return all_rewards, all_reward_components
-
-        else:
-            # Batch processing (multiple prompts)
-            agent_completions_lists = [[] for _ in range(self.num_agents)]
-
-            # Extract completions from all agents
-            for prompt_idx in range(len(prompts)):
-                for agent_idx in range(self.num_agents):
-                    if prompt_idx < len(completions_list[agent_idx]):
-                        agent_completion = (
-                            completions_list[agent_idx][prompt_idx][0]
-                            if isinstance(completions_list[agent_idx][prompt_idx], list)
-                            else completions_list[agent_idx][prompt_idx]
-                        )
-                        agent_completions_lists[agent_idx].append(agent_completion)
-
-            # Calculate rewards for each function
-            weighted_rewards = [0.0] * len(agent_completions_lists[0])
+            # Calculate rewards from each function and apply weights
+            weighted_reward = 0.0
+            reward_components = []
 
             for func_idx, (reward_func, weight, processor) in enumerate(
                 zip(self.reward_funcs, self.reward_weights, self.reward_processors)
             ):
-                # Call reward function for all samples with all agents
+                # Call reward function with all agent completions
                 try:
-                    # Try with variable arguments
-                    batch_rewards = reward_func(*agent_completions_lists)
+                    completion_args = [[comp] for comp in agent_completions]
+
+                    # Check if reward function accepts batch_items parameter
+                    sig = inspect.signature(reward_func)
+                    if "batch_items" in sig.parameters:
+                        func_rewards = reward_func(
+                            *completion_args, batch_items=batch_items
+                        )
+                    else:
+                        func_rewards = reward_func(*completion_args)
                 except TypeError:
-                    # Fallback for functions that don't support variable args
-                    batch_rewards = reward_func(agent_completions_lists)
+                    func_rewards = reward_func(agent_completions)
 
                 # Apply processor to rewards
-                processed_rewards = [processor(r) for r in batch_rewards]
+                processed_rewards = [processor(r) for r in func_rewards]
 
-                # Store component rewards for logging
+                # Store the raw component rewards for logging
+                reward_components.append(processed_rewards[0])
                 all_reward_components[func_idx].extend(processed_rewards)
 
-                # Add weighted component to total rewards
-                for i, r in enumerate(processed_rewards):
-                    if i < len(weighted_rewards):
-                        weighted_rewards[i] += weight * r
+                # Add weighted component to total reward
+                weighted_reward += weight * processed_rewards[0]
 
-            return weighted_rewards, all_reward_components
+            all_rewards.append(weighted_reward)
+
+        return all_rewards, all_reward_components
 
     def _compute_loss_with_gradients(self, agent, completions_data, rewards):
         """
@@ -1469,62 +1384,59 @@ class MAGRPOTrainer:
         total_loss = torch.tensor(0.0, device=device, requires_grad=True)
         num_samples = 0
 
-        # Process each prompt in the batch
-        for batch_idx in range(len(prompt_input_ids)):
-            prompt_ids = prompt_input_ids[batch_idx]
+        # Process single prompt (batch_size=1)
+        prompt_ids = prompt_input_ids[0]
 
-            # Process each generated completion for this prompt
-            for seq_idx, completion_tokens in enumerate(
-                completion_input_ids[batch_idx]
-            ):
-                # Break if we've processed enough completions for the available rewards
-                if seq_idx >= len(advantages):
-                    break
+        # Process each generated completion for this prompt
+        for seq_idx, completion_tokens in enumerate(completion_input_ids[0]):
+            # Break if we've processed enough completions for the available rewards
+            if seq_idx >= len(advantages):
+                break
 
-                advantage = advantages[seq_idx]
+            advantage = advantages[seq_idx]
 
-                # Create input sequence by concatenating prompt with all but last token of completion
-                # (we'll predict the next token at each step)
-                if len(completion_tokens) > 0:
-                    input_ids = torch.cat([prompt_ids, completion_tokens[:-1]])
+            # Create input sequence by concatenating prompt with all but last token of completion
+            # (we'll predict the next token at each step)
+            if len(completion_tokens) > 0:
+                input_ids = torch.cat([prompt_ids, completion_tokens[:-1]])
 
-                    # Target is the completion tokens
-                    target_ids = completion_tokens
+                # Target is the completion tokens
+                target_ids = completion_tokens
 
-                    # Create attention mask for the full sequence
-                    attention_mask = torch.ones(len(input_ids), device=device)
+                # Create attention mask for the full sequence
+                attention_mask = torch.ones(len(input_ids), device=device)
 
-                    # Forward pass with gradients enabled
-                    outputs = agent(
-                        input_ids=input_ids.unsqueeze(0),  # Add batch dimension
-                        attention_mask=attention_mask.unsqueeze(
-                            0
-                        ),  # Add batch dimension
-                    )
+                # Forward pass with gradients enabled
+                outputs = agent(
+                    input_ids=input_ids.unsqueeze(0),  # Add batch dimension
+                    attention_mask=attention_mask.unsqueeze(
+                        0
+                    ),  # Add batch dimension
+                )
 
-                    # Get logits for the completion part (excluding prompt)
-                    completion_logits = outputs.logits[
-                        0, prompt_ids.size(0) - 1 : -1, :
-                    ]
+                # Get logits for the completion part (excluding prompt)
+                completion_logits = outputs.logits[
+                    0, prompt_ids.size(0) - 1 : -1, :
+                ]
 
-                    # Calculate log probabilities
-                    log_probs = []
-                    for i, token_id in enumerate(target_ids):
-                        if i < completion_logits.size(
-                            0
-                        ):  # Check if we have logits for this position
-                            token_logits = completion_logits[i]
-                            token_log_prob = torch.log_softmax(token_logits, dim=-1)[
-                                token_id
-                            ]
-                            log_probs.append(token_log_prob)
+                # Calculate log probabilities
+                log_probs = []
+                for i, token_id in enumerate(target_ids):
+                    if i < completion_logits.size(
+                        0
+                    ):  # Check if we have logits for this position
+                        token_logits = completion_logits[i]
+                        token_log_prob = torch.log_softmax(token_logits, dim=-1)[
+                            token_id
+                        ]
+                        log_probs.append(token_log_prob)
 
-                    if log_probs:
-                        sequence_log_prob = torch.stack(log_probs).sum()
-                        # Policy gradient loss: -log_prob * advantage
-                        loss = -sequence_log_prob * advantage
-                        total_loss = total_loss + loss
-                        num_samples += 1
+                if log_probs:
+                    sequence_log_prob = torch.stack(log_probs).sum()
+                    # Policy gradient loss: -log_prob * advantage
+                    loss = -sequence_log_prob * advantage
+                    total_loss = total_loss + loss
+                    num_samples += 1
 
         # Average the loss over all processed samples
         if num_samples > 0:
