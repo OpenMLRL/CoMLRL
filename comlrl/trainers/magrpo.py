@@ -234,41 +234,23 @@ class MAGRPOTrainer:
 
     def _setup_formatters(self, formatters, num_agents):
         """Set up format functions for each agent that can handle external transitions."""
-        # Use multi-turn compatible default formatter that accepts external parameters
-        default_format_func = (
-            lambda x, external_prompts=None, expert_feedback=None: x.get("prompt", "")
-        )
+        # Use multi-turn compatible default formatter that accepts external prompts
+        default_format_func = lambda x, external_prompts=None: x.get("prompt", "")
 
         if formatters is None:
             self.formatters = [default_format_func] * num_agents
         elif callable(formatters) and not isinstance(formatters, list):
-            # Wrap the formatter to accept external_info parameter
+            # Wrap the formatter to accept external_prompts parameter
             original_formatter = formatters
-            # Support both parameter names for backward compatibility
             sig = inspect.signature(original_formatter)
             if "external_prompts" in sig.parameters:
-                wrapped_formatter = (
-                    lambda x, external_prompts=None, expert_feedback=None: (
-                        original_formatter(
-                            x, external_prompts=external_prompts or expert_feedback
-                        )
-                        if (external_prompts is not None or expert_feedback is not None)
-                        else original_formatter(x)
-                    )
-                )
-            elif "expert_feedback" in sig.parameters:
-                # Keep compatibility with baselines that use expert_feedback
-                wrapped_formatter = (
-                    lambda x, external_prompts=None, expert_feedback=None: (
-                        original_formatter(
-                            x, expert_feedback=external_prompts or expert_feedback
-                        )
-                        if (external_prompts is not None or expert_feedback is not None)
-                        else original_formatter(x)
-                    )
+                wrapped_formatter = lambda x, external_prompts=None: (
+                    original_formatter(x, external_prompts=external_prompts)
+                    if external_prompts is not None
+                    else original_formatter(x)
                 )
             else:
-                wrapped_formatter = lambda x, external_prompts=None, expert_feedback=None: original_formatter(
+                wrapped_formatter = lambda x, external_prompts=None: original_formatter(
                     x
                 )
             self.formatters = [wrapped_formatter] * num_agents
@@ -278,37 +260,22 @@ class MAGRPOTrainer:
                     f"Number of formatters ({len(formatters)}) must match "
                     f"number of agents ({num_agents})"
                 )
-            # Ensure all formatters can accept external_info
+            # Ensure all formatters can accept external_prompts
             wrapped_formatters = []
             for formatter in formatters:
                 sig = inspect.signature(formatter)
                 if "external_prompts" in sig.parameters:
-                    # Modern formatter with external_prompts
-                    def make_wrapper(f):
-                        def wrapped(x, external_prompts=None, expert_feedback=None):
-                            return f(
-                                x, external_prompts=external_prompts or expert_feedback
-                            )
 
-                        return wrapped
-
-                    wrapped_formatters.append(make_wrapper(formatter))
-                elif "expert_feedback" in sig.parameters:
-                    # Keep compatibility with baselines that use expert_feedback
                     def make_wrapper(f):
-                        def wrapped(x, external_prompts=None, expert_feedback=None):
-                            return f(
-                                x, expert_feedback=external_prompts or expert_feedback
-                            )
+                        def wrapped(x, external_prompts=None):
+                            return f(x, external_prompts=external_prompts)
 
                         return wrapped
 
                     wrapped_formatters.append(make_wrapper(formatter))
                 else:
-                    # Wrap to accept but ignore both parameters
-                    wrapped = lambda x, external_prompts=None, expert_feedback=None, f=formatter: f(
-                        x
-                    )
+                    # Wrap to accept but ignore parameter
+                    wrapped = lambda x, external_prompts=None, f=formatter: f(x)
                     wrapped_formatters.append(wrapped)
             self.formatters = wrapped_formatters
         else:
@@ -1233,7 +1200,6 @@ class MAGRPOTrainer:
             format_func(
                 item,
                 external_prompts=external_prompts,
-                expert_feedback=external_prompts,
             )
             for item in batch_items
         ]
