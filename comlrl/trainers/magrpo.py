@@ -484,7 +484,6 @@ class MAGRPOTrainer:
                     transition_result = self.external_transition(
                         prompt=batch_item.get("prompt", ""),
                         agent_completions=previous_best_completions,
-                        turn_idx=turn_idx,
                         num_agents=self.num_agents,
                     )
 
