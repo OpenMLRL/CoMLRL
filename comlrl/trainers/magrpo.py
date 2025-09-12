@@ -472,7 +472,6 @@ class MAGRPOTrainer:
 
         # Store best completions from previous turn for external transitions
         previous_best_completions = [None] * self.num_agents
-        previous_best_reward = 0.0
 
         # Run episode with configured number of turns
         for turn_idx in range(self.args.num_turns):
@@ -480,14 +479,11 @@ class MAGRPOTrainer:
             agent_external_prompts = [None] * self.num_agents
 
             if turn_idx > 0 and all(c is not None for c in previous_best_completions):
-                # For single-turn (num_turns=1), this block will never execute
                 # Get external transitions based on previous turn's best result
                 if self.external_transition is not None:
                     transition_result = self.external_transition(
                         prompt=batch_item.get("prompt", ""),
-                        best_reward=previous_best_reward,
                         agent_completions=previous_best_completions,
-                        batch_item=batch_item,
                         turn_idx=turn_idx,
                         num_agents=self.num_agents,
                     )
@@ -533,7 +529,6 @@ class MAGRPOTrainer:
                 )
 
                 if rewards:
-                    previous_best_reward = rewards[0]
                     for agent_idx in range(self.num_agents):
                         previous_best_completions[agent_idx] = agent_sample_completions[
                             agent_idx
@@ -615,7 +610,7 @@ class MAGRPOTrainer:
                         else:
                             args.append(all_agent_completions_turns[i])
                     else:
-                        args.append([])  # Empty list if we have fewer agents
+                        args.append([])
 
                 # Check if this is a code logger or text logger
                 if "test_cases" in params or "all_test_cases" in params:
@@ -724,7 +719,6 @@ class MAGRPOTrainer:
 
         # Store best completions from previous turn for external transitions
         previous_best_completions = [None] * self.num_agents
-        previous_best_reward = 0.0
 
         # Execute multi-turn episode
         for turn_idx in range(self.args.num_turns):
@@ -739,10 +733,7 @@ class MAGRPOTrainer:
                 # Get external transitions based on previous turn's best result
                 transition_result = self.external_transition(
                     prompt=batch_item.get("prompt", ""),
-                    best_reward=previous_best_reward,
                     agent_completions=previous_best_completions,
-                    batch_item=batch_item,
-                    turn_idx=turn_idx,
                     num_agents=self.num_agents,
                 )
 
