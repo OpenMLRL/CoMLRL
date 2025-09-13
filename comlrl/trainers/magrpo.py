@@ -1149,17 +1149,9 @@ class MAGRPOTrainer:
                 **kwargs,
             )
 
-        # Multi-turn with external prompts
-        format_func = self.formatters[agent_idx]
-
-        # Apply formatter with external prompts if provided
-        prompts = [
-            format_func(
-                item,
-                external_prompts=external_prompts,
-            )
-            for item in batch_items
-        ]
+        # Multi-turn with external prompts: external modes return full prompts.
+        # Use them directly for this turn without invoking first-turn formatters.
+        prompts = [external_prompts for _ in batch_items]
 
         # Temporarily replace prompts in batch_items
         modified_items = []
