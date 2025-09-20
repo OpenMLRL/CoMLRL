@@ -162,3 +162,7 @@ $RECYCLE.BIN/
 .directory
 .Trash-*
 .nfs*
+
+
+# wandb
+wandb/

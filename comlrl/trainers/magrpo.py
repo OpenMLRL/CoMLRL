@@ -225,8 +225,10 @@ class MAGRPOTrainer:
         default_format_func = lambda x, external_prompts=None: x.get("prompt", "")
 
         if formatters is None:
+            # Just use the default formatter for all agents
             self.formatters = [default_format_func] * num_agents
         elif callable(formatters) and not isinstance(formatters, list):
+            # We have a single formatter and we should apply it to all agents
             # Wrap the formatter to accept external_prompts parameter
             original_formatter = formatters
             sig = inspect.signature(original_formatter)
@@ -242,6 +244,7 @@ class MAGRPOTrainer:
                 )
             self.formatters = [wrapped_formatter] * num_agents
         elif isinstance(formatters, list):
+            # We have a list of formatters and we should apply them to all agents
             if len(formatters) != num_agents:
                 raise ValueError(
                     f"Number of formatters ({len(formatters)}) must match "
@@ -1067,7 +1070,9 @@ class MAGRPOTrainer:
         # Find where padding token starts if any
         pad_positions = (prompt_input_ids[0] == self.tokenizer.pad_token_id).nonzero()
         if pad_positions.shape[0] > 0:
-            prompt_len = pad_positions[0].item()
+            prompt_len = pad_positions[
+                0
+            ].item()  # prompt ends at index prompt_len, this is the index of the first pad token
 
         # Extract completion text for single prompt
         completions = []

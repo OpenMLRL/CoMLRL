@@ -46,7 +46,7 @@ def example_usage():
     config = MAGRPOConfig(
         output_dir="./magrpo_multi_reward_output",
         num_train_epochs=3,
-        per_device_train_batch_size=4,
+        per_device_train_batch_size=1,
         learning_rate=5e-5,
         logging_steps=10,
         save_steps=100,
