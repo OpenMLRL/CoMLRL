@@ -802,7 +802,9 @@ class MAGRPOTrainer:
                     )
 
                 # Check for early termination by threshold
-                if turn_mean_reward >= getattr(self.args, "early_termination_threshold", 4.0):
+                if turn_mean_reward >= getattr(
+                    self.args, "early_termination_threshold", 4.0
+                ):
                     early_termination = True
                     # Log as numeric 1 to avoid W&B media-type panels for bool
                     turn_log_data[f"turn_{turn_idx + 1}/early_termination"] = 1
