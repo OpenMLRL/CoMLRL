@@ -71,6 +71,12 @@ class MAGRPOConfig(TrainingArguments):
             "Only used in multi-turn training."
         },
     )
+    early_termination_threshold: Optional[float] = field(
+        default=4.0,
+        metadata={
+            "help": "Threshold on mean reward to trigger early termination of an episode."
+        },
+    )
 
 
 class MAGRPOTrainer:
@@ -523,7 +529,7 @@ class MAGRPOTrainer:
                             agent_idx
                         ][-1]
 
-                if rewards[0] == 4.0:
+                if rewards[0] >= getattr(self.args, "early_termination_threshold", 4.0):
                     # Early termination
                     break
 
@@ -795,21 +801,24 @@ class MAGRPOTrainer:
                         component_mean
                     )
 
-                # Check for early termination
-                if turn_mean_reward == 4.0:
+                # Check for early termination by threshold
+                if turn_mean_reward >= getattr(self.args, "early_termination_threshold", 4.0):
                     early_termination = True
-                    turn_log_data[f"turn_{turn_idx + 1}/early_termination"] = True
+                    # Log as numeric 1 to avoid W&B media-type panels for bool
+                    turn_log_data[f"turn_{turn_idx + 1}/early_termination"] = 1
                     wandb.log(turn_log_data)
 
                     # Fill remaining turns with max values
                     for future_turn in range(turn_idx + 1, self.args.num_turns):
                         # Log perfect metrics for skipped turns
+                        perfect = getattr(self.args, "early_termination_threshold", 4.0)
                         perfect_metrics = {
-                            f"turn_{future_turn + 1}/batch_rewards_mean": 4.0,
-                            f"turn_{future_turn + 1}/reward_1_mean": 4.0,
+                            f"turn_{future_turn + 1}/batch_rewards_mean": perfect,
+                            f"turn_{future_turn + 1}/reward_1_mean": perfect,
+                            f"turn_{future_turn + 1}/early_termination": 1,
                         }
                         wandb.log(perfect_metrics)
-                        epoch_turn_rewards[future_turn].append(4.0)
+                        epoch_turn_rewards[future_turn].append(perfect)
 
                         # Log improvement as 0
                         if future_turn > 0:
@@ -821,6 +830,8 @@ class MAGRPOTrainer:
 
                     break
 
+                # Not early termination: log explicit 0 for clarity and consistent dtype
+                turn_log_data[f"turn_{turn_idx + 1}/early_termination"] = 0
                 wandb.log(turn_log_data)
 
         # Log turn-to-turn improvements
@@ -899,9 +910,8 @@ class MAGRPOTrainer:
                 "system/episode_loss": batch_loss,
                 "system/episode_num_turns": len(turn_data),
             }
-            # Only log early termination if it happened
-            if early_termination:
-                log_data["system/episode_early_termination"] = True
+            # Log early termination status as numeric 0/1 for consistent scalar panels
+            log_data["system/episode_early_termination"] = 1 if early_termination else 0
             wandb.log(log_data)
 
         return batch_loss, epoch_rewards, turn_data, early_termination
