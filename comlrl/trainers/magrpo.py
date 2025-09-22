@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import random
 import torch
 import wandb
 from datasets import Dataset, IterableDataset
@@ -75,6 +76,13 @@ class MAGRPOConfig(TrainingArguments):
         default=4.0,
         metadata={
             "help": "Threshold on mean reward to trigger early termination of an episode."
+        },
+    )
+    # Handoff mode for selecting previous completions: 'best' or 'random'
+    handoff: str = field(
+        default="random",
+        metadata={
+            "help": "Selection for previous completions across turns: 'best' or 'random'."
         },
     )
 
@@ -468,6 +476,8 @@ class MAGRPOTrainer:
 
         # Store best completions from previous turn for external transitions
         previous_best_completions = [None] * self.num_agents
+        # Store candidate pools (all completions from previous turn) for random handoff
+        previous_candidate_pools: Optional[List[List[str]]] = None
 
         # Run episode with configured number of turns
         for turn_idx in range(self.args.num_turns):
@@ -475,11 +485,32 @@ class MAGRPOTrainer:
             agent_external_prompts = [None] * self.num_agents
 
             if turn_idx > 0 and all(c is not None for c in previous_best_completions):
-                # Get external transitions based on previous turn's best result
+                # Select prior completions based on configured strategy
+                mode = str(getattr(self.args, "handoff", "random")).lower()
+                if mode == "random":
+                    if previous_candidate_pools:
+                        selected_prev = [
+                            (
+                                random.choice(pool)
+                                if pool
+                                else previous_best_completions[i]
+                            )
+                            for i, pool in enumerate(previous_candidate_pools)
+                        ]
+                    else:
+                        selected_prev = list(previous_best_completions)
+                elif mode == "best":
+                    selected_prev = list(previous_best_completions)
+                else:
+                    raise ValueError(
+                        f"Unsupported handoff mode: {mode}. Use 'best' or 'random'."
+                    )
+
+                # Get external transitions based on selected prior completions
                 if self.external_transition is not None:
                     transition_result = self.external_transition(
                         prompt=batch_item.get("prompt", ""),
-                        agent_completions=previous_best_completions,
+                        agent_completions=selected_prev,
                         num_agents=self.num_agents,
                     )
 
@@ -508,6 +539,11 @@ class MAGRPOTrainer:
                 # Extract the completion directly
                 completion = agent_completions["completions"][0][0]
                 agent_sample_completions[agent_idx].append(completion)
+
+            # Update candidate pools for next turn (evaluation uses 1 sequence per agent)
+            previous_candidate_pools = [
+                [agent_sample_completions[i][-1]] for i in range(self.num_agents)
+            ]
 
             # Check for early termination (only relevant for multi-turn)
             if self.args.num_turns > 1:
@@ -708,6 +744,8 @@ class MAGRPOTrainer:
 
         # Store best completions from previous turn for external transitions
         previous_best_completions = [None] * self.num_agents
+        # Store candidate pools (all completions from previous turn) for random handoff
+        previous_candidate_pools: Optional[List[List[str]]] = None
 
         # Execute multi-turn episode
         for turn_idx in range(self.args.num_turns):
@@ -717,9 +755,30 @@ class MAGRPOTrainer:
             # Prepare external prompts for turns after the first
             agent_external_prompts = [None] * self.num_agents
             if turn_idx > 0 and all(c is not None for c in previous_best_completions):
+                # Select prior completions based on configured strategy
+                mode = str(getattr(self.args, "handoff", "random")).lower()
+                if mode == "random":
+                    if previous_candidate_pools:
+                        selected_prev = [
+                            (
+                                random.choice(pool)
+                                if pool
+                                else previous_best_completions[i]
+                            )
+                            for i, pool in enumerate(previous_candidate_pools)
+                        ]
+                    else:
+                        selected_prev = list(previous_best_completions)
+                elif mode == "best":
+                    selected_prev = list(previous_best_completions)
+                else:
+                    raise ValueError(
+                        f"Unsupported handoff mode: {mode}. Use 'best' or 'random'."
+                    )
+
                 transition_result = self.external_transition(
                     prompt=batch_item.get("prompt", ""),
-                    agent_completions=previous_best_completions,
+                    agent_completions=selected_prev,
                     num_agents=self.num_agents,
                 )
 
@@ -755,6 +814,9 @@ class MAGRPOTrainer:
                 agent_completions_list.append(
                     all_completions[agent_idx]["completions"][0]
                 )
+
+            # Update candidate pools for next turn
+            previous_candidate_pools = agent_completions_list
 
             # Get formatted prompt
             formatted_prompt = all_completions[0]["prompts"][0]
