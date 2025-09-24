@@ -369,6 +369,80 @@ class MAGRPOTrainer:
                     }
                 )
 
+            # Incorporate full config sections and derived fields for searchability
+            sections = (
+                self.wandb_config.get("config_sections")
+                if isinstance(self.wandb_config, dict)
+                else None
+            )
+            if isinstance(sections, dict):
+                dataset_section = sections.get("dataset") or {}
+                model_section = sections.get("model") or {}
+                output_section = sections.get("output") or {}
+                external_section = sections.get("external") or {}
+                trainer_section = sections.get("trainer") or {}
+
+                # Attach full sections
+                config_dict.update(
+                    {
+                        "dataset": dataset_section,
+                        "model": model_section,
+                        "output": output_section,
+                        "external": external_section,
+                        "trainer": trainer_section,
+                    }
+                )
+
+                # Derived convenience keys
+                dataset_name = (
+                    dataset_section.get("name")
+                    if isinstance(dataset_section, dict)
+                    else None
+                )
+                dataset_type = (
+                    dataset_section.get("type")
+                    if isinstance(dataset_section, dict)
+                    else None
+                )
+                if dataset_name:
+                    config_dict["dataset_name"] = dataset_name
+                if dataset_type:
+                    config_dict["dataset_type"] = dataset_type
+
+                # External mode-specific fields
+                ext_mode = (
+                    external_section.get("mode")
+                    if isinstance(external_section, dict)
+                    else None
+                )
+                if ext_mode:
+                    config_dict["external_mode"] = ext_mode
+                    if ext_mode in ("level_feedback", "level_passed", "passed"):
+                        if "sandbox_slice" in external_section:
+                            config_dict["sandbox_slice"] = external_section.get(
+                                "sandbox_slice"
+                            )
+                    if (
+                        ext_mode == "expert_edits"
+                        and "expert_model" in external_section
+                    ):
+                        config_dict["expert_model"] = external_section.get(
+                            "expert_model"
+                        )
+                    # Only include composition flags if provided
+                    if "original_prompt" in external_section:
+                        config_dict["original_prompt"] = external_section.get(
+                            "original_prompt"
+                        )
+                    if "previous_response" in external_section:
+                        config_dict["previous_response"] = external_section.get(
+                            "previous_response"
+                        )
+
+                # Handoff mode (from args)
+                if hasattr(self.args, "handoff"):
+                    config_dict["handoff"] = getattr(self.args, "handoff")
+
             init_kwargs = {
                 "project": wandb_project,
                 "entity": wandb_entity,
@@ -379,6 +453,15 @@ class MAGRPOTrainer:
             if wandb_dir is not None:
                 os.makedirs(wandb_dir, exist_ok=True)
                 init_kwargs["dir"] = wandb_dir
+
+            # Optionally support tags if provided by caller
+            tags = (
+                self.wandb_config.get("tags")
+                if isinstance(self.wandb_config, dict)
+                else None
+            )
+            if isinstance(tags, list):
+                init_kwargs["tags"] = tags
 
             wandb.init(**init_kwargs)
             self.wandb_initialized = True
@@ -488,17 +571,9 @@ class MAGRPOTrainer:
                 # Select prior completions based on configured strategy
                 mode = str(getattr(self.args, "handoff", "random")).lower()
                 if mode == "random":
-                    if previous_candidate_pools:
-                        selected_prev = [
-                            (
-                                random.choice(pool)
-                                if pool
-                                else previous_best_completions[i]
-                            )
-                            for i, pool in enumerate(previous_candidate_pools)
-                        ]
-                    else:
-                        selected_prev = list(previous_best_completions)
+                    selected_prev = [
+                        random.choice(pool) for pool in previous_candidate_pools
+                    ]
                 elif mode == "best":
                     selected_prev = list(previous_best_completions)
                 else:
@@ -758,17 +833,9 @@ class MAGRPOTrainer:
                 # Select prior completions based on configured strategy
                 mode = str(getattr(self.args, "handoff", "random")).lower()
                 if mode == "random":
-                    if previous_candidate_pools:
-                        selected_prev = [
-                            (
-                                random.choice(pool)
-                                if pool
-                                else previous_best_completions[i]
-                            )
-                            for i, pool in enumerate(previous_candidate_pools)
-                        ]
-                    else:
-                        selected_prev = list(previous_best_completions)
+                    selected_prev = [
+                        random.choice(pool) for pool in previous_candidate_pools
+                    ]
                 elif mode == "best":
                     selected_prev = list(previous_best_completions)
                 else:
