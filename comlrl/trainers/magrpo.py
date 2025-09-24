@@ -1,8 +1,14 @@
 import inspect
+import json
 import os
 from dataclasses import dataclass, field
+<<<<<<< HEAD
 import itertools
 from typing import Any, Callable, Dict, List, Optional, Union
+=======
+from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+>>>>>>> 186d782 (Added save_epochs)
 
 import numpy as np
 import torch
@@ -710,6 +716,15 @@ class MAGRPOTrainer:
             agent.to(device)
             agent.train()
 
+<<<<<<< HEAD
+=======
+        # Track epoch rewards for conditional saving
+        epoch_rewards_history = []
+
+        # Store latest evaluation metrics for checkpoint saving
+        eval_metrics = {}
+
+>>>>>>> 186d782 (Added save_epochs)
         # Create the data pipeline for generating examples
         for epoch in range(0, int(self.args.num_train_epochs)):
             # No per-agent reward tracking in single reward mode
@@ -766,6 +781,7 @@ class MAGRPOTrainer:
                     if batch_log:
                         wandb.log(batch_log)
 
+<<<<<<< HEAD
             # Log per-turn epoch averages inline (avoid custom system/* metrics)
             if self.wandb_initialized:
                 epoch_log: Dict[str, Any] = {}
@@ -783,6 +799,17 @@ class MAGRPOTrainer:
                     wandb.log(epoch_log)
 
     def _train_step_returns(
+=======
+            # Save checkpoint based on save_epochs interval
+            if (
+                hasattr(self.args, "save_epochs")
+                and self.args.save_epochs > 0
+                and (epoch + 1) % self.args.save_epochs == 0
+            ):
+                self.save_epoch_checkpoint(epoch + 1, epoch_turn_rewards, eval_metrics)
+
+    def _train_step(
+>>>>>>> 186d782 (Added save_epochs)
         self,
         batch_item,
         epoch_turn_rewards,
@@ -1490,3 +1517,67 @@ class MAGRPOTrainer:
         if self.wandb_initialized:
             wandb.log({"final_model_saved": output_dir})
             wandb.finish()
+
+    def save_epoch_checkpoint(self, epoch, epoch_turn_rewards, eval_metrics):
+        """
+        Save model checkpoint at the end of an epoch with metadata.
+
+        Args:
+            epoch: Current epoch number
+            epoch_turn_rewards: List of rewards for each turn
+            eval_metrics: Evaluation metrics dictionary
+        """
+        checkpoint_dir = os.path.join(self.args.output_dir, f"epoch-{epoch}")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        # Save each agent model
+        for agent_idx, agent in enumerate(self.agents):
+            agent_dir = f"{checkpoint_dir}/agent_{agent_idx}"
+            os.makedirs(agent_dir, exist_ok=True)
+
+            agent.save_pretrained(agent_dir)
+
+            if self.tokenizer:
+                self.tokenizer.save_pretrained(agent_dir)
+
+        # Calculate turn_1/reward_1_mean
+        turn_1_reward_mean = 0.0
+        if epoch_turn_rewards and len(epoch_turn_rewards) > 0 and epoch_turn_rewards[0]:
+            turn_1_reward_mean = np.mean(epoch_turn_rewards[0])
+
+        # Extract eval metrics
+        eval_avg_total_reward = eval_metrics.get("eval/avg_total_reward", 0.0)
+        eval_avg_passed_rate = eval_metrics.get("eval/avg_passed_rate", 0.0)
+
+        # Save training state and metadata
+        training_state = {
+            "epoch": epoch,
+            "timestamp": datetime.now().isoformat(),
+            "turn_1_reward_mean": turn_1_reward_mean,
+            "eval_avg_total_reward": eval_avg_total_reward,
+            "eval_avg_passed_rate": eval_avg_passed_rate,
+            "num_agents": self.num_agents,
+            "num_turns": self.args.num_turns,
+            "learning_rate": self.args.learning_rate,
+            "num_train_epochs": self.args.num_train_epochs,
+        }
+
+        with open(os.path.join(checkpoint_dir, "training_state.json"), "w") as f:
+            json.dump(training_state, f, indent=2)
+
+        # Log checkpoint saving to wandb
+        if self.wandb_initialized:
+            wandb.log(
+                {
+                    "epoch_checkpoint_saved": checkpoint_dir,
+                    "epoch_checkpoint_epoch": epoch,
+                    "epoch_checkpoint_turn_1_reward_mean": turn_1_reward_mean,
+                    "epoch_checkpoint_eval_avg_total_reward": eval_avg_total_reward,
+                    "epoch_checkpoint_eval_avg_passed_rate": eval_avg_passed_rate,
+                }
+            )
+
+        print(f"Epoch checkpoint saved at epoch {epoch}: {checkpoint_dir}")
+        print(f"  - Turn 1 reward mean: {turn_1_reward_mean:.4f}")
+        print(f"  - Eval avg total reward: {eval_avg_total_reward:.4f}")
+        print(f"  - Eval avg passed rate: {eval_avg_passed_rate:.4f}")
