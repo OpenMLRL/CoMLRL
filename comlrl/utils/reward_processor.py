@@ -17,6 +17,11 @@ class RewardProcessors:
         return lambda x: x * factor
 
     @staticmethod
+    def shift(value=0.0):
+        """Return a processor that shifts rewards by a constant value."""
+        return lambda x: x + value
+
+    @staticmethod
     def sigmoid_scale():
         """Return a processor that applies sigmoid scaling to rewards."""
         import math
