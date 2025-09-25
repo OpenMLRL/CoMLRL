@@ -790,9 +790,6 @@ class MAGRPOTrainer:
                 epoch_rewards_history,
             )
 
-        # Old forward step removed; use _train_step_returns instead
-        return 0.0, epoch_rewards, [], False
-
     def _train_step_returns(
         self,
         batch_item,
