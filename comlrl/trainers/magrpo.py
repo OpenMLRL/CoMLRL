@@ -58,33 +58,14 @@ class MAGRPOConfig(TrainingArguments):
             "Set > 1 to enable multi-turn training with external transitions between turns."
         },
     )
-    turn_gradient_weights: Optional[List[float]] = field(
-        default_factory=lambda: [1.0, 1.0],
+    # Uniform updates across turns (no per-turn gradient weighting or early termination)
+    discount: float = field(
+        default=0.9,
         metadata={
-            "help": "Gradient weights for each turn in multi-turn training. "
-            "List length should match num_turns. Defaults to equal weights."
+            "help": "Discount factor (gamma) for computing returns across turns."
         },
     )
-    early_termination_weight: Optional[float] = field(
-        default=2.0,
-        metadata={
-            "help": "Weight multiplier applied when early termination occurs (perfect reward achieved). "
-            "Only used in multi-turn training."
-        },
-    )
-    early_termination_threshold: Optional[float] = field(
-        default=4.0,
-        metadata={
-            "help": "Threshold on mean reward to trigger early termination of an episode."
-        },
-    )
-    # Handoff mode for selecting previous completions: 'best' or 'random'
-    handoff: str = field(
-        default="random",
-        metadata={
-            "help": "Selection for previous completions across turns: 'best' or 'random'."
-        },
-    )
+    # Handoff removed: branching uses all generations
 
 
 class MAGRPOTrainer:
@@ -359,15 +340,7 @@ class MAGRPOTrainer:
                 "max_new_tokens": self.args.max_new_tokens,
             }
 
-            # Only add multi-turn specific config if num_turns > 1
-            if self.args.num_turns > 1:
-                config_dict.update(
-                    {
-                        "turn_gradient_weights": self.args.turn_gradient_weights,
-                        "early_termination_weight": self.args.early_termination_weight,
-                        # External model configuration is handled by the calling code
-                    }
-                )
+            # No per-turn weighting or early termination config
 
             # Incorporate full config sections and derived fields for searchability
             sections = (
@@ -439,9 +412,7 @@ class MAGRPOTrainer:
                             "previous_response"
                         )
 
-                # Handoff mode (from args)
-                if hasattr(self.args, "handoff"):
-                    config_dict["handoff"] = getattr(self.args, "handoff")
+                # Handoff removed
 
             init_kwargs = {
                 "project": wandb_project,
@@ -770,7 +741,6 @@ class MAGRPOTrainer:
 
             # Turn tracking for all cases (including single-turn)
             epoch_turn_rewards = [[] for _ in range(self.args.num_turns)]
-            epoch_early_terminations = 0
 
             for batch_idx, batch in enumerate(self.get_train_dataloader()):
                 # evaluate every 4 batches
@@ -781,15 +751,13 @@ class MAGRPOTrainer:
 
                 # Process single batch item (batch_size=1 enforced)
                 batch_item = batch[0]
-                # Unified training step
-                batch_loss, rewards, turn_data, early_termination = self._train_step(
+                # Unified training step (returns-based, backward updates)
+                batch_loss, rewards, turn_data, _ = self._train_step_returns(
                     batch_item,
                     epoch_rewards,
                     epoch_turn_rewards,
                     **kwargs,
                 )
-                if early_termination:
-                    epoch_early_terminations += 1
 
                 epoch_loss += batch_loss
 
@@ -801,7 +769,7 @@ class MAGRPOTrainer:
                 epoch_agent_rewards,
                 epoch_reward_components,
                 epoch_turn_rewards,
-                epoch_early_terminations,
+                0,
                 epoch_rewards_history,
             )
 
@@ -1046,6 +1014,136 @@ class MAGRPOTrainer:
             wandb.log(log_data)
 
         return batch_loss, epoch_rewards, turn_data, early_termination
+
+    def _train_step_returns(
+        self,
+        batch_item,
+        epoch_rewards,
+        epoch_turn_rewards,
+        **kwargs,
+    ):
+        """Branching rollout with returns; updates backward from last turn to first."""
+        num_turns = int(self.args.num_turns)
+        num_gens = int(self.args.num_generations)
+        gamma = float(getattr(self.args, "discount", 0.9))
+
+        turn_data = []
+
+        def build_node(turn_idx: int, prompts_per_agent=None):
+            comps_per_agent = []
+            for agent_idx in range(self.num_agents):
+                comps = self._generate_completions_with_external_prompts(
+                    self.agents[agent_idx],
+                    [batch_item],
+                    agent_idx=agent_idx,
+                    num_return_sequences=num_gens,
+                    max_new_tokens=self.args.max_new_tokens,
+                    external_prompts=(
+                        prompts_per_agent[agent_idx] if prompts_per_agent else None
+                    ),
+                    **kwargs,
+                )
+                comps_per_agent.append(comps)
+
+            agent_completions_list = [
+                comps_per_agent[i]["completions"][0] for i in range(self.num_agents)
+            ]
+            formatted_prompt = comps_per_agent[0]["prompts"][0]
+            rewards_vec, _ = self._compute_rewards(
+                [formatted_prompt], agent_completions_list, batch_items=[batch_item]
+            )
+            if 0 <= turn_idx < len(epoch_turn_rewards):
+                epoch_turn_rewards[turn_idx].append(
+                    np.mean(rewards_vec) if rewards_vec else 0.0
+                )
+
+            node = {
+                "turn": turn_idx,
+                "completions": comps_per_agent,
+                "rewards": rewards_vec,
+                "children": [],
+                "returns": None,
+            }
+
+            if turn_idx < num_turns - 1:
+                for j in range(len(rewards_vec)):
+                    parent_joint = [
+                        agent_completions_list[i][j] for i in range(self.num_agents)
+                    ]
+                    child_prompts = self.external_transition(
+                        prompt=batch_item.get("prompt", ""),
+                        agent_completions=parent_joint,
+                        num_agents=self.num_agents,
+                    )
+                    if (
+                        not isinstance(child_prompts, (list, tuple))
+                        or len(child_prompts) != self.num_agents
+                    ):
+                        raise ValueError(
+                            "External transition must return per-agent prompts"
+                        )
+                    child = build_node(
+                        turn_idx + 1, prompts_per_agent=list(child_prompts)
+                    )
+                    node["children"].append(child)
+            return node
+
+        root = build_node(0, prompts_per_agent=None)
+
+        def compute_returns(node):
+            if not node["children"]:
+                node["returns"] = list(node["rewards"]) if node["rewards"] else []
+                return node["returns"]
+            parent_returns = []
+            for j, rj in enumerate(node["rewards"] or []):
+                child_node = node["children"][j]
+                child_returns = compute_returns(child_node)
+                mean_child = float(np.mean(child_returns)) if child_returns else 0.0
+                parent_returns.append(rj + gamma * mean_child)
+            node["returns"] = parent_returns
+            return parent_returns
+
+        compute_returns(root)
+
+        def post_order_update(node):
+            for child in node["children"]:
+                post_order_update(child)
+            returns_vec = node.get("returns") or []
+            comps_per_agent = node["completions"]
+            if not returns_vec:
+                return
+            for agent_idx in range(self.num_agents):
+                for opt in self.optimizers:
+                    opt.zero_grad()
+                agent_loss = self._compute_loss_with_gradients(
+                    self.agents[agent_idx],
+                    comps_per_agent[agent_idx],
+                    returns_vec,
+                )
+                agent_loss.backward()
+                self.optimizers[agent_idx].step()
+
+        post_order_update(root)
+
+        def collect_turn_data(node):
+            turn_data.append(
+                {
+                    "completions": node["completions"],
+                    "rewards": node.get("returns") or node.get("rewards") or [],
+                    "reward_components": [],
+                    "mean_reward": (
+                        float(np.mean(node["rewards"])) if node["rewards"] else 0.0
+                    ),
+                }
+            )
+            for child in node["children"]:
+                collect_turn_data(child)
+
+        collect_turn_data(root)
+
+        epoch_rewards.append(np.mean(root.get("returns") or [0.0]))
+        batch_loss = float(np.mean(np.abs(root.get("returns") or [0.0])))
+        return batch_loss, epoch_rewards, turn_data, False
 
     def _log_epoch_summary(
         self,
