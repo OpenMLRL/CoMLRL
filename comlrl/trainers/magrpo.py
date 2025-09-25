@@ -521,7 +521,10 @@ class MAGRPOTrainer:
             gamma = float(getattr(self.args, "discount", 0.9))
             sum_returns = [0.0] * n_turns
             for s in range(n_samp):
-                rs = [eval_turn_rewards[t][s] if s < len(eval_turn_rewards[t]) else 0.0 for t in range(n_turns)]
+                rs = [
+                    eval_turn_rewards[t][s] if s < len(eval_turn_rewards[t]) else 0.0
+                    for t in range(n_turns)
+                ]
                 ret = [0.0] * n_turns
                 ret[-1] = rs[-1]
                 for t in range(n_turns - 2, -1, -1):
@@ -974,15 +977,15 @@ class MAGRPOTrainer:
         for i, avg_component in enumerate(avg_reward_components):
             epoch_log[f"system/reward_{i + 1}_avg"] = avg_component
 
-        # Multi-turn per-turn averages
+        # Multi-turn per-turn averages: log under separate turn_X/ sections
         if self.args.num_turns > 1:
             for turn_idx in range(self.args.num_turns):
                 if epoch_turn_rewards and epoch_turn_rewards[turn_idx]:
-                    epoch_log[f"system/epoch_turn_{turn_idx + 1}_avg_reward"] = float(
+                    epoch_log[f"turn_{turn_idx + 1}/epoch_avg_reward"] = float(
                         np.mean(epoch_turn_rewards[turn_idx])
                     )
                 if epoch_turn_returns and epoch_turn_returns[turn_idx]:
-                    epoch_log[f"system/epoch_turn_{turn_idx + 1}_avg_return"] = float(
+                    epoch_log[f"turn_{turn_idx + 1}/epoch_avg_return"] = float(
                         np.mean(epoch_turn_returns[turn_idx])
                     )
 
