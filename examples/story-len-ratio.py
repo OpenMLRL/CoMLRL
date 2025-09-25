@@ -104,8 +104,8 @@ def example_usage():
     )
     trainer = MAGRPOTrainer(
         agents=agents,
-        reward_funcs=configured_reward_func,
-        reward_processors=RewardProcessors.scale(factor=100.0),
+        reward_func=configured_reward_func,
+        reward_processor=RewardProcessors.scale(factor=100.0),
         args=config,
         train_dataset=train_dataset,
         tokenizer=tokenizer,

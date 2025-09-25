@@ -4,7 +4,7 @@ CoMLRL is designed for LLM collaboration with multiple MARL algorithms. To set u
 
 ## Reward Model
 
-A reward model can be a function that takes all agents' completions and gives a reward. It can also be a list of multiple reward functions where the total rewards are calculated with reward weights. The total reward can be transformed by a predefined reward processor (some are provided in utils/reward_processors).
+A reward model is a single callable that takes all agents' completions and returns a list of scalar rewards (one per sample). If you want to combine multiple criteria, wrap them inside your own composite function. You can optionally pass a single reward processor (callable) to post-process the scalar reward (e.g., scaling or shifting).
 
 ```
 todo

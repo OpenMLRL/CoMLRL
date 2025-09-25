@@ -463,7 +463,7 @@ def main():
     trainer = MAGRPOTrainer(
         agents=[AutoModelForCausalLM.from_pretrained(model_name) for _ in range(2)],
         num_agents=2,
-        reward_funcs=execution_reward,
+        reward_func=execution_reward,
         formatters=[function_writer_formatter, configured_example_writer_formatter],
         args=config,
         train_dataset=train_dataset,

@@ -111,13 +111,13 @@ def main():
     trainer = MAGRPOTrainer(
         agents=agents,
         num_agents=2,
-        reward_funcs=tldr_combined_reward,
+        reward_func=tldr_combined_reward,
         formatters=[summary_agent_formatter, elaboration_agent_formatter],
         args=magrpo_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         tokenizer=tokenizer,
-        reward_processors=RewardProcessors.scale(factor=1),
+        reward_processor=RewardProcessors.scale(factor=1),
     )
 
     # Train
