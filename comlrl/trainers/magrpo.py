@@ -656,74 +656,19 @@ class MAGRPOTrainer:
         """Log evaluation metrics for any number of turns."""
         eval_metrics = {}
 
-        # Detailed logging (if logger is provided)
+        # Detailed logging (if logger is provided), standardized to modern interface
         if (
             self.eval_logger is not None
             and self.eval_aggregator is not None
             and all_agent_completions_turns
             and all(agent_comps for agent_comps in all_agent_completions_turns)
         ):
-            # Dynamically call eval_logger based on its signature
-            sig = inspect.signature(self.eval_logger)
-            params = sig.parameters
-
-            # Check if logger accepts a generic list of agent completions
-            if "agent_completions_turns" in params or "agent_completions" in params:
-                # Modern N-agent logger interface
-                if "agent_completions_turns" in params:
-                    detailed_metrics = self.eval_logger(
-                        agent_completions_turns=all_agent_completions_turns,
-                        test_cases=all_test_cases,
-                        entry_points=all_entry_points,
-                        prompts=all_prompts,
-                    )
-                else:
-                    # For single-turn, flatten the turns dimension
-                    if self.args.num_turns == 1:
-                        flattened_completions = [
-                            [sample[0] for sample in agent_comps]
-                            for agent_comps in all_agent_completions_turns
-                        ]
-                        detailed_metrics = self.eval_logger(
-                            agent_completions=flattened_completions,
-                            test_cases=all_test_cases,
-                            entry_points=all_entry_points,
-                            prompts=all_prompts,
-                        )
-                    else:
-                        detailed_metrics = self.eval_logger(
-                            agent_completions=all_agent_completions_turns,
-                            test_cases=all_test_cases,
-                            entry_points=all_entry_points,
-                            prompts=all_prompts,
-                        )
-            else:
-                # Legacy interface expecting individual agent arguments
-                # Build arguments based on number of agents
-                args = []
-
-                # Add agent completions up to the number expected by the logger
-                param_list = list(params.keys())
-                for i, param_name in enumerate(param_list):
-                    if param_name in ["test_cases", "all_test_cases"]:
-                        break
-                    if i < len(all_agent_completions_turns):
-                        # For single-turn, flatten the turns dimension
-                        if self.args.num_turns == 1:
-                            args.append(
-                                [sample[0] for sample in all_agent_completions_turns[i]]
-                            )
-                        else:
-                            args.append(all_agent_completions_turns[i])
-                    else:
-                        args.append([])
-
-                # Check if this is a code logger or text logger
-                if "test_cases" in params or "all_test_cases" in params:
-                    # Code logger needs test cases, entry points, and prompts
-                    args.extend([all_test_cases, all_entry_points, all_prompts])
-
-                detailed_metrics = self.eval_logger(*args)
+            detailed_metrics = self.eval_logger(
+                agent_completions_turns=all_agent_completions_turns,
+                test_cases=all_test_cases,
+                entry_points=all_entry_points,
+                prompts=all_prompts,
+            )
 
             # Aggregate metrics for logging
             if self.args.num_turns > 1:
@@ -935,30 +880,17 @@ class MAGRPOTrainer:
                     entry_point = batch_item.get("entry_point", "")
                     prompt_src = batch_item.get("prompt", "")
 
-                    # Call provided eval_logger with appropriate signature
-                    sig = inspect.signature(self.eval_logger)
-                    params = sig.parameters
-                    metrics_list = None
-                    if "completions1_turns" in params:
-                        # Multi-turn logger: wrap as one-turn data
-                        completions1_turns = [[c] for c in c1_list]
-                        completions2_turns = [[c] for c in c2_list]
-                        metrics_list = self.eval_logger(
-                            completions1_turns=completions1_turns,
-                            completions2_turns=completions2_turns,
-                            test_cases=[test_code] * len(c2_list),
-                            entry_points=[entry_point] * len(c2_list),
-                            prompts=[prompt_src] * len(c2_list),
-                        )
-                    else:
-                        # Single-turn code logger
-                        metrics_list = self.eval_logger(
-                            c1_list,
-                            c2_list,
-                            [test_code] * len(c2_list),
-                            [entry_point] * len(c2_list),
-                            [prompt_src] * len(c2_list),
-                        )
+                    # Build modern interface payload: each candidate as a one-turn sample
+                    aux_samples = [[c] for c in c1_list]
+                    main_samples = [[c] for c in c2_list]
+                    agent_cturns = [aux_samples, main_samples]
+
+                    metrics_list = self.eval_logger(
+                        agent_completions_turns=agent_cturns,
+                        test_cases=[test_code] * len(c2_list),
+                        entry_points=[entry_point] * len(c2_list),
+                        prompts=[prompt_src] * len(c2_list),
+                    )
 
                     if metrics_list:
                         # Support both single-turn and mt logger outputs
