@@ -1,6 +1,7 @@
 import inspect
 import os
 from dataclasses import dataclass, field
+import itertools
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
@@ -62,6 +63,13 @@ class MAGRPOConfig(TrainingArguments):
         },
     )
     # Handoff removed: branching uses all generations
+    # Joint action composition mode for multiple agents
+    joint_mode: str = field(
+        default="cross",
+        metadata={
+            "help": "How to form joint actions from per-agent generations: 'cross' (Cartesian product) or 'aligned' (index-aligned)."
+        },
+    )
 
 
 class MAGRPOTrainer:
@@ -828,9 +836,50 @@ class MAGRPOTrainer:
                 comps_per_agent[i]["completions"][0] for i in range(self.num_agents)
             ]
             formatted_prompt = comps_per_agent[0]["prompts"][0]
-            rewards_vec = self._compute_rewards(
-                [formatted_prompt], agent_completions_list, batch_items=[batch_item]
-            )
+            # Compute rewards per joint action depending on joint_mode
+            joint_mode = str(getattr(self.args, "joint_mode", "cross")).lower()
+            rewards_vec: List[float] = []
+            combo_indices: List[Tuple[int, ...]] = []
+            if joint_mode == "cross" and self.num_agents > 1:
+                # Cartesian product of per-agent completion indices
+                per_agent_ranges = [
+                    range(len(agent_completions_list[i]))
+                    for i in range(self.num_agents)
+                ]
+                for idx_tuple in itertools.product(*per_agent_ranges):
+                    # Build per-agent single-element lists
+                    completion_args = [
+                        [agent_completions_list[a][idx_tuple[a]]]
+                        for a in range(self.num_agents)
+                    ]
+                    # Call reward function for this joint action
+                    try:
+                        sig = inspect.signature(self.reward_func)
+                        if "batch_items" in sig.parameters:
+                            rlist = self.reward_func(
+                                *completion_args, batch_items=[batch_item]
+                            )
+                        else:
+                            rlist = self.reward_func(*completion_args)
+                    except TypeError:
+                        rlist = self.reward_func(
+                            [
+                                agent_completions_list[a][idx_tuple[a]]
+                                for a in range(self.num_agents)
+                            ]
+                        )
+                    # Apply processor
+                    processed = [self.reward_processor(r) for r in rlist]
+                    rewards_vec.append(float(processed[0] if processed else 0.0))
+                    combo_indices.append(tuple(idx_tuple))
+            else:
+                # Aligned by index
+                rewards_vec = self._compute_rewards(
+                    [formatted_prompt], agent_completions_list, batch_items=[batch_item]
+                )
+                # combo indices: align j with (j,j,...)
+                k = len(agent_completions_list[0]) if agent_completions_list else 0
+                combo_indices = [tuple([j] * self.num_agents) for j in range(k)]
             if 0 <= turn_idx < len(epoch_turn_rewards):
                 epoch_turn_rewards[turn_idx].append(
                     np.mean(rewards_vec) if rewards_vec else 0.0
@@ -907,12 +956,16 @@ class MAGRPOTrainer:
                 "rewards": rewards_vec,
                 "children": [],
                 "returns": None,
+                "combo_indices": combo_indices,
             }
 
             if turn_idx < num_turns - 1:
                 for j in range(len(rewards_vec)):
+                    # Map j to per-agent indices
+                    idx_tuple = combo_indices[j]
                     parent_joint = [
-                        agent_completions_list[i][j] for i in range(self.num_agents)
+                        agent_completions_list[i][idx_tuple[i]]
+                        for i in range(self.num_agents)
                     ]
                     child_prompts = self.external_transition(
                         prompt=batch_item.get("prompt", ""),
@@ -970,13 +1023,36 @@ class MAGRPOTrainer:
             comps_per_agent = node["completions"]
             if not returns_vec:
                 return
+            # If cross mode, build per-agent joint reward sums (accumulate joint returns
+            # for each completion across all joint actions it participates in)
+            joint_mode_local = str(getattr(self.args, "joint_mode", "cross")).lower()
+            combo_idx_list = node.get("combo_indices") or []
+            per_agent_joint_sums: List[List[float]] = []
+            if joint_mode_local == "cross" and combo_idx_list:
+                # Determine K per agent
+                k = len(comps_per_agent[0]["completions"][0]) if comps_per_agent else 0
+                for a in range(self.num_agents):
+                    sums = [0.0] * k
+                    counts = [0] * k
+                    for j, ret in enumerate(returns_vec):
+                        idx_a = combo_idx_list[j][a]
+                        sums[idx_a] += float(ret)
+                        counts[idx_a] += 1
+                    # Use joint reward sum per completion (no averaging)
+                    per_agent_joint_sums.append(sums)
+            else:
+                # Aligned: returns already length K
+                k = len(returns_vec)
+                per_agent_joint_sums = [
+                    list(map(float, returns_vec)) for _ in range(self.num_agents)
+                ]
             for agent_idx in range(self.num_agents):
                 # Zero only the current agent's optimizer
                 self.optimizers[agent_idx].zero_grad()
                 agent_loss = self._compute_loss_with_gradients(
                     self.agents[agent_idx],
                     comps_per_agent[agent_idx],
-                    returns_vec,
+                    per_agent_joint_sums[agent_idx],
                 )
                 agent_loss.backward()
                 self.optimizers[agent_idx].step()
