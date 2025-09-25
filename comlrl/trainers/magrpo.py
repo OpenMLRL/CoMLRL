@@ -1448,9 +1448,14 @@ class MAGRPOTrainer:
         # Convert rewards to tensor
         rewards_tensor = torch.tensor(rewards, dtype=torch.float, device=device)
 
-        # Use baseline approach
+        # Use baseline approach with proper normalization
         rewards_baseline = rewards_tensor.mean()  # Use mean as baseline
         advantages = rewards_tensor - rewards_baseline  # Compute advantages
+
+        # Normalize advantages by standard deviation for stable GRPO training
+        advantages_std = advantages.std()
+        if advantages_std > 1e-8:  # Avoid division by zero
+            advantages = advantages / advantages_std
 
         # Clip advantages to reasonable range to prevent numerical instability
         advantages = torch.clamp(advantages, min=-10.0, max=10.0)
