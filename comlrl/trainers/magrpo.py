@@ -671,30 +671,11 @@ class MAGRPOTrainer:
             )
 
             # Aggregate metrics for logging
-            if self.args.num_turns > 1:
-                aggregated_detailed_metrics = self.eval_aggregator(
-                    detailed_metrics, num_turns=self.args.num_turns
-                )
-            else:
-                aggregated_detailed_metrics = self.eval_aggregator(detailed_metrics)
-
-            # Keep only per-turn metrics; drop overall and improvements
-            # For single-turn aggregators that return 'avg_*', map to 'turn_1/avg_*'
-            filtered_metrics: Dict[str, Any] = {}
+            # Aggregate strictly per-turn; aggregator already returns turn_k/* keys only
+            aggregated_detailed_metrics = self.eval_aggregator(
+                detailed_metrics, num_turns=self.args.num_turns
+            )
             for key, value in aggregated_detailed_metrics.items():
-                if key.startswith("turn_"):
-                    # Drop improvement metrics
-                    if key.endswith("/avg_improvement") or "/improvement" in key:
-                        continue
-                    filtered_metrics[key] = value
-                elif key.startswith("avg_"):
-                    # Single-turn case -> map under turn_1
-                    filtered_metrics[f"turn_1/{key}"] = value
-                else:
-                    # Skip overall metrics like overall/* or others
-                    continue
-
-            for key, value in filtered_metrics.items():
                 eval_metrics[f"eval/{key}"] = value
 
         # Merge any extra metrics (already with full key prefixes like 'eval/...')
