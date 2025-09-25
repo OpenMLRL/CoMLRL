@@ -1,10 +1,9 @@
 import inspect
 import os
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
-import random
 import torch
 import wandb
 from datasets import Dataset, IterableDataset
@@ -92,6 +91,7 @@ class MAGRPOTrainer:
         eval_logger: Evaluation logger function
         eval_aggregator: Evaluation aggregator function
         external_transition: Function that provides external transitions between turns
+        dataset_type: Optional explicit dataset type (e.g., "humaneval")
     """
 
     def __init__(
@@ -111,6 +111,8 @@ class MAGRPOTrainer:
         model_config: Optional[Dict[str, Any]] = None,
         eval_logger: Optional[Callable] = None,
         eval_aggregator: Optional[Callable] = None,
+        dataset_type: Optional[str] = None,
+        enable_code_level_metrics: Optional[bool] = None,
     ):
         # Check for GPU availability
         if not torch.cuda.is_available():
@@ -212,17 +214,49 @@ class MAGRPOTrainer:
         if self.wandb_config is not None:
             self._init_wandb()
 
-        # Best-effort dataset type extraction for conditional logging
-        self.dataset_type = None
-        try:
-            if isinstance(self.wandb_config, dict):
-                sections = self.wandb_config.get("config_sections", {})
-                if isinstance(sections, dict):
-                    ds = sections.get("dataset", {})
-                    if isinstance(ds, dict):
-                        self.dataset_type = ds.get("type")
-        except Exception:
-            self.dataset_type = None
+        # Dataset type: prefer explicit parameter, fallback to config sections
+        self.dataset_type = dataset_type or None
+        if self.dataset_type is None:
+            try:
+                if isinstance(self.wandb_config, dict):
+                    sections = self.wandb_config.get("config_sections", {})
+                    if isinstance(sections, dict):
+                        ds = sections.get("dataset", {})
+                        if isinstance(ds, dict):
+                            self.dataset_type = ds.get("type")
+            except Exception:
+                self.dataset_type = None
+
+        # Toggle for training-time code-level metrics (default False)
+        self.enable_code_level_metrics = (
+            bool(enable_code_level_metrics)
+            if enable_code_level_metrics is not None
+            else False
+        )
+        if enable_code_level_metrics is None:
+            # Try to infer from config sections
+            try:
+                if isinstance(self.wandb_config, dict):
+                    sections = self.wandb_config.get("config_sections", {})
+                    if isinstance(sections, dict):
+                        trainer_section = sections.get("trainer", {})
+                        if isinstance(trainer_section, dict):
+                            if "log_code_levels" in trainer_section:
+                                self.enable_code_level_metrics = bool(
+                                    trainer_section.get("log_code_levels")
+                                )
+                            elif isinstance(trainer_section.get("logging"), dict):
+                                log_cfg = trainer_section.get("logging")
+                                if "code_level_metrics" in log_cfg:
+                                    self.enable_code_level_metrics = bool(
+                                        log_cfg.get("code_level_metrics")
+                                    )
+                                elif "log_code_levels" in log_cfg:
+                                    self.enable_code_level_metrics = bool(
+                                        log_cfg.get("log_code_levels")
+                                    )
+            except Exception:
+                pass
 
     def _setup_formatters(self, formatters, num_agents):
         """Set up format functions for each agent that can handle external transitions."""
@@ -548,8 +582,6 @@ class MAGRPOTrainer:
 
         # Store best completions from previous turn for external transitions
         previous_best_completions = [None] * self.num_agents
-        # Store candidate pools (all completions from previous turn)
-        previous_candidate_pools: Optional[List[List[str]]] = None
 
         # Run episode with configured number of turns
         for turn_idx in range(self.args.num_turns):
@@ -592,11 +624,6 @@ class MAGRPOTrainer:
                 # Extract the completion directly
                 completion = agent_completions["completions"][0][0]
                 agent_sample_completions[agent_idx].append(completion)
-
-            # Update candidate pools for next turn (evaluation uses 1 sequence per agent)
-            previous_candidate_pools = [
-                [agent_sample_completions[i][-1]] for i in range(self.num_agents)
-            ]
 
             # Compute immediate reward at this turn (single joint sample)
             agent_completions_for_reward = [
@@ -752,15 +779,9 @@ class MAGRPOTrainer:
             agent.to(device)
             agent.train()
 
-        # Track epoch rewards for conditional saving
-        epoch_rewards_history = []
-
         # Create the data pipeline for generating examples
         for epoch in range(0, int(self.args.num_train_epochs)):
-            epoch_loss = 0.0
-            epoch_rewards = []
-            # Retain variables for compatibility but do not log agent/components
-            epoch_agent_rewards = [[] for _ in range(self.num_agents)]
+            # No per-agent reward tracking in single reward mode
 
             # Turn tracking for all cases (including single-turn)
             epoch_turn_rewards = [
@@ -777,17 +798,12 @@ class MAGRPOTrainer:
                 # Process single batch item (batch_size=1 enforced)
                 batch_item = batch[0]
                 # Unified training step (returns-based, backward updates)
-                batch_loss, rewards, turn_data, _, batch_stats = (
-                    self._train_step_returns(
-                        batch_item,
-                        epoch_rewards,
-                        epoch_turn_rewards,
-                        epoch_turn_returns,
-                        **kwargs,
-                    )
+                batch_loss, batch_stats = self._train_step_returns(
+                    batch_item,
+                    epoch_turn_rewards,
+                    epoch_turn_returns,
+                    **kwargs,
                 )
-
-                epoch_loss += batch_loss
 
                 # Log per-batch, per-turn metrics
                 if self.wandb_initialized and isinstance(batch_stats, dict):
@@ -819,21 +835,25 @@ class MAGRPOTrainer:
                     if batch_log:
                         wandb.log(batch_log)
 
-            # Log epoch summary
-            self._log_epoch_summary(
-                epoch,
-                epoch_loss,
-                epoch_rewards,
-                epoch_agent_rewards,
-                epoch_turn_rewards,
-                epoch_turn_returns,
-                epoch_rewards_history,
-            )
+            # Log per-turn epoch averages inline (avoid custom system/* metrics)
+            if self.wandb_initialized:
+                epoch_log: Dict[str, Any] = {}
+                n_turns = max(1, int(self.args.num_turns))
+                for turn_idx in range(n_turns):
+                    if epoch_turn_rewards and epoch_turn_rewards[turn_idx]:
+                        epoch_log[f"turn_{turn_idx + 1}/epoch_avg_reward"] = float(
+                            np.mean(epoch_turn_rewards[turn_idx])
+                        )
+                    if epoch_turn_returns and epoch_turn_returns[turn_idx]:
+                        epoch_log[f"turn_{turn_idx + 1}/epoch_avg_return"] = float(
+                            np.mean(epoch_turn_returns[turn_idx])
+                        )
+                if epoch_log:
+                    wandb.log(epoch_log)
 
     def _train_step_returns(
         self,
         batch_item,
-        epoch_rewards,
         epoch_turn_rewards,
         epoch_turn_returns,
         **kwargs,
@@ -850,7 +870,7 @@ class MAGRPOTrainer:
         num_gens = int(self.args.num_generations)
         gamma = float(getattr(self.args, "discount", 0.9))
 
-        turn_data = []
+        # Internal per-turn node data not returned to caller
 
         # Per-turn accumulators for batch-level summaries
         turn_reward_node_means: List[List[float]] = [[] for _ in range(num_turns)]
@@ -900,7 +920,11 @@ class MAGRPOTrainer:
             turn_node_counts[turn_idx] += 1
 
             # Optional: compute code level metrics for logging (expensive)
-            if is_code and callable(self.eval_logger):
+            if (
+                is_code
+                and self.enable_code_level_metrics
+                and callable(self.eval_logger)
+            ):
                 try:
                     # Map to aux/main style: first agent as aux, last as main; single-agent -> empty aux
                     if self.num_agents >= 2:
@@ -1037,8 +1061,8 @@ class MAGRPOTrainer:
             if not returns_vec:
                 return
             for agent_idx in range(self.num_agents):
-                for opt in self.optimizers:
-                    opt.zero_grad()
+                # Zero only the current agent's optimizer
+                self.optimizers[agent_idx].zero_grad()
                 agent_loss = self._compute_loss_with_gradients(
                     self.agents[agent_idx],
                     comps_per_agent[agent_idx],
@@ -1049,25 +1073,8 @@ class MAGRPOTrainer:
 
         post_order_update(root)
 
-        def collect_turn_data(node):
-            turn_data.append(
-                {
-                    "completions": node["completions"],
-                    "rewards": node.get("returns") or node.get("rewards") or [],
-                    "mean_reward": (
-                        float(np.mean(node["rewards"])) if node["rewards"] else 0.0
-                    ),
-                }
-            )
-            for child in node["children"]:
-                collect_turn_data(child)
-
-        collect_turn_data(root)
-
-        epoch_rewards.append(np.mean(root.get("returns") or [0.0]))
-        batch_loss = float(np.mean(np.abs(root.get("returns") or [0.0])))
-
         # Build per-turn batch summary
+        batch_loss = float(np.mean(np.abs(root.get("returns") or [0.0])))
         batch_stats: Dict[int, Dict[str, Any]] = {}
         for t in range(num_turns):
             stats: Dict[str, Any] = {}
@@ -1092,42 +1099,9 @@ class MAGRPOTrainer:
                 }
             batch_stats[t] = stats
 
-        return batch_loss, epoch_rewards, turn_data, False, batch_stats
+        return batch_loss, batch_stats
 
-    def _log_epoch_summary(
-        self,
-        epoch,
-        epoch_loss,
-        epoch_rewards,
-        epoch_agent_rewards,
-        epoch_turn_rewards,
-        epoch_turn_returns,
-        epoch_rewards_history,
-    ):
-        """Log epoch summary metrics in unified format."""
-        avg_reward = sum(epoch_rewards) / len(epoch_rewards) if epoch_rewards else 0
-        epoch_rewards_history.append(avg_reward)
-
-        if not self.wandb_initialized:
-            return
-
-        # Only log turn-scoped epoch metrics; avoid custom metrics under system/*
-        epoch_log: Dict[str, Any] = {}
-
-        # Always log per-turn epoch averages (even if single turn)
-        n_turns = max(1, int(self.args.num_turns))
-        for turn_idx in range(n_turns):
-            if epoch_turn_rewards and epoch_turn_rewards[turn_idx]:
-                epoch_log[f"turn_{turn_idx + 1}/epoch_avg_reward"] = float(
-                    np.mean(epoch_turn_rewards[turn_idx])
-                )
-            if epoch_turn_returns and epoch_turn_returns[turn_idx]:
-                epoch_log[f"turn_{turn_idx + 1}/epoch_avg_return"] = float(
-                    np.mean(epoch_turn_returns[turn_idx])
-                )
-
-        if epoch_log:
-            wandb.log(epoch_log)
+    # _log_epoch_summary removed; logging handled inline in train()
 
     def _generate_completions(
         self,
