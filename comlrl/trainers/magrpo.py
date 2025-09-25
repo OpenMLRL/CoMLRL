@@ -483,6 +483,8 @@ class MAGRPOTrainer:
         all_test_cases = []
         all_entry_points = []
         all_prompts = []
+        # Collect per-turn immediate rewards across evaluated samples
+        eval_turn_rewards: List[List[float]] = [[] for _ in range(self.args.num_turns)]
 
         # Get evaluation dataloader
         eval_dataloader = self.get_eval_dataloader()
@@ -501,15 +503,40 @@ class MAGRPOTrainer:
                         all_test_cases,
                         all_entry_points,
                         all_prompts,
+                        eval_turn_rewards,
                     )
 
         # Calculate and log metrics
-        return self._log_eval_metrics(
+        eval_metrics = self._log_eval_metrics(
             all_agent_completions_turns,
             all_test_cases,
             all_entry_points,
             all_prompts,
         )
+
+        # Compute eval returns per turn and add to metrics
+        n_turns = self.args.num_turns
+        if n_turns > 0 and eval_turn_rewards and eval_turn_rewards[0]:
+            n_samp = len(eval_turn_rewards[0])
+            gamma = float(getattr(self.args, "discount", 0.9))
+            sum_returns = [0.0] * n_turns
+            for s in range(n_samp):
+                rs = [eval_turn_rewards[t][s] if s < len(eval_turn_rewards[t]) else 0.0 for t in range(n_turns)]
+                ret = [0.0] * n_turns
+                ret[-1] = rs[-1]
+                for t in range(n_turns - 2, -1, -1):
+                    ret[t] = rs[t] + gamma * ret[t + 1]
+                for t in range(n_turns):
+                    sum_returns[t] += ret[t]
+            for t in range(n_turns):
+                eval_metrics[f"eval/turn_{t+1}/mean_reward"] = float(
+                    np.mean(eval_turn_rewards[t]) if eval_turn_rewards[t] else 0.0
+                )
+                eval_metrics[f"eval/turn_{t+1}/mean_return"] = float(
+                    sum_returns[t] / n_samp if n_samp > 0 else 0.0
+                )
+
+        return eval_metrics
 
     def _evaluate_sample(
         self,
@@ -518,6 +545,7 @@ class MAGRPOTrainer:
         all_test_cases,
         all_entry_points,
         all_prompts,
+        eval_turn_rewards,
     ):
         """Evaluate a single sample for any number of turns."""
         # Storage for each agent's completions across turns
@@ -580,26 +608,22 @@ class MAGRPOTrainer:
                 [agent_sample_completions[i][-1]] for i in range(self.num_agents)
             ]
 
-            if self.args.num_turns > 1:
-                agent_completions_for_reward = [
-                    [agent_sample_completions[i][-1]] for i in range(self.num_agents)
-                ]
-                # Get the prompt from the first agent's completion data
-                # Since all agents use the same batch_item, we can use any agent's prompt
-                prompt = self.formatters[0](batch_item)
-                rewards, _ = self._compute_rewards(
-                    [prompt],
-                    agent_completions_for_reward,
-                    batch_items=[batch_item],
-                )
-
-                if rewards:
-                    for agent_idx in range(self.num_agents):
-                        previous_best_completions[agent_idx] = agent_sample_completions[
-                            agent_idx
-                        ][-1]
-
-                # No early termination during evaluation
+            # Compute immediate reward at this turn (single joint sample)
+            agent_completions_for_reward = [
+                [agent_sample_completions[i][-1]] for i in range(self.num_agents)
+            ]
+            prompt = self.formatters[0](batch_item)
+            rewards, _ = self._compute_rewards(
+                [prompt], agent_completions_for_reward, batch_items=[batch_item]
+            )
+            if rewards:
+                # Track per-turn reward across samples
+                eval_turn_rewards[turn_idx].append(float(rewards[0]))
+                # Update previous best completions for next-turn prompts
+                for agent_idx in range(self.num_agents):
+                    previous_best_completions[agent_idx] = agent_sample_completions[
+                        agent_idx
+                    ][-1]
 
         # Store completions for all agents
         for agent_idx in range(self.num_agents):
