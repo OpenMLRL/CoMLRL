@@ -11,9 +11,6 @@ from torch.utils.data import DataLoader
 from transformers import PreTrainedModel, PreTrainedTokenizerBase, TrainingArguments
 
 
-RewardFunc = Callable[..., List[float]]
-
-
 @dataclass
 class MAGRPOConfig(TrainingArguments):
     """
@@ -99,7 +96,7 @@ class MAGRPOTrainer:
         model: Optional[Union[str, PreTrainedModel]] = None,
         agents: Optional[List[PreTrainedModel]] = None,
         num_agents: int = 2,
-        reward_func: Optional[RewardFunc] = None,
+        reward_func: Optional[Callable] = None,
         reward_processor: Optional[Callable[[float], float]] = None,
         formatters: Optional[Union[Callable, List[Callable]]] = None,
         args: Optional[MAGRPOConfig] = None,
