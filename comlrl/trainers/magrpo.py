@@ -25,7 +25,7 @@ class MAGRPOConfig(TrainingArguments):
         metadata={"help": "Number of agents; set to 1 for single-agent GRPO."},
     )
     num_generations: int = field(
-        default=4,
+        default=3,
         metadata={"help": "Number of generations to sample per prompt for each agent."},
     )
     max_new_tokens: int = field(
