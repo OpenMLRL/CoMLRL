@@ -3,7 +3,7 @@ import json
 import os
 from dataclasses import dataclass, field
 import itertools
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -759,7 +759,7 @@ class MAGRPOTrainer:
                             "level_1_reward",
                             "level_2_reward",
                             "level_3_reward",
-                            "bonus_reward",
+                            "level_4_reward",
                         ]:
                             if k in levels:
                                 batch_log[prefix + k] = float(levels[k])
@@ -796,7 +796,7 @@ class MAGRPOTrainer:
         - batch_mean_reward (immediate reward mean averaged across nodes at the turn)
         - batch_expected_return (expected return averaged across nodes at the turn)
         - no per-function breakdown (single reward function)
-        - levels (code-only: mean of level_1/2/3 and bonus across nodes)
+        - levels (code-only: mean of level_1/2/3/4 across nodes)
         """
         num_turns = int(self.args.num_turns)
         num_gens = int(self.args.num_generations)
@@ -812,7 +812,7 @@ class MAGRPOTrainer:
 
         is_code = (self.dataset_type or "").lower() in ["humaneval", "coophumaneval"]
         turn_level_sums = [
-            {"level_1": 0.0, "level_2": 0.0, "level_3": 0.0, "bonus": 0.0}
+            {"level_1": 0.0, "level_2": 0.0, "level_3": 0.0, "level_4": 0.0}
             for _ in range(num_turns)
         ]
         turn_level_counts = [0 for _ in range(num_turns)]
@@ -929,23 +929,23 @@ class MAGRPOTrainer:
                         l1_vals = []
                         l2_vals = []
                         l3_vals = []
-                        bonus_vals = []
+                        l4_vals = []
                         for m in metrics_list:
                             if any(k.startswith("turn_1/") for k in m.keys()):
                                 l1_vals.append(m.get("turn_1/level_1_reward", 0.0))
                                 l2_vals.append(m.get("turn_1/level_2_reward", 0.0))
                                 l3_vals.append(m.get("turn_1/level_3_reward", 0.0))
-                                bonus_vals.append(m.get("turn_1/bonus_reward", 0.0))
+                                l4_vals.append(m.get("turn_1/level_4_reward", 0.0))
                             else:
                                 l1_vals.append(m.get("level_1_reward", 0.0))
                                 l2_vals.append(m.get("level_2_reward", 0.0))
                                 l3_vals.append(m.get("level_3_reward", 0.0))
-                                bonus_vals.append(m.get("bonus_reward", 0.0))
+                                l4_vals.append(m.get("level_4_reward", 0.0))
 
                         turn_level_sums[turn_idx]["level_1"] += float(np.mean(l1_vals))
                         turn_level_sums[turn_idx]["level_2"] += float(np.mean(l2_vals))
                         turn_level_sums[turn_idx]["level_3"] += float(np.mean(l3_vals))
-                        turn_level_sums[turn_idx]["bonus"] += float(np.mean(bonus_vals))
+                        turn_level_sums[turn_idx]["level_4"] += float(np.mean(l4_vals))
                         turn_level_counts[turn_idx] += 1
                 except Exception:
                     # Skip level metrics if logger unavailable or call failed
@@ -1081,7 +1081,7 @@ class MAGRPOTrainer:
                     / float(turn_level_counts[t]),
                     "level_3_reward": turn_level_sums[t]["level_3"]
                     / float(turn_level_counts[t]),
-                    "bonus_reward": turn_level_sums[t]["bonus"]
+                    "level_4_reward": turn_level_sums[t]["level_4"]
                     / float(turn_level_counts[t]),
                 }
             batch_stats[t] = stats
