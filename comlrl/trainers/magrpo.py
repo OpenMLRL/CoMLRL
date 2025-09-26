@@ -2,7 +2,7 @@ import inspect
 import os
 from dataclasses import dataclass, field
 import itertools
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 
 import numpy as np
 import torch
@@ -68,6 +68,13 @@ class MAGRPOConfig(TrainingArguments):
         default="cross",
         metadata={
             "help": "How to form joint actions from per-agent generations: 'cross' (Cartesian product) or 'aligned' (index-aligned)."
+        },
+    )
+    # Early termination threshold on mean immediate reward at a node
+    termination_threshold: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "If set, a branch terminates at a turn when the mean immediate reward across sibling joint actions exceeds this threshold."
         },
     )
 
@@ -891,6 +898,15 @@ class MAGRPOTrainer:
 
             turn_node_counts[turn_idx] += 1
 
+            # Early termination: stop expanding this branch if mean reward exceeds threshold
+            term_threshold = getattr(self.args, "termination_threshold", None)
+            terminate_here = False
+            if term_threshold is not None and rewards_vec:
+                try:
+                    terminate_here = float(np.mean(rewards_vec)) > float(term_threshold)
+                except Exception:
+                    terminate_here = False
+
             # Optional: compute code level metrics for logging (expensive)
             if (
                 is_code
@@ -959,7 +975,7 @@ class MAGRPOTrainer:
                 "combo_indices": combo_indices,
             }
 
-            if turn_idx < num_turns - 1:
+            if turn_idx < num_turns - 1 and not terminate_here:
                 for j in range(len(rewards_vec)):
                     # Map j to per-agent indices
                     idx_tuple = combo_indices[j]
