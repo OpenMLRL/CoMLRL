@@ -8,7 +8,7 @@
 [![Hugging Face](https://img.shields.io/badge/huggingface-CoMLRL-yellow.svg)](https://huggingface.co/CoMLRL)
 [![arXiv](https://img.shields.io/badge/arXiv-2508.04652-b31b1b.svg)](https://arxiv.org/pdf/2508.04652)
 
-Improve LLM Collaboration with Cooperative Multi-LLM Reinforcement Learning.
+**Co**operative **M**ulti-**L**LM **R**einforcement **L**earning.
 
 ## Setup
 
