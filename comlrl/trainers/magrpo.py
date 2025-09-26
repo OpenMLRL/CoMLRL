@@ -10,6 +10,7 @@ import torch
 import wandb
 from datasets import Dataset, IterableDataset
 from torch.utils.data import DataLoader
+from tqdm import tqdm  # type: ignore
 from transformers import PreTrainedModel, PreTrainedTokenizerBase, TrainingArguments
 
 
@@ -69,6 +70,13 @@ class MAGRPOConfig(TrainingArguments):
         default="cross",
         metadata={
             "help": "How to form joint actions from per-agent generations: 'cross' (Cartesian product) or 'aligned' (index-aligned)."
+        },
+    )
+    # Early termination threshold on mean immediate reward at a node
+    termination_threshold: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "If set, a branch terminates at a turn when the mean immediate reward across sibling joint actions exceeds this threshold."
         },
     )
 
@@ -263,6 +271,18 @@ class MAGRPOTrainer:
                                     )
             except Exception:
                 pass
+
+        # Verbosity from config (default True)
+        self.verbose = True
+        try:
+            if isinstance(self.wandb_config, dict):
+                sections = self.wandb_config.get("config_sections", {})
+                if isinstance(sections, dict):
+                    out = sections.get("output", {})
+                    if isinstance(out, dict) and "verbose" in out:
+                        self.verbose = bool(out.get("verbose"))
+        except Exception:
+            pass
 
     def _setup_formatters(self, formatters, num_agents):
         """Set up format functions for each agent that can handle external transitions."""
@@ -721,7 +741,18 @@ class MAGRPOTrainer:
             ]  # immediate rewards
             epoch_turn_returns = [[] for _ in range(self.args.num_turns)]  # returns
 
-            for batch_idx, batch in enumerate(self.get_train_dataloader()):
+            dl = self.get_train_dataloader()
+            if not getattr(self, "verbose", True):
+                it = enumerate(
+                    tqdm(
+                        dl,
+                        total=len(dl),
+                        desc=f"Epoch {epoch+1}/{int(self.args.num_train_epochs)}",
+                    )
+                )
+            else:
+                it = enumerate(dl)
+            for batch_idx, batch in it:
                 # evaluate every 4 batches
                 if batch_idx % 4 == 0:
                     # evaluate() already logs its metrics; avoid duplicate logging here
@@ -841,7 +872,7 @@ class MAGRPOTrainer:
             joint_mode = str(getattr(self.args, "joint_mode", "cross")).lower()
             rewards_vec: List[float] = []
             combo_indices: List[Tuple[int, ...]] = []
-            if joint_mode == "cross" and self.num_agents > 1:
+            if joint_mode in ["cross", "crossed"] and self.num_agents > 1:
                 # Cartesian product of per-agent completion indices
                 per_agent_ranges = [
                     range(len(agent_completions_list[i]))
@@ -873,7 +904,7 @@ class MAGRPOTrainer:
                     processed = [self.reward_processor(r) for r in rlist]
                     rewards_vec.append(float(processed[0] if processed else 0.0))
                     combo_indices.append(tuple(idx_tuple))
-            else:
+            elif joint_mode in ["align", "aligned"] and self.num_agents > 1:
                 # Aligned by index
                 rewards_vec = self._compute_rewards(
                     [formatted_prompt], agent_completions_list, batch_items=[batch_item]
@@ -881,6 +912,9 @@ class MAGRPOTrainer:
                 # combo indices: align j with (j,j,...)
                 k = len(agent_completions_list[0]) if agent_completions_list else 0
                 combo_indices = [tuple([j] * self.num_agents) for j in range(k)]
+            else:
+                raise ValueError(f"Unsupported joint_mode: {joint_mode}")
+
             if 0 <= turn_idx < len(epoch_turn_rewards):
                 epoch_turn_rewards[turn_idx].append(
                     np.mean(rewards_vec) if rewards_vec else 0.0
@@ -891,6 +925,15 @@ class MAGRPOTrainer:
             turn_reward_node_means[turn_idx].append(node_mean_reward)
 
             turn_node_counts[turn_idx] += 1
+
+            # Early termination: stop expanding this branch if mean reward exceeds threshold
+            term_threshold = getattr(self.args, "termination_threshold", None)
+            terminate_here = False
+            if term_threshold is not None and rewards_vec:
+                try:
+                    terminate_here = float(np.mean(rewards_vec)) > float(term_threshold)
+                except Exception:
+                    terminate_here = False
 
             # Optional: compute code level metrics for logging (expensive)
             if (
@@ -960,7 +1003,7 @@ class MAGRPOTrainer:
                 "combo_indices": combo_indices,
             }
 
-            if turn_idx < num_turns - 1:
+            if turn_idx < num_turns - 1 and not terminate_here:
                 for j in range(len(rewards_vec)):
                     # Map j to per-agent indices
                     idx_tuple = combo_indices[j]
