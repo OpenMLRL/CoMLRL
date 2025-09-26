@@ -871,7 +871,7 @@ class MAGRPOTrainer:
             joint_mode = str(getattr(self.args, "joint_mode", "cross")).lower()
             rewards_vec: List[float] = []
             combo_indices: List[Tuple[int, ...]] = []
-            if joint_mode == "cross" and self.num_agents > 1:
+            if joint_mode in ["cross", "crossed"] and self.num_agents > 1:
                 # Cartesian product of per-agent completion indices
                 per_agent_ranges = [
                     range(len(agent_completions_list[i]))
