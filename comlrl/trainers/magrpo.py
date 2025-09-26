@@ -879,7 +879,7 @@ class MAGRPOTrainer:
                     processed = [self.reward_processor(r) for r in rlist]
                     rewards_vec.append(float(processed[0] if processed else 0.0))
                     combo_indices.append(tuple(idx_tuple))
-            else:
+            elif joint_mode in ["align", "aligned"] and self.num_agents > 1:
                 # Aligned by index
                 rewards_vec = self._compute_rewards(
                     [formatted_prompt], agent_completions_list, batch_items=[batch_item]
@@ -887,6 +887,9 @@ class MAGRPOTrainer:
                 # combo indices: align j with (j,j,...)
                 k = len(agent_completions_list[0]) if agent_completions_list else 0
                 combo_indices = [tuple([j] * self.num_agents) for j in range(k)]
+            else:
+                raise ValueError(f"Unsupported joint_mode: {joint_mode}")
+
             if 0 <= turn_idx < len(epoch_turn_rewards):
                 epoch_turn_rewards[turn_idx].append(
                     np.mean(rewards_vec) if rewards_vec else 0.0
