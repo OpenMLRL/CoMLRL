@@ -1,14 +1,10 @@
+import copy
 import inspect
 import json
 import os
 from dataclasses import dataclass, field
-<<<<<<< HEAD
 import itertools
 from typing import Any, Callable, Dict, List, Optional, Union
-=======
-from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
->>>>>>> 186d782 (Added save_epochs)
 
 import numpy as np
 import torch
@@ -219,6 +215,12 @@ class MAGRPOTrainer:
             )
             for agent in self.agents
         ]
+
+        # Store old policy parameters for importance sampling
+        self.old_agents = None
+        self.old_policy_probs = (
+            None  # Will store old policy probabilities during generation
+        )
 
         self.wandb_config = wandb_config
         self.wandb_initialized = False
@@ -716,15 +718,6 @@ class MAGRPOTrainer:
             agent.to(device)
             agent.train()
 
-<<<<<<< HEAD
-=======
-        # Track epoch rewards for conditional saving
-        epoch_rewards_history = []
-
-        # Store latest evaluation metrics for checkpoint saving
-        eval_metrics = {}
-
->>>>>>> 186d782 (Added save_epochs)
         # Create the data pipeline for generating examples
         for epoch in range(0, int(self.args.num_train_epochs)):
             # No per-agent reward tracking in single reward mode
@@ -781,7 +774,6 @@ class MAGRPOTrainer:
                     if batch_log:
                         wandb.log(batch_log)
 
-<<<<<<< HEAD
             # Log per-turn epoch averages inline (avoid custom system/* metrics)
             if self.wandb_initialized:
                 epoch_log: Dict[str, Any] = {}
@@ -799,46 +791,6 @@ class MAGRPOTrainer:
                     wandb.log(epoch_log)
 
     def _train_step_returns(
-=======
-            # Save checkpoint based on save_epochs interval
-            if (
-                hasattr(self.args, "save_epochs")
-                and self.args.save_epochs > 0
-                and (epoch + 1) % self.args.save_epochs == 0
-            ):
-                checkpoint_dir = os.path.join(
-                    self.args.output_dir, f"epoch-{epoch + 1}"
-                )
-                self.save_model(checkpoint_dir)
-
-                # Save metadata
-                turn_1_reward_mean = 0.0
-                if (
-                    epoch_turn_rewards
-                    and len(epoch_turn_rewards) > 0
-                    and epoch_turn_rewards[0]
-                ):
-                    turn_1_reward_mean = np.mean(epoch_turn_rewards[0])
-
-                metadata = {
-                    "epoch": epoch + 1,
-                    "timestamp": datetime.now().isoformat(),
-                    "turn_1_reward_mean": turn_1_reward_mean,
-                    "eval_avg_total_reward": eval_metrics.get(
-                        "eval/avg_total_reward", 0.0
-                    ),
-                    "eval_avg_passed_rate": eval_metrics.get(
-                        "eval/avg_passed_rate", 0.0
-                    ),
-                }
-
-                with open(os.path.join(checkpoint_dir, "metadata.json"), "w") as f:
-                    json.dump(metadata, f, indent=2)
-
-                print(f"Epoch checkpoint saved: {checkpoint_dir}")
-
-    def _train_step(
->>>>>>> 186d782 (Added save_epochs)
         self,
         batch_item,
         epoch_turn_rewards,
@@ -1298,6 +1250,50 @@ class MAGRPOTrainer:
             generation_output.scores if hasattr(generation_output, "scores") else []
         )
 
+        # Store old policy probabilities for importance sampling
+        old_policy_probs = []
+        if self.old_agents is not None and agent_idx < len(self.old_agents):
+            old_agent = self.old_agents[agent_idx]
+            old_agent.eval()
+
+            # Calculate old policy probabilities for each completion
+            for completion_tokens in completion_tokens_list[0]:
+                if len(completion_tokens) > 0:
+                    input_ids = torch.cat([prompt_input_ids[0], completion_tokens[:-1]])
+                    attention_mask = torch.ones(len(input_ids), device=device)
+
+                    with torch.no_grad():
+                        old_outputs = old_agent(
+                            input_ids=input_ids.unsqueeze(0),
+                            attention_mask=attention_mask.unsqueeze(0),
+                        )
+
+                        # Get logits for completion part
+                        old_completion_logits = old_outputs.logits[
+                            0, prompt_input_ids[0].size(0) - 1 : -1, :
+                        ]
+
+                        # Calculate log probabilities
+                        old_log_probs = []
+                        for i, token_id in enumerate(completion_tokens):
+                            if i < old_completion_logits.size(0):
+                                old_token_logits = old_completion_logits[i]
+                                old_token_log_prob = torch.log_softmax(
+                                    old_token_logits, dim=-1
+                                )[token_id]
+                                old_log_probs.append(old_token_log_prob)
+
+                        if old_log_probs:
+                            old_sequence_log_prob = torch.stack(old_log_probs).sum()
+                            old_policy_probs.append(old_sequence_log_prob.item())
+                        else:
+                            old_policy_probs.append(0.0)
+                else:
+                    old_policy_probs.append(0.0)
+        else:
+            # If no old policy, use zeros (will result in importance ratio of 1)
+            old_policy_probs = [0.0] * len(completion_tokens_list[0])
+
         return {
             "prompts": prompts,
             "batch_items": batch_items,  # Store original batch items for reference
@@ -1307,6 +1303,7 @@ class MAGRPOTrainer:
             "completion_input_ids": completion_tokens_list,
             "completion_attention_mask": completion_attention_masks,
             "logits": logits,
+            "old_policy_probs": old_policy_probs,  # Store old policy probabilities
         }
 
     def _generate_completions_with_external_prompts(
@@ -1448,14 +1445,14 @@ class MAGRPOTrainer:
         # Convert rewards to tensor
         rewards_tensor = torch.tensor(rewards, dtype=torch.float, device=device)
 
-        # Use baseline approach with proper normalization
-        rewards_baseline = rewards_tensor.mean()  # Use mean as baseline
-        advantages = rewards_tensor - rewards_baseline  # Compute advantages
+        # Calculate group-based advantages according to MAGRPO Equation 1
+        group_mean = rewards_tensor.mean()  # Group mean baseline
+        advantages = rewards_tensor - group_mean  # Compute advantages
 
-        # Normalize advantages by standard deviation for stable GRPO training
-        advantages_std = advantages.std()
-        if advantages_std > 1e-8:  # Avoid division by zero
-            advantages = advantages / advantages_std
+        # Normalize advantages by standard deviation of the group of returns
+        group_std = rewards_tensor.std()
+        if group_std > 1e-8:  # Avoid division by zero
+            advantages = advantages / group_std
 
         # Clip advantages to reasonable range to prevent numerical instability
         advantages = torch.clamp(advantages, min=-10.0, max=10.0)
@@ -1514,8 +1511,23 @@ class MAGRPOTrainer:
 
                 if log_probs:
                     sequence_log_prob = torch.stack(log_probs).sum()
-                    # Policy gradient loss: -log_prob * advantage
-                    loss = -sequence_log_prob * advantage
+
+                    # Calculate importance sampling ratio
+                    if "old_policy_probs" in completions_data and seq_idx < len(
+                        completions_data["old_policy_probs"]
+                    ):
+                        old_log_prob = completions_data["old_policy_probs"][seq_idx]
+                        if old_log_prob != 0.0:  # Avoid division by zero
+                            importance_ratio = torch.exp(
+                                sequence_log_prob - old_log_prob
+                            )
+                        else:
+                            importance_ratio = torch.tensor(1.0, device=device)
+                    else:
+                        importance_ratio = torch.tensor(1.0, device=device)
+
+                    # Policy gradient loss with importance sampling: -log_prob * importance_ratio * advantage
+                    loss = -sequence_log_prob * importance_ratio * advantage
                     total_loss = total_loss + loss
                     num_samples += 1
 
