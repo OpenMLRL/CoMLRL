@@ -9,6 +9,7 @@ import torch
 import wandb
 from datasets import Dataset, IterableDataset
 from torch.utils.data import DataLoader
+from tqdm import tqdm  # type: ignore
 from transformers import PreTrainedModel, PreTrainedTokenizerBase, TrainingArguments
 
 
@@ -25,7 +26,7 @@ class MAGRPOConfig(TrainingArguments):
         metadata={"help": "Number of agents; set to 1 for single-agent GRPO."},
     )
     num_generations: int = field(
-        default=3,
+        default=4,
         metadata={"help": "Number of generations to sample per prompt for each agent."},
     )
     max_new_tokens: int = field(
@@ -269,6 +270,18 @@ class MAGRPOTrainer:
                                     )
             except Exception:
                 pass
+
+        # Verbosity from config (default True)
+        self.verbose = True
+        try:
+            if isinstance(self.wandb_config, dict):
+                sections = self.wandb_config.get("config_sections", {})
+                if isinstance(sections, dict):
+                    out = sections.get("output", {})
+                    if isinstance(out, dict) and "verbose" in out:
+                        self.verbose = bool(out.get("verbose"))
+        except Exception:
+            pass
 
     def _setup_formatters(self, formatters, num_agents):
         """Set up format functions for each agent that can handle external transitions."""
@@ -727,7 +740,18 @@ class MAGRPOTrainer:
             ]  # immediate rewards
             epoch_turn_returns = [[] for _ in range(self.args.num_turns)]  # returns
 
-            for batch_idx, batch in enumerate(self.get_train_dataloader()):
+            dl = self.get_train_dataloader()
+            if not getattr(self, "verbose", True):
+                it = enumerate(
+                    tqdm(
+                        dl,
+                        total=len(dl),
+                        desc=f"Epoch {epoch+1}/{int(self.args.num_train_epochs)}",
+                    )
+                )
+            else:
+                it = enumerate(dl)
+            for batch_idx, batch in it:
                 # evaluate every 4 batches
                 if batch_idx % 4 == 0:
                     # evaluate() already logs its metrics; avoid duplicate logging here
