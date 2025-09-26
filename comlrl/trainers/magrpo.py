@@ -1,4 +1,3 @@
-import copy
 import inspect
 import json
 import os
@@ -215,12 +214,6 @@ class MAGRPOTrainer:
             )
             for agent in self.agents
         ]
-
-        # Store old policy parameters for importance sampling
-        self.old_agents = None
-        self.old_policy_probs = (
-            None  # Will store old policy probabilities during generation
-        )
 
         self.wandb_config = wandb_config
         self.wandb_initialized = False
@@ -1250,50 +1243,6 @@ class MAGRPOTrainer:
             generation_output.scores if hasattr(generation_output, "scores") else []
         )
 
-        # Store old policy probabilities for importance sampling
-        old_policy_probs = []
-        if self.old_agents is not None and agent_idx < len(self.old_agents):
-            old_agent = self.old_agents[agent_idx]
-            old_agent.eval()
-
-            # Calculate old policy probabilities for each completion
-            for completion_tokens in completion_tokens_list[0]:
-                if len(completion_tokens) > 0:
-                    input_ids = torch.cat([prompt_input_ids[0], completion_tokens[:-1]])
-                    attention_mask = torch.ones(len(input_ids), device=device)
-
-                    with torch.no_grad():
-                        old_outputs = old_agent(
-                            input_ids=input_ids.unsqueeze(0),
-                            attention_mask=attention_mask.unsqueeze(0),
-                        )
-
-                        # Get logits for completion part
-                        old_completion_logits = old_outputs.logits[
-                            0, prompt_input_ids[0].size(0) - 1 : -1, :
-                        ]
-
-                        # Calculate log probabilities
-                        old_log_probs = []
-                        for i, token_id in enumerate(completion_tokens):
-                            if i < old_completion_logits.size(0):
-                                old_token_logits = old_completion_logits[i]
-                                old_token_log_prob = torch.log_softmax(
-                                    old_token_logits, dim=-1
-                                )[token_id]
-                                old_log_probs.append(old_token_log_prob)
-
-                        if old_log_probs:
-                            old_sequence_log_prob = torch.stack(old_log_probs).sum()
-                            old_policy_probs.append(old_sequence_log_prob.item())
-                        else:
-                            old_policy_probs.append(0.0)
-                else:
-                    old_policy_probs.append(0.0)
-        else:
-            # If no old policy, use zeros (will result in importance ratio of 1)
-            old_policy_probs = [0.0] * len(completion_tokens_list[0])
-
         return {
             "prompts": prompts,
             "batch_items": batch_items,  # Store original batch items for reference
@@ -1303,7 +1252,6 @@ class MAGRPOTrainer:
             "completion_input_ids": completion_tokens_list,
             "completion_attention_mask": completion_attention_masks,
             "logits": logits,
-            "old_policy_probs": old_policy_probs,  # Store old policy probabilities
         }
 
     def _generate_completions_with_external_prompts(
@@ -1511,23 +1459,8 @@ class MAGRPOTrainer:
 
                 if log_probs:
                     sequence_log_prob = torch.stack(log_probs).sum()
-
-                    # Calculate importance sampling ratio
-                    if "old_policy_probs" in completions_data and seq_idx < len(
-                        completions_data["old_policy_probs"]
-                    ):
-                        old_log_prob = completions_data["old_policy_probs"][seq_idx]
-                        if old_log_prob != 0.0:  # Avoid division by zero
-                            importance_ratio = torch.exp(
-                                sequence_log_prob - old_log_prob
-                            )
-                        else:
-                            importance_ratio = torch.tensor(1.0, device=device)
-                    else:
-                        importance_ratio = torch.tensor(1.0, device=device)
-
-                    # Policy gradient loss with importance sampling: -log_prob * importance_ratio * advantage
-                    loss = -sequence_log_prob * importance_ratio * advantage
+                    # Policy gradient loss: -log_prob * advantage
+                    loss = -sequence_log_prob * advantage
                     total_loss = total_loss + loss
                     num_samples += 1
 
