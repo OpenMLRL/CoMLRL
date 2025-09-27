@@ -66,7 +66,7 @@ class MAGRPOConfig(TrainingArguments):
     # Handoff removed: branching uses all generations
     # Joint action composition mode for multiple agents
     joint_mode: str = field(
-        default="cross",
+        default="aligned",
         metadata={
             "help": "How to form joint actions from per-agent generations: 'cross' (Cartesian product) or 'aligned' (index-aligned)."
         },
@@ -882,7 +882,7 @@ class MAGRPOTrainer:
             ]
             formatted_prompt = comps_per_agent[0]["prompts"][0]
             # Compute rewards per joint action depending on joint_mode
-            joint_mode = str(getattr(self.args, "joint_mode", "cross")).lower()
+            joint_mode = str(getattr(self.args, "joint_mode", "aligned")).lower()
             rewards_vec: List[float] = []
             combo_indices: List[Tuple[int, ...]] = []
             if joint_mode in ["cross", "crossed"] and self.num_agents > 1:
@@ -1082,7 +1082,7 @@ class MAGRPOTrainer:
                 return
             # If cross mode, build per-agent joint reward sums (accumulate joint returns
             # for each completion across all joint actions it participates in)
-            joint_mode_local = str(getattr(self.args, "joint_mode", "cross")).lower()
+            joint_mode_local = str(getattr(self.args, "joint_mode", "aligned")).lower()
             combo_idx_list = node.get("combo_indices") or []
             per_agent_joint_sums: List[List[float]] = []
             if joint_mode_local == "cross" and combo_idx_list:
