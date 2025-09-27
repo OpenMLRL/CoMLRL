@@ -79,6 +79,20 @@ class MAGRPOConfig(TrainingArguments):
         },
     )
 
+    # GRPO-style advantage configuration
+    normalize_advantage: bool = field(
+        default=True,
+        metadata={
+            "help": "If True, compute group-relative advantages using returns normalized by group std (z-score).",
+        },
+    )
+    epsilon_clip: float = field(
+        default=0.2,
+        metadata={
+            "help": "Clamp normalized advantages to [-epsilon_clip, +epsilon_clip] for stability.",
+        },
+    )
+
 
 class MAGRPOTrainer:
     """
@@ -1414,14 +1428,14 @@ class MAGRPOTrainer:
 
         return all_rewards
 
-    def _compute_loss_with_gradients(self, agent, completions_data, rewards):
+    def _compute_loss_with_gradients(self, agent, completions_data, returns):
         """
         Compute loss with proper gradient tracking by performing a new forward pass.
 
         Args:
             agent: The agent model
             completions_data: The completions data from _generate_completions
-            rewards: The rewards for each completion
+            returns: The returns for each completion (not immediate rewards)
 
         Returns:
             torch.Tensor: The computed loss with gradients attached
@@ -1429,18 +1443,25 @@ class MAGRPOTrainer:
         device = agent.device
 
         # Make sure we have the correct number of rewards
-        if len(rewards) == 0:
+        if len(returns) == 0:
             return torch.tensor(0.0, device=device, requires_grad=True)
 
-        # Convert rewards to tensor
-        rewards_tensor = torch.tensor(rewards, dtype=torch.float, device=device)
+        # Convert returns to tensor
+        returns_tensor = torch.tensor(returns, dtype=torch.float, device=device)
 
-        # Use baseline approach
-        rewards_baseline = rewards_tensor.mean()  # Use mean as baseline
-        advantages = rewards_tensor - rewards_baseline  # Compute advantages
-
-        # Clip advantages to reasonable range to prevent numerical instability
-        advantages = torch.clamp(advantages, min=-10.0, max=10.0)
+        # Group-relative advantage based on returns
+        # Optionally normalize by group std and epsilon-clip
+        if getattr(self.args, "normalize_advantage", True):
+            mean_ret = returns_tensor.mean()
+            std_ret = returns_tensor.std(unbiased=False)
+            advantages = (returns_tensor - mean_ret) / (std_ret + 1e-8)
+            eps = float(getattr(self.args, "epsilon_clip", 0.2))
+            if eps is not None and eps > 0:
+                advantages = torch.clamp(advantages, min=-eps, max=eps)
+        else:
+            # Mean baseline without normalization
+            mean_ret = returns_tensor.mean()
+            advantages = returns_tensor - mean_ret
 
         # Set agent to train mode to ensure gradients are tracked
         agent.train()
