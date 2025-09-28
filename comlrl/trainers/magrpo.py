@@ -81,13 +81,13 @@ class MAGRPOConfig(TrainingArguments):
 
     # GRPO-style advantage configuration
     normalize_advantage: bool = field(
-        default=True,
+        default=False,
         metadata={
             "help": "If True, compute group-relative advantages using returns normalized by group std (z-score).",
         },
     )
-    epsilon_clip: float = field(
-        default=0.5,
+    epsilon_clip: Optional[float] = field(
+        default=None,
         metadata={
             "help": "Clamp normalized advantages to [-epsilon_clip, +epsilon_clip] for stability.",
         },
@@ -1451,13 +1451,18 @@ class MAGRPOTrainer:
 
         # Group-relative advantage based on returns
         # Optionally normalize by group std and epsilon-clip
-        if getattr(self.args, "normalize_advantage", True):
+        if getattr(self.args, "normalize_advantage", False):
             mean_ret = returns_tensor.mean()
             std_ret = returns_tensor.std(unbiased=False)
             advantages = (returns_tensor - mean_ret) / (std_ret + 1e-8)
-            eps = float(getattr(self.args, "epsilon_clip", 0.5))
-            if eps is not None and eps > 0:
-                advantages = torch.clamp(advantages, min=-eps, max=eps)
+            eps = getattr(self.args, "epsilon_clip", None)
+            if eps is not None:
+                try:
+                    eps_f = float(eps)
+                except (TypeError, ValueError):
+                    eps_f = None
+                if eps_f is not None and eps_f > 0:
+                    advantages = torch.clamp(advantages, min=-eps_f, max=eps_f)
         else:
             # Mean baseline without normalization
             mean_ret = returns_tensor.mean()
