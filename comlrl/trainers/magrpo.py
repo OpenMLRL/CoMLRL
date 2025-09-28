@@ -87,7 +87,7 @@ class MAGRPOConfig(TrainingArguments):
         },
     )
     epsilon_clip: float = field(
-        default=0.2,
+        default=0.5,
         metadata={
             "help": "Clamp normalized advantages to [-epsilon_clip, +epsilon_clip] for stability.",
         },
@@ -1455,7 +1455,7 @@ class MAGRPOTrainer:
             mean_ret = returns_tensor.mean()
             std_ret = returns_tensor.std(unbiased=False)
             advantages = (returns_tensor - mean_ret) / (std_ret + 1e-8)
-            eps = float(getattr(self.args, "epsilon_clip", 0.2))
+            eps = float(getattr(self.args, "epsilon_clip", 0.5))
             if eps is not None and eps > 0:
                 advantages = torch.clamp(advantages, min=-eps, max=eps)
         else:
