@@ -118,7 +118,7 @@ class MAGRPOTrainer:
         eval_logger: Evaluation logger function
         eval_aggregator: Evaluation aggregator function
         external_transition: Function that provides external transitions between turns
-        dataset_type: Optional explicit dataset type (e.g., "humaneval")
+        dataset_type: Optional explicit dataset type (e.g., "humaneval", "mbpp")
     """
 
     def __init__(
@@ -855,7 +855,11 @@ class MAGRPOTrainer:
         # No per-function accumulation in single reward mode
         turn_node_counts: List[int] = [0 for _ in range(num_turns)]
 
-        is_code = (self.dataset_type or "").lower() in ["humaneval", "coophumaneval"]
+        is_code = (self.dataset_type or "").lower() in [
+            "humaneval",
+            "coophumaneval",
+            "mbpp",
+        ]
         turn_level_sums = [
             {
                 "level_1": 0.0,
