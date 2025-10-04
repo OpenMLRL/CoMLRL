@@ -20,11 +20,13 @@ class MAGRPOConfig(TrainingArguments):
     Supports both single-turn and multi-turn training modes.
     """
 
-    # Core MAGRPO parameters
+    # Core setup
     num_agents: int = field(
         default=2,
         metadata={"help": "Number of agents; set to 1 for single-agent GRPO."},
     )
+
+    # Sampling/generation
     num_generations: int = field(
         default=4,
         metadata={"help": "Number of generations to sample per prompt for each agent."},
@@ -33,63 +35,54 @@ class MAGRPOConfig(TrainingArguments):
         default=256,
         metadata={"help": "Maximum number of new tokens to generate after the prompt."},
     )
-
-    # Generation parameters (Note: these are set but not currently used by the trainer)
     temperature: float = field(
         default=0.7,
         metadata={
-            "help": "Temperature for sampling (currently set but not used - uses model_config instead)."
+            "help": "Temperature for sampling (present for completeness; generation uses model_config if provided)."
         },
     )
     top_p: float = field(
         default=0.9,
         metadata={
-            "help": "Top-p for sampling (currently set but not used - uses model_config instead)."
+            "help": "Top-p for sampling (present for completeness; generation uses model_config if provided)."
         },
     )
 
-    # Multi-turn specific parameters (optional, for MT-MAGRPO)
+    # Multi-turn / tree rollout
     num_turns: Optional[int] = field(
         default=1,
         metadata={
-            "help": "Number of turns per episode. Default is 1 for single-turn training. "
-            "Set > 1 to enable multi-turn training with external transitions between turns."
+            "help": "Number of turns per episode (set >1 for multi-turn with external transitions)."
         },
     )
-    # Uniform updates across turns (no per-turn gradient weighting or early termination)
     discount: float = field(
         default=0.9,
-        metadata={
-            "help": "Discount factor (gamma) for computing returns across turns."
-        },
+        metadata={"help": "Discount factor (gamma) over turns for returns."},
     )
-    # Handoff removed: branching uses all generations
-    # Joint action composition mode for multiple agents
     joint_mode: str = field(
         default="aligned",
         metadata={
-            "help": "How to form joint actions from per-agent generations: 'cross' (Cartesian product) or 'aligned' (index-aligned)."
+            "help": "Joint action composition: 'cross' (Cartesian product) or 'aligned' (index-aligned)."
         },
     )
-    # Early termination threshold on mean immediate reward at a node
     termination_threshold: Optional[float] = field(
         default=None,
         metadata={
-            "help": "If set, a branch terminates at a turn when the mean immediate reward across sibling joint actions exceeds this threshold."
+            "help": "Early stop a branch if mean reward at a node exceeds this threshold."
         },
     )
 
-    # GRPO-style advantage configuration
+    # GRPO-style advantage shaping
     normalize_advantage: bool = field(
         default=False,
         metadata={
-            "help": "If True, compute group-relative advantages using returns normalized by group std (z-score).",
+            "help": "Use group-relative normalized returns (z-score) for advantages.",
         },
     )
     epsilon_clip: Optional[float] = field(
         default=None,
         metadata={
-            "help": "Clamp normalized advantages to [-epsilon_clip, +epsilon_clip] for stability.",
+            "help": "Clamp normalized advantages to [-epsilon_clip, +epsilon_clip].",
         },
     )
 
@@ -123,22 +116,28 @@ class MAGRPOTrainer:
 
     def __init__(
         self,
+        # Model/tokenizer setup
         model: Optional[Union[str, PreTrainedModel]] = None,
         agents: Optional[List[PreTrainedModel]] = None,
         num_agents: int = 2,
+        tokenizer: Optional[PreTrainedTokenizerBase] = None,
+        model_config: Optional[Dict[str, Any]] = None,
+        # Data
+        train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
+        eval_dataset: Optional[Union[Dataset, IterableDataset]] = None,
+        dataset_type: Optional[str] = None,
+        # Reward/formatting
         reward_func: Optional[Callable] = None,
         reward_processor: Optional[Callable[[float], float]] = None,
         formatters: Optional[Union[Callable, List[Callable]]] = None,
-        args: Optional[MAGRPOConfig] = None,
-        train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
+        # External transitions (multi-turn)
         external_transition: Optional[Callable] = None,
-        eval_dataset: Optional[Union[Dataset, IterableDataset]] = None,
-        tokenizer: Optional[PreTrainedTokenizerBase] = None,
+        # Logging/eval
         wandb_config: Optional[Dict[str, Any]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
         eval_logger: Optional[Callable] = None,
         eval_aggregator: Optional[Callable] = None,
-        dataset_type: Optional[str] = None,
+        # Training args
+        args: Optional[MAGRPOConfig] = None,
     ):
         # Check for GPU availability
         if not torch.cuda.is_available():
@@ -151,11 +150,11 @@ class MAGRPOTrainer:
         if model is not None and agents is not None:
             raise ValueError("Cannot provide both model and agents parameters")
 
+        # Training arguments
         self.args = args if args is not None else MAGRPOConfig()
 
-        # Setup formatters (unified for both single-turn and multi-turn)
+        # Reward and formatting
         self._setup_formatters(formatters, num_agents)
-
         self._setup_reward_function(reward_func, reward_processor)
 
         if agents is not None:
