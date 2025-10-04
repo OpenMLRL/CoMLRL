@@ -725,22 +725,22 @@ class MAGRPOTrainer:
                     **kwargs,
                 )
 
-                # Log per-batch, per-turn metrics
+                # Log per-batch metrics once (aggregate across turns)
                 if self.wandb_initialized and isinstance(batch_stats, dict):
                     batch_log: Dict[str, Any] = {}
                     n_turns = max(1, int(self.args.num_turns))
-                for t in range(n_turns):
-                    stats = batch_stats.get(t) or {}
-                    prefix = f"turn_{t + 1}/"
-                    if "batch_mean_reward" in stats:
-                        batch_log[prefix + "batch_mean_reward"] = stats[
-                            "batch_mean_reward"
-                        ]
-                    if "batch_expected_return" in stats:
-                        batch_log[prefix + "batch_expected_return"] = stats[
-                            "batch_expected_return"
-                        ]
-                    # No per-function reward splitting in single reward mode
+                    for t in range(n_turns):
+                        stats = batch_stats.get(t) or {}
+                        prefix = f"turn_{t + 1}/"
+                        if "batch_mean_reward" in stats:
+                            batch_log[prefix + "batch_mean_reward"] = stats[
+                                "batch_mean_reward"
+                            ]
+                        if "batch_expected_return" in stats:
+                            batch_log[prefix + "batch_expected_return"] = stats[
+                                "batch_expected_return"
+                            ]
+                        # No per-function reward splitting in single reward mode
 
                     if batch_log:
                         wandb.log(batch_log)
