@@ -410,6 +410,14 @@ class MAGRPOTrainer:
                 )
                 if ext_mode:
                     config_dict["external_mode"] = ext_mode
+                    if "original_prompt" in external_section:
+                        config_dict["original_prompt"] = external_section.get(
+                            "original_prompt"
+                        )
+                    if "previous_response" in external_section:
+                        config_dict["previous_response"] = external_section.get(
+                            "previous_response"
+                        )
 
             init_kwargs = {
                 "project": wandb_project,
