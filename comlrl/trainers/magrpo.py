@@ -71,18 +71,10 @@ class MAGRPOConfig(TrainingArguments):
             "help": "Early stop a branch if mean reward at a node exceeds this threshold."
         },
     )
-
-    # GRPO-style advantage shaping
-    normalize_advantage: bool = field(
-        default=True,
-        metadata={
-            "help": "Use group-relative normalized returns (z-score) for advantages.",
-        },
-    )
     epsilon_clip: Optional[float] = field(
         default=10.0,
         metadata={
-            "help": "Clamp normalized advantages to [-epsilon_clip, +epsilon_clip].",
+            "help": "Optional clamp for advantages if used by downstream code.",
         },
     )
 
@@ -1008,8 +1000,6 @@ class MAGRPOTrainer:
 
         return batch_loss, batch_stats
 
-    # _log_epoch_summary removed; logging handled inline in train()
-
     def _generate_completions(
         self,
         agent,
@@ -1313,24 +1303,9 @@ class MAGRPOTrainer:
         # Convert returns to tensor
         returns_tensor = torch.tensor(returns, dtype=torch.float, device=device)
 
-        # Group-relative advantage based on returns
-        # Optionally normalize by group std and epsilon-clip
-        if getattr(self.args, "normalize_advantage", False):
-            mean_ret = returns_tensor.mean()
-            std_ret = returns_tensor.std(unbiased=False)
-            advantages = (returns_tensor - mean_ret) / (std_ret + 1e-8)
-            eps = getattr(self.args, "epsilon_clip", None)
-            if eps is not None:
-                try:
-                    eps_f = float(eps)
-                except (TypeError, ValueError):
-                    eps_f = None
-                if eps_f is not None and eps_f > 0:
-                    advantages = torch.clamp(advantages, min=-eps_f, max=eps_f)
-        else:
-            # Mean baseline without normalization
-            mean_ret = returns_tensor.mean()
-            advantages = returns_tensor - mean_ret
+        # Group-relative advantage based on returns (mean baseline, no z-score normalization)
+        mean_ret = returns_tensor.mean()
+        advantages = returns_tensor - mean_ret
 
         # Set agent to train mode to ensure gradients are tracked
         agent.train()
