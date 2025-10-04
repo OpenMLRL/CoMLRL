@@ -74,13 +74,13 @@ class MAGRPOConfig(TrainingArguments):
 
     # GRPO-style advantage shaping
     normalize_advantage: bool = field(
-        default=False,
+        default=True,
         metadata={
             "help": "Use group-relative normalized returns (z-score) for advantages.",
         },
     )
     epsilon_clip: Optional[float] = field(
-        default=None,
+        default=10.0,
         metadata={
             "help": "Clamp normalized advantages to [-epsilon_clip, +epsilon_clip].",
         },
