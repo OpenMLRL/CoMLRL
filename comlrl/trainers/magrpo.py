@@ -72,7 +72,7 @@ class MAGRPOConfig(TrainingArguments):
         },
     )
     epsilon_clip: Optional[float] = field(
-        default=10.0,
+        default=None,
         metadata={
             "help": "Optional clamp for advantages if used by downstream code.",
         },
