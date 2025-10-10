@@ -846,7 +846,7 @@ class MAGRPOTrainer:
                 # combo indices: align j with (j,j,...)
                 k = len(agent_completions_list[0]) if agent_completions_list else 0
                 combo_indices = [tuple([j] * self.num_agents) for j in range(k)]
-            elif joint_mode in ["align", "aligned"] and self.num_agents == 1:
+            elif self.num_agents == 1:
                 # Single-agent mode (GRPO)
                 rewards_vec = self._compute_rewards(
                     [formatted_prompt], agent_completions_list, batch_items=[batch_item]
