@@ -559,6 +559,9 @@ class MAGRPOTrainer:
 
         # Track the selected completions from the previous turn (evaluation traces a single path)
         previous_turn_completions = [None] * self.num_agents
+        # Track full history per agent for evaluation path
+        eval_prompt_history = [[] for _ in range(self.num_agents)]
+        eval_response_history = [[] for _ in range(self.num_agents)]
 
         # Run episode with configured number of turns
         for turn_idx in range(self.args.num_turns):
@@ -574,6 +577,11 @@ class MAGRPOTrainer:
                         prompt=batch_item.get("prompt", ""),
                         agent_completions=selected_prev,
                         num_agents=self.num_agents,
+                        prompt_history_per_agent=eval_prompt_history,
+                        response_history_per_agent=[
+                            list(eval_response_history[i]) + [selected_prev[i]]
+                            for i in range(self.num_agents)
+                        ],
                     )
 
                     # External transition should return prompts for each agent
@@ -600,6 +608,9 @@ class MAGRPOTrainer:
                 )
                 # Extract the completion directly
                 completion = agent_completions["completions"][0][0]
+                # Record prompt used this turn
+                used_prompt = agent_completions["prompts"][0]
+                eval_prompt_history[agent_idx].append(used_prompt)
                 agent_sample_completions[agent_idx].append(completion)
 
             # Compute immediate reward at this turn (single joint sample)
@@ -615,9 +626,9 @@ class MAGRPOTrainer:
                 eval_turn_rewards[turn_idx].append(float(rewards[0]))
                 # Update selected previous-turn completions for next-turn prompts
                 for agent_idx in range(self.num_agents):
-                    previous_turn_completions[agent_idx] = agent_sample_completions[
-                        agent_idx
-                    ][-1]
+                    chosen = agent_sample_completions[agent_idx][-1]
+                    previous_turn_completions[agent_idx] = chosen
+                    eval_response_history[agent_idx].append(chosen)
 
         # Store completions for all agents
         for agent_idx in range(self.num_agents):
@@ -782,7 +793,12 @@ class MAGRPOTrainer:
         # No per-function accumulation in single reward mode
         turn_node_counts: List[int] = [0 for _ in range(num_turns)]
 
-        def build_node(turn_idx: int, prompts_per_agent=None):
+        def build_node(
+            turn_idx: int,
+            prompts_per_agent=None,
+            prompt_history_per_agent: Optional[List[List[str]]] = None,
+            response_history_per_agent: Optional[List[List[str]]] = None,
+        ):
             comps_per_agent = []
             for agent_idx in range(self.num_agents):
                 comps = self._generate_completions_with_external_prompts(
@@ -801,7 +817,23 @@ class MAGRPOTrainer:
             agent_completions_list = [
                 comps_per_agent[i]["completions"][0] for i in range(self.num_agents)
             ]
+            # Prompts actually used this turn, per agent (may differ across agents)
+            prompts_used_this_turn = [
+                comps_per_agent[i]["prompts"][0] for i in range(self.num_agents)
+            ]
             formatted_prompt = comps_per_agent[0]["prompts"][0]
+
+            # Initialize history containers if not provided
+            if prompt_history_per_agent is None:
+                prompt_history_per_agent = [[] for _ in range(self.num_agents)]
+            if response_history_per_agent is None:
+                response_history_per_agent = [[] for _ in range(self.num_agents)]
+
+            # Extend prompt history with this turn's prompts
+            next_prompt_history = [
+                list(prompt_history_per_agent[i]) + [prompts_used_this_turn[i]]
+                for i in range(self.num_agents)
+            ]
             # Compute rewards per joint action depending on joint_mode
             joint_mode = str(getattr(self.args, "joint_mode", "aligned")).lower()
             rewards_vec: List[float] = []
@@ -894,10 +926,20 @@ class MAGRPOTrainer:
                         agent_completions_list[i][idx_tuple[i]]
                         for i in range(self.num_agents)
                     ]
+                    # Extend response history with selected completions on this branch
+                    next_response_history = [
+                        list(response_history_per_agent[i])
+                        + [agent_completions_list[i][idx_tuple[i]]]
+                        for i in range(self.num_agents)
+                    ]
+
                     child_prompts = self.external_transition(
                         prompt=batch_item.get("prompt", ""),
                         agent_completions=parent_joint,
                         num_agents=self.num_agents,
+                        # Full history along this branch up to (and including) this turn
+                        prompt_history_per_agent=next_prompt_history,
+                        response_history_per_agent=next_response_history,
                     )
                     if (
                         not isinstance(child_prompts, (list, tuple))
@@ -907,12 +949,20 @@ class MAGRPOTrainer:
                             "External transition must return per-agent prompts"
                         )
                     child = build_node(
-                        turn_idx + 1, prompts_per_agent=list(child_prompts)
+                        turn_idx + 1,
+                        prompts_per_agent=list(child_prompts),
+                        prompt_history_per_agent=next_prompt_history,
+                        response_history_per_agent=next_response_history,
                     )
                     node["children"].append(child)
             return node
 
-        root = build_node(0, prompts_per_agent=None)
+        root = build_node(
+            0,
+            prompts_per_agent=None,
+            prompt_history_per_agent=[[] for _ in range(self.num_agents)],
+            response_history_per_agent=[[] for _ in range(self.num_agents)],
+        )
 
         def compute_returns(node):
             if not node["children"]:
