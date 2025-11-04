@@ -108,9 +108,9 @@ class RolloutSample:
     reward: torch.Tensor
     returns: torch.Tensor
     advantage: torch.Tensor
-    response_length: int
     normalized_advantage: Optional[torch.Tensor] = None
     entropy: Optional[torch.Tensor] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class IPPOTrainer:
@@ -144,6 +144,9 @@ class IPPOTrainer:
         eval_dataset: Optional[Union[Dataset, IterableDataset]] = None,
         model_config: Optional[Dict[str, Any]] = None,
         wandb_config: Optional[Dict[str, Any]] = None,
+        metrics_callback: Optional[
+            Callable[[List[RolloutSample]], Dict[str, float]]
+        ] = None,
     ):
         if not torch.cuda.is_available():
             raise RuntimeError("GPU not found. IPPOTrainer requires GPU for training.")
@@ -182,6 +185,8 @@ class IPPOTrainer:
         self.tokenizer = tokenizer
         self.actor_critic = self._load_model(model)
         self.actor_critic.to(self.device)
+
+        self.metrics_callback = metrics_callback
 
         if self.tokenizer is None:
             raise ValueError("Tokenizer must be provided when using IPPOTrainer.")
@@ -388,7 +393,8 @@ class IPPOTrainer:
         completion_text = self.tokenizer.decode(
             response_tokens[0], skip_special_tokens=True
         ).strip()
-        response_length = response_tokens.size(1)
+        response_token_len = response_tokens.size(1)
+        response_char_length = len(completion_text)
 
         full_attention_mask = torch.ones_like(sequences, device=self.device)
 
@@ -400,8 +406,9 @@ class IPPOTrainer:
             rollout_outputs.logits, response_tokens, prompt_len
         )
         start_index = max(prompt_len - 1, 0)
-        response_len = response_tokens.size(1)
-        old_values = rollout_outputs.values[:, start_index : start_index + response_len]
+        old_values = rollout_outputs.values[
+            :, start_index : start_index + response_token_len
+        ]
 
         rewards = self._call_reward_func([prompt], [completion_text])
         reward_tensor = torch.tensor(rewards, dtype=torch.float32, device=self.device)
@@ -425,7 +432,10 @@ class IPPOTrainer:
             returns=returns.detach(),
             advantage=advantages.detach(),
             entropy=logprob_entropy["entropy"].detach(),
-            response_length=response_length,
+            metadata={
+                "char_length": response_char_length,
+                "token_length": response_token_len,
+            },
         )
 
     def _prepare_advantages(self, rollouts: List[RolloutSample]) -> None:
@@ -533,10 +543,15 @@ class IPPOTrainer:
         returns = torch.cat([sample.returns.view(-1) for sample in rollouts], dim=0)
         metrics["reward_mean"].append(rewards.mean().item())
         metrics["return_mean"].append(returns.mean().item())
-        lengths = torch.tensor(
-            [sample.response_length for sample in rollouts], dtype=torch.float32
-        )
-        metrics["response_length_mean"].append(lengths.mean().item())
+
+        if self.metrics_callback is not None:
+            extra_metrics = self.metrics_callback(rollouts)
+            if isinstance(extra_metrics, dict):
+                for key, value in extra_metrics.items():
+                    try:
+                        metrics[key].append(float(value))
+                    except (TypeError, ValueError):
+                        continue
 
         stop_early = False
         for epoch in range(self.args.ppo_epochs):

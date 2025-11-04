@@ -20,19 +20,29 @@ def prompt_formatter(example) -> str:
     raise KeyError("Expected 'prompt' field in dataset example.")
 
 
+def rollout_metrics(rollouts):
+    if not rollouts:
+        return {}
+
+    char_lengths = [sample.metadata.get("char_length", 0.0) for sample in rollouts]
+    return {
+        "response_char_length_mean": float(sum(char_lengths) / len(char_lengths)),
+    }
+
+
 def main():
     model_name = "Qwen/Qwen2.5-0.5B"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    dataset = load_dataset("trl-lib/tldr", split="train").select(range(100))
+    dataset = load_dataset("trl-lib/tldr", split="train").select(range(20))
 
     config = IPPOConfig(
         output_dir="./ippo_qwen_tldr",
         learning_rate=5e-6,
         per_device_train_batch_size=1,
-        num_train_epochs=20,
+        num_train_epochs=5,
         rollout_buffer_size=2,
         ppo_epochs=2,
         max_new_tokens=128,
@@ -54,6 +64,7 @@ def main():
         args=config,
         train_dataset=dataset,
         wandb_config=wandb_config,
+        metrics_callback=rollout_metrics,
     )
 
     trainer.train()
