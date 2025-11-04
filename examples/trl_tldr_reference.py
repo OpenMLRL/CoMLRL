@@ -54,8 +54,6 @@ def main():
         ppo_config,
         value_model,
         ref_model=ref_model,
-        tokenizer=tokenizer,
-        dataset=dataset,
     )
 
     generation_kwargs = {
@@ -66,20 +64,26 @@ def main():
         "pad_token_id": tokenizer.pad_token_id,
     }
 
-    for batch in ppo_trainer.dataloader:
-        query_tensors = tokenizer(
-            batch["query"], padding=True, truncation=True, return_tensors="pt"
-        ).input_ids.to(ppo_trainer.accelerator.device)
+    device = ppo_trainer.accelerator.device
 
-        response_tensors = ppo_trainer.generate(query_tensors, **generation_kwargs)
+    for record in dataset:
+        queries = [record["query"]]
+        query_tensors = tokenizer(
+            queries, padding=True, truncation=True, return_tensors="pt"
+        ).input_ids.to(device)
+
+        response_tensors = ppo_trainer.model.generate(
+            query_tensors, **generation_kwargs
+        )
 
         responses = tokenizer.batch_decode(
             response_tensors[:, query_tensors.shape[1] :],
             skip_special_tokens=True,
         )
-        rewards = tldr_reward(batch["query"], responses)
+        rewards = tldr_reward(queries, responses)
 
         stats = ppo_trainer.step(query_tensors, response_tensors, rewards)
+        batch = {"query": queries, "response": responses}
         ppo_trainer.log_stats(stats, batch, rewards)
 
 
