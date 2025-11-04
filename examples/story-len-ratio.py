@@ -111,7 +111,6 @@ def example_usage():
         tokenizer=tokenizer,
         wandb_config=wandb_config,
     )
-
     trainer.train()
     print("Training complete!")
 

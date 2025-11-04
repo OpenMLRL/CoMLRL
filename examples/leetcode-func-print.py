@@ -471,8 +471,7 @@ def main():
         wandb_config=wandb_config,
     )
     trainer.train()
-
-    trainer.save_model(f"{output_dir}/final_models")
+    print("Training complete!")
 
 
 if __name__ == "__main__":
