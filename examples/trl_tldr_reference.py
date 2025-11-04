@@ -23,7 +23,6 @@ def tldr_reward(prompts, responses):
 def build_dataset(slice_size: int = 20):
     dataset = load_dataset("trl-lib/tldr", split="train").select(range(slice_size))
     dataset = dataset.rename_column("prompt", "query")
-    dataset = dataset.rename_column("summary", "response")
     dataset.set_format(type="python")
     return dataset
 
