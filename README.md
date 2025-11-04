@@ -1,4 +1,4 @@
-<img src="docs/assets/comlrl.png" width="400px;" alt=""/>
+<img src="docs/assets/comlrl.png" width="450px;" alt=""/>
 
 <hr style="border-top: 0.2px solid #ddd;">
 
