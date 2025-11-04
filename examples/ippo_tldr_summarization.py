@@ -37,6 +37,7 @@ def main():
         ppo_epochs=2,
         max_new_tokens=128,
         logging_steps=1,
+        target_kl=0.5,
     )
 
     wandb_config = {

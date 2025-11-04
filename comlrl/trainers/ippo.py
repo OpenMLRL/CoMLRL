@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import math
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -73,8 +74,18 @@ class IPPOConfig(TrainingArguments):
         default=True,
         metadata={"help": "Normalize advantages within each rollout batch."},
     )
+    advantage_clip_value: Optional[float] = field(
+        default=5.0,
+        metadata={
+            "help": "Clip normalized advantages to [-x, x] to stabilize training."
+        },
+    )
     max_grad_norm: float = field(
         default=1.0, metadata={"help": "Global gradient norm clipping value."}
+    )
+    target_kl: float = field(
+        default=1.0,
+        metadata={"help": "Stop PPO epochs early when approx KL exceeds this value."},
     )
 
 
@@ -421,6 +432,13 @@ class IPPOTrainer:
             for r in rollouts:
                 r.normalized_advantage = r.advantage
 
+        clip_val = getattr(self.args, "advantage_clip_value", None)
+        if clip_val is not None and clip_val > 0:
+            for r in rollouts:
+                r.normalized_advantage = torch.clamp(
+                    r.normalized_advantage, -clip_val, clip_val
+                )
+
     def _ppo_step(self, sample: RolloutSample) -> Dict[str, torch.Tensor]:
         outputs = self.actor_critic(
             input_ids=sample.full_input_ids,
@@ -489,14 +507,33 @@ class IPPOTrainer:
         metrics["reward_mean"].append(rewards.mean().item())
         metrics["return_mean"].append(returns.mean().item())
 
+        stop_early = False
         for epoch in range(self.args.ppo_epochs):
             for sample in rollouts:
                 step_metrics = self._ppo_step(sample)
                 loss = step_metrics.pop("loss")
+                if loss is None or not torch.isfinite(loss):
+                    continue
+
+                approx_kl_tensor = step_metrics.get("approx_kl")
+                approx_kl_scalar: Optional[float] = None
+                if approx_kl_tensor is not None:
+                    approx_kl_scalar = float(approx_kl_tensor.item())
+                    if not math.isfinite(approx_kl_scalar):
+                        approx_kl_scalar = None
+
                 self._apply_gradients(loss)
 
                 for key, value in step_metrics.items():
                     metrics[key].append(value.item())
+
+                if approx_kl_scalar is not None and approx_kl_scalar > float(
+                    self.args.target_kl
+                ):
+                    stop_early = True
+                    break
+            if stop_early:
+                break
 
         return {k: float(sum(v) / max(len(v), 1)) for k, v in metrics.items()}
 
