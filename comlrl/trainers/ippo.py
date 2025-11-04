@@ -108,6 +108,7 @@ class RolloutSample:
     reward: torch.Tensor
     returns: torch.Tensor
     advantage: torch.Tensor
+    response_length: int
     normalized_advantage: Optional[torch.Tensor] = None
     entropy: Optional[torch.Tensor] = None
 
@@ -387,6 +388,7 @@ class IPPOTrainer:
         completion_text = self.tokenizer.decode(
             response_tokens[0], skip_special_tokens=True
         ).strip()
+        response_length = response_tokens.size(1)
 
         full_attention_mask = torch.ones_like(sequences, device=self.device)
 
@@ -423,6 +425,7 @@ class IPPOTrainer:
             returns=returns.detach(),
             advantage=advantages.detach(),
             entropy=logprob_entropy["entropy"].detach(),
+            response_length=response_length,
         )
 
     def _prepare_advantages(self, rollouts: List[RolloutSample]) -> None:
@@ -530,6 +533,10 @@ class IPPOTrainer:
         returns = torch.cat([sample.returns.view(-1) for sample in rollouts], dim=0)
         metrics["reward_mean"].append(rewards.mean().item())
         metrics["return_mean"].append(returns.mean().item())
+        lengths = torch.tensor(
+            [sample.response_length for sample in rollouts], dtype=torch.float32
+        )
+        metrics["response_length_mean"].append(lengths.mean().item())
 
         stop_early = False
         for epoch in range(self.args.ppo_epochs):
