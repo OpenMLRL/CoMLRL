@@ -38,17 +38,15 @@ def main():
     base_model = AutoModelForCausalLM.from_pretrained(model_name)
     ref_model = AutoModelForCausalLM.from_pretrained(model_name)
 
-    ppo_config = PPOConfig(
-        learning_rate=1e-6,
-        batch_size=1,
-        mini_batch_size=1,
-        gradient_accumulation_steps=1,
-        target_kl=0.1,
-        ppo_epochs=4,
-        seed=42,
-        log_with="wandb",
-    )
-    wandb_kwargs = {"project": "mlrl", "name": "trl_ippo_reference"}
+    ppo_config = PPOConfig()
+    ppo_config.learning_rate = 1e-6
+    ppo_config.batch_size = 1
+    ppo_config.mini_batch_size = 1
+    ppo_config.gradient_accumulation_steps = 1
+    ppo_config.ppo_epochs = 4
+    ppo_config.seed = 42
+    ppo_config.log_with = "wandb"
+    ppo_config.project_kwargs = {"project": "mlrl", "name": "trl_ippo_reference"}
 
     dataset = build_dataset()
 
@@ -59,7 +57,6 @@ def main():
         ref_model=ref_model,
         tokenizer=tokenizer,
         dataset=dataset,
-        wandb_kwargs=wandb_kwargs,
     )
 
     generation_kwargs = {
