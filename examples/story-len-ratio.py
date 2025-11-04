@@ -113,7 +113,6 @@ def example_usage():
     )
 
     trainer.train()
-    trainer.save_model(f"{config.output_dir}/final_models")
     print("Training complete!")
 
 

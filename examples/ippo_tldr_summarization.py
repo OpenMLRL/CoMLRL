@@ -1,5 +1,3 @@
-"""Minimal TL;DR summarization example using the IPPOTrainer."""
-
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
@@ -43,18 +41,24 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    dataset = load_dataset("trl-lib/tldr", split="train").select(range(10))
+    dataset = load_dataset("trl-lib/tldr", split="train").select(range(20))
 
     config = IPPOConfig(
         output_dir="./ippo_qwen_tldr",
         learning_rate=5e-6,
         per_device_train_batch_size=1,
-        num_train_epochs=1,
+        num_train_epochs=5,
         rollout_buffer_size=2,
         ppo_epochs=2,
         max_new_tokens=128,
         logging_steps=1,
     )
+
+    wandb_config = {
+        "entity": "nu-llpr",
+        "project": "mlrl",
+        "name": "ippo_tldr",
+    }
 
     trainer = IPPOTrainer(
         model=model_name,
@@ -63,6 +67,7 @@ def main():
         formatters=prompt_formatter,
         args=config,
         train_dataset=dataset,
+        wandb_config=wandb_config,
     )
 
     trainer.train()
