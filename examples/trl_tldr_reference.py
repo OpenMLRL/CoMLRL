@@ -17,8 +17,6 @@ from __future__ import annotations
 import inspect
 from functools import partial
 from typing import Dict, Iterable, List, Optional
-
-import torch
 from datasets import Dataset, load_dataset
 from transformers import AutoTokenizer
 
@@ -69,39 +67,79 @@ def length_reward(
     return rewards
 
 
-def resolve_trl_kwargs(
+def create_trainer(
     config: PPOConfig,
     model: AutoModelForCausalLMWithValueHead,
     ref_model: Optional[AutoModelForCausalLMWithValueHead],
     tokenizer: AutoTokenizer,
     dataset: Dataset,
 ):
-    """Construct keyword arguments accepted by the installed TRL version."""
+    """Instantiate PPOTrainer regardless of TRL version quirks."""
 
     params = inspect.signature(PPOTrainer.__init__).parameters
+    param_names = list(params.keys())
 
-    kwargs = {"config": config, "model": model}
+    def build_kwargs() -> Dict:
+        kw: Dict = {}
+        if "ref_model" in params:
+            kw["ref_model"] = ref_model
+        elif "model_ref" in params:
+            kw["model_ref"] = ref_model
 
-    if "ref_model" in params:
-        kwargs["ref_model"] = ref_model
-    elif ref_model is not None:
-        kwargs["model_ref"] = ref_model
+        if "tokenizer" in params:
+            kw["tokenizer"] = tokenizer
+        if "dataset" in params:
+            kw["dataset"] = dataset
+        if "train_dataset" in params:
+            kw["train_dataset"] = dataset
+        if "reward_model" in params:
+            kw.setdefault("reward_model", None)
+        if "value_model" in params:
+            kw.setdefault("value_model", None)
+        return kw
 
-    if "tokenizer" in params:
-        kwargs["tokenizer"] = tokenizer
+    attempts = []
 
-    if "dataset" in params:
-        kwargs["dataset"] = dataset
-    if "train_dataset" in params:
-        kwargs["train_dataset"] = dataset
+    kw = build_kwargs()
+    if "config" in params:
+        kw_config = dict(kw)
+        kw_config["config"] = config
+        if "model" in params:
+            kw_config["model"] = model
+            attempts.append(((), kw_config))
+        else:
+            attempts.append(((model,), kw_config))
 
-    # Some legacy signatures expect reward/value models; allow passing None.
-    if "reward_model" in params:
-        kwargs.setdefault("reward_model", None)
-    if "value_model" in params:
-        kwargs.setdefault("value_model", None)
+    if "ppo_config" in params:
+        kw_ppo = dict(build_kwargs())
+        kw_ppo["ppo_config"] = config
+        if "model" in params:
+            kw_ppo["model"] = model
+            attempts.append(((), kw_ppo))
+        else:
+            attempts.append(((model,), kw_ppo))
 
-    return kwargs
+    base_kw = build_kwargs()
+    if "model" in params:
+        base_kw["model"] = model
+        attempts.append(((config,), base_kw))
+        attempts.append(((model,), base_kw))
+    else:
+        attempts.append(((config, model), base_kw))
+        attempts.append(((model,), base_kw))
+
+    last_error: Optional[Exception] = None
+    for args, kwargs in attempts:
+        try:
+            return PPOTrainer(*args, **kwargs)
+        except TypeError as err:
+            last_error = err
+            continue
+
+    raise RuntimeError(
+        "Unable to instantiate PPOTrainer. Encountered parameter names: "
+        f"{param_names}. Last error: {last_error}"
+    )
 
 
 def iterate_batches(
@@ -147,15 +185,7 @@ def main() -> None:
     model = AutoModelForCausalLMWithValueHead.from_pretrained(model_name)
     ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(model_name)
 
-    trainer_kwargs = resolve_trl_kwargs(config, model, ref_model, tokenizer, dataset)
-    try:
-        ppo_trainer = PPOTrainer(**trainer_kwargs)
-    except TypeError as exc:
-        raise RuntimeError(
-            "Failed to initialise PPOTrainer with the detected TRL signature."
-            " Please upgrade `trl` to a recent version (>=0.9) or adjust the"
-            " script to match your installation."
-        ) from exc
+    ppo_trainer = create_trainer(config, model, ref_model, tokenizer, dataset)
 
     device = ppo_trainer.accelerator.device
 
