@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import inspect
-import math
 import os
+import random
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-import wandb
 from datasets import Dataset, IterableDataset
 from torch.utils.data import DataLoader
 from transformers import (
@@ -17,100 +16,87 @@ from transformers import (
     AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizerBase,
-    TrainingArguments,
 )
 
 from comlrl.models.actor_critic import CausalLMWithValueHead
 
+try:
+    import wandb
+except ImportError:  # pragma: no cover - wandb is optional at runtime
+    wandb = None
+
+
+RewardFunc = Callable[..., Sequence[float]]
+Formatter = Callable[[Dict[str, Any]], str]
+MetricsCallback = Callable[[List["RolloutSample"]], Dict[str, float]]
+
 
 @dataclass
-class IPPOConfig(TrainingArguments):
-    """
-    Configuration for Independent PPO with parameter sharing.
+class IPPOConfig:
+    """Configuration container for PPO fine-tuning."""
 
-    The defaults mirror the MAGRPO configuration where possible while adding
-    PPO-specific controls.
-    """
+    output_dir: str = "./ippo_output"
+    learning_rate: float = 5e-6
+    critic_learning_rate: Optional[float] = None
+    weight_decay: float = 0.0
+    adam_beta1: float = 0.9
+    adam_beta2: float = 0.999
+    adam_epsilon: float = 1e-8
+    max_grad_norm: float = 1.0
+    rollout_buffer_size: int = 8
+    mini_batch_size: int = 4
+    ppo_epochs: int = 4
+    clip_range: float = 0.2
+    value_clip_range: Optional[float] = None
+    value_loss_coef: float = 0.5
+    entropy_coef: float = 0.01
+    advantage_normalization: bool = True
+    target_kl: Optional[float] = 0.3
+    gamma: float = 1.0
+    gae_lambda: float = 1.0
+    max_new_tokens: int = 128
+    temperature: float = 1.0
+    top_p: float = 1.0
+    top_k: Optional[int] = None
+    do_sample: bool = True
+    num_train_epochs: int = 1
+    per_device_train_batch_size: int = 1
+    seed: Optional[int] = None
+    use_separate_critic: bool = False
+    critic_model_name_or_path: Optional[str] = None
+    critic_value_head_hidden_dim: Optional[int] = None
+    value_head_hidden_dim: Optional[int] = None
+    pad_token_id: Optional[int] = None
+    num_agents: int = 1
+    num_turns: int = 1
+    logging_steps: int = 10
+    log_rollouts: bool = False
 
-    num_agents: int = field(
-        default=1,
-        metadata={"help": "Independent PPO currently supports a single agent."},
-    )
-    num_turns: int = field(
-        default=1, metadata={"help": "Independent PPO currently supports one turn."}
-    )
-    rollout_buffer_size: int = field(
-        default=4,
-        metadata={
-            "help": "Number of rollouts to accumulate before performing PPO updates."
-        },
-    )
-    ppo_epochs: int = field(
-        default=4, metadata={"help": "Number of PPO update epochs per batch."}
-    )
-    max_new_tokens: int = field(
-        default=256, metadata={"help": "Maximum number of tokens to sample per rollout"}
-    )
-    temperature: float = field(
-        default=0.7, metadata={"help": "Temperature used during sampling."}
-    )
-    top_p: float = field(
-        default=0.9, metadata={"help": "Nucleus sampling top-p value during rollout."}
-    )
-    do_sample: bool = field(
-        default=True,
-        metadata={
-            "help": "Whether to use stochastic sampling during rollout generation."
-        },
-    )
-    clip_range: float = field(
-        default=0.2, metadata={"help": "PPO policy ratio clipping range."}
-    )
-    clip_range_value: float = field(
-        default=0.2, metadata={"help": "PPO value function clipping range."}
-    )
-    value_loss_coef: float = field(
-        default=0.5, metadata={"help": "Coefficient for value loss contribution."}
-    )
-    entropy_coef: float = field(
-        default=0.01, metadata={"help": "Coefficient for entropy bonus."}
-    )
-    gamma: float = field(default=1.0, metadata={"help": "Discount factor."})
-    gae_lambda: float = field(
-        default=0.95,
-        metadata={"help": "Lambda used for generalized advantage estimation."},
-    )
-    advantage_normalization: bool = field(
-        default=True,
-        metadata={"help": "Normalize advantages within each rollout batch."},
-    )
-    advantage_clip_value: Optional[float] = field(
-        default=5.0,
-        metadata={
-            "help": "Clip normalized advantages to [-x, x] to stabilize training."
-        },
-    )
-    max_grad_norm: float = field(
-        default=1.0, metadata={"help": "Global gradient norm clipping value."}
-    )
-    target_kl: float = field(
-        default=1.0,
-        metadata={"help": "Stop PPO epochs early when approx KL exceeds this value."},
-    )
+    def __post_init__(self) -> None:
+        if self.rollout_buffer_size < 1:
+            raise ValueError("rollout_buffer_size must be >= 1.")
+        if self.mini_batch_size < 1:
+            raise ValueError("mini_batch_size must be >= 1.")
+        if self.mini_batch_size > self.rollout_buffer_size:
+            self.mini_batch_size = self.rollout_buffer_size
+        if self.per_device_train_batch_size != 1:
+            raise ValueError("per_device_train_batch_size must be 1 for IPPO.")
+        if self.num_agents != 1 or self.num_turns != 1:
+            raise ValueError("Independent PPO only supports a single agent/turn.")
+        if self.critic_learning_rate is None:
+            self.critic_learning_rate = self.learning_rate
 
 
 @dataclass
 class RolloutSample:
     prompt: str
     completion: str
-    prompt_input_ids: torch.Tensor
-    prompt_attention_mask: torch.Tensor
     full_input_ids: torch.Tensor
-    full_attention_mask: torch.Tensor
-    response_input_ids: torch.Tensor
+    attention_mask: torch.Tensor
     prompt_len: int
-    old_logprobs: torch.Tensor
-    old_values: torch.Tensor
+    response_len: int
+    old_logprob: torch.Tensor
+    old_value: torch.Tensor
     reward: torch.Tensor
     returns: torch.Tensor
     advantage: torch.Tensor
@@ -120,136 +106,220 @@ class RolloutSample:
 
 
 class IPPOTrainer:
-    """
-    Independent PPO trainer with parameter sharing between actor and critic.
-
-    Args:
-        model: Hugging Face model identifier or an instantiated Causal LM.
-        tokenizer: Tokenizer associated with the model.
-        reward_func: Callable that scores completions.
-        reward_processor: Optional post-processor applied to raw rewards.
-        formatters: Optional callable or list of callables that transform dataset items.
-        args: IPPOConfig instance.
-        train_dataset: Dataset used for training rollouts.
-        eval_dataset: Optional evaluation dataset (not yet supported).
-        model_config: Optional kwargs forwarded when loading pretrained model/tokenizer.
-        wandb_config: Optional Weights & Biases configuration.
-    """
+    """Independent PPO trainer with optional separate critic support."""
 
     def __init__(
         self,
         model: Optional[Union[str, PreTrainedModel]] = None,
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
-        reward_func: Optional[Callable[..., Sequence[float]]] = None,
+        reward_func: Optional[RewardFunc] = None,
         reward_processor: Optional[Callable[[float], float]] = None,
-        formatters: Optional[
-            Union[Callable[[Dict[str, Any]], str], Sequence[Callable]]
-        ] = None,
+        formatters: Optional[Union[Formatter, Sequence[Formatter]]] = None,
         args: Optional[IPPOConfig] = None,
         train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
         eval_dataset: Optional[Union[Dataset, IterableDataset]] = None,
         model_config: Optional[Dict[str, Any]] = None,
         wandb_config: Optional[Dict[str, Any]] = None,
-        metrics_callback: Optional[
-            Callable[[List[RolloutSample]], Dict[str, float]]
-        ] = None,
-    ):
-        if not torch.cuda.is_available():
-            raise RuntimeError("GPU not found. IPPOTrainer requires GPU for training.")
-
+        metrics_callback: Optional[MetricsCallback] = None,
+    ) -> None:
         if reward_func is None or not callable(reward_func):
-            raise ValueError("reward_func must be a callable that returns rewards.")
+            raise ValueError("A callable reward_func must be provided.")
 
         self.args = args if args is not None else IPPOConfig()
-
-        if self.args.num_agents != 1:
-            raise NotImplementedError(
-                "Independent PPO currently supports num_agents == 1."
-            )
-        if self.args.num_turns != 1:
-            raise NotImplementedError(
-                "Independent PPO currently supports num_turns == 1."
-            )
-
-        if self.args.per_device_train_batch_size != 1:
-            raise ValueError("IPPOTrainer requires per_device_train_batch_size == 1.")
-        if self.args.rollout_buffer_size < 1:
-            raise ValueError("rollout_buffer_size must be >= 1.")
-        if self.args.ppo_epochs < 1:
-            raise ValueError("ppo_epochs must be >= 1.")
-
-        self.device = torch.device("cuda")
-
+        self.reward_func = reward_func
+        self.reward_processor = reward_processor or (lambda x: x)
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
-        self.reward_func = reward_func
-        self._reward_signature = inspect.signature(reward_func)
-        self.reward_processor = reward_processor or (lambda x: x)
-        self._setup_formatter(formatters)
-
-        self.model_config = model_config or {}
-        self.tokenizer = tokenizer
-        self.actor_critic = self._load_model(model)
-        self.actor_critic.to(self.device)
-
         self.metrics_callback = metrics_callback
+        self.model_config = model_config or {}
 
-        if self.tokenizer is None:
-            raise ValueError("Tokenizer must be provided when using IPPOTrainer.")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if not torch.cuda.is_available():
+            # CPU fallback is allowed for experimentation but will be slow.
+            print("Warning: CUDA not available. Training will run on CPU.")
 
+        if self.args.seed is not None:
+            random.seed(self.args.seed)
+            torch.manual_seed(self.args.seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(self.args.seed)
+
+        self.tokenizer = tokenizer
+        self.formatter = self._setup_formatter(formatters)
+        self._reward_signature = self._infer_reward_signature(reward_func)
+
+        self.actor_model: CausalLMWithValueHead
+        self.critic_model: Optional[CausalLMWithValueHead] = None
+
+        self.tokenizer = self._ensure_tokenizer(model, self.tokenizer)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         if self.tokenizer.pad_token_id is None:
-            raise ValueError("Tokenizer must define pad_token_id for batching.")
+            raise ValueError("Tokenizer must expose pad_token_id.")
 
-        self.actor_critic.model.config.pad_token_id = self.tokenizer.pad_token_id
-        if getattr(self.tokenizer, "eos_token_id", None) is not None:
-            self.actor_critic.model.config.eos_token_id = self.tokenizer.eos_token_id
-
-        self.optimizer = torch.optim.AdamW(
-            self.actor_critic.parameters(),
-            lr=self.args.learning_rate,
-            betas=(self.args.adam_beta1, self.args.adam_beta2),
-            eps=self.args.adam_epsilon,
-            weight_decay=self.args.weight_decay,
+        self.args.pad_token_id = (
+            self.args.pad_token_id
+            if self.args.pad_token_id is not None
+            else self.tokenizer.pad_token_id
         )
 
+        self.actor_model = self._load_actor_model(model)
+        self.actor_model.to(self.device)
+
+        if self.args.use_separate_critic:
+            critic_identifier = self.args.critic_model_name_or_path or model
+            if critic_identifier is None:
+                raise ValueError(
+                    "critic_model_name_or_path must be provided when using a separate critic."
+                )
+            self.critic_model = self._load_critic_model(critic_identifier)
+            self.critic_model.to(self.device)
+
+        self._configure_tokenizer_specials()
+
+        if self.args.use_separate_critic:
+            self.actor_optimizer = torch.optim.AdamW(
+                self.actor_model.parameters(),
+                lr=self.args.learning_rate,
+                betas=(self.args.adam_beta1, self.args.adam_beta2),
+                eps=self.args.adam_epsilon,
+                weight_decay=self.args.weight_decay,
+            )
+            self.critic_optimizer = torch.optim.AdamW(
+                self.critic_model.parameters(),  # type: ignore[arg-type]
+                lr=self.args.critic_learning_rate,
+                betas=(self.args.adam_beta1, self.args.adam_beta2),
+                eps=self.args.adam_epsilon,
+                weight_decay=self.args.weight_decay,
+            )
+        else:
+            self.optimizer = torch.optim.AdamW(
+                self.actor_model.parameters(),
+                lr=self.args.learning_rate,
+                betas=(self.args.adam_beta1, self.args.adam_beta2),
+                eps=self.args.adam_epsilon,
+                weight_decay=self.args.weight_decay,
+            )
+
         self.global_step = 0
+        self.rollout_buffer: List[RolloutSample] = []
+
         self.wandb_config = wandb_config
         self.wandb_initialized = False
         if wandb_config is not None:
             self._init_wandb()
 
-        self.rollout_buffer: List[RolloutSample] = []
+    # --------------------------------------------------------------------- #
+    # Initialisation helpers
+    # --------------------------------------------------------------------- #
+    def _ensure_tokenizer(
+        self,
+        model: Optional[Union[str, PreTrainedModel]],
+        tokenizer: Optional[PreTrainedTokenizerBase],
+    ) -> PreTrainedTokenizerBase:
+        if tokenizer is not None:
+            return tokenizer
+        if model is None:
+            raise ValueError(
+                "Tokenizer must be provided when model is a PreTrainedModel instance."
+            )
+        tokenizer_kwargs = self.model_config.get("tokenizer_kwargs", {})
+        return AutoTokenizer.from_pretrained(model, **tokenizer_kwargs)
+
+    def _setup_formatter(
+        self,
+        formatters: Optional[Union[Formatter, Sequence[Formatter]]],
+    ) -> Formatter:
+        default_formatter: Formatter = lambda x: x.get("prompt", "")
+
+        if formatters is None:
+            return default_formatter
+        if callable(formatters):
+            return formatters
+        raise ValueError(
+            "formatters must be None or a single callable for IPPOTrainer."
+        )
+
+    def _infer_reward_signature(self, fn: RewardFunc):
+        try:
+            return inspect.signature(fn)
+        except (TypeError, ValueError):
+            return None
+
+    def _load_actor_model(
+        self, model: Optional[Union[str, PreTrainedModel]]
+    ) -> CausalLMWithValueHead:
+        if model is None:
+            raise ValueError("A policy model identifier or instance is required.")
+
+        if isinstance(model, PreTrainedModel):
+            base_model = model
+        else:
+            model_kwargs = self.model_config.get("model_kwargs", {})
+            base_model = AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
+
+        attach_value = not self.args.use_separate_critic
+        return CausalLMWithValueHead(
+            base_model,
+            value_head_hidden_dim=self.args.value_head_hidden_dim,
+            attach_value_head=attach_value,
+        )
+
+    def _load_critic_model(
+        self, model_identifier: Union[str, PreTrainedModel]
+    ) -> CausalLMWithValueHead:
+        if isinstance(model_identifier, PreTrainedModel):
+            base_model = model_identifier
+        else:
+            model_kwargs = self.model_config.get("critic_model_kwargs", {})
+            base_model = AutoModelForCausalLM.from_pretrained(
+                model_identifier, **model_kwargs
+            )
+
+        return CausalLMWithValueHead(
+            base_model,
+            value_head_hidden_dim=self.args.critic_value_head_hidden_dim,
+            attach_value_head=True,
+        )
+
+    def _configure_tokenizer_specials(self) -> None:
+        pad_id = self.args.pad_token_id
+        self.actor_model.model.config.pad_token_id = pad_id
+        self.actor_model.model.config.eos_token_id = getattr(
+            self.tokenizer, "eos_token_id", pad_id
+        )
+        if self.critic_model is not None:
+            self.critic_model.model.config.pad_token_id = pad_id
+            self.critic_model.model.config.eos_token_id = getattr(
+                self.tokenizer, "eos_token_id", pad_id
+            )
 
     def _init_wandb(self) -> None:
         if self.wandb_initialized:
             return
+        if wandb is None:
+            raise RuntimeError("wandb is not installed but wandb_config was provided.")
 
-        wandb_project = self.wandb_config.get("project", "mlrl-ippo")
-        wandb_entity = self.wandb_config.get("entity")
-        wandb_name = self.wandb_config.get("name", "ippo-run")
+        project = self.wandb_config.get("project", "comlrl-ippo")
+        entity = self.wandb_config.get("entity")
+        name = self.wandb_config.get("name", "ippo-run")
         wandb_dir = self.wandb_config.get("dir")
 
-        config_dict = {
-            "model_name": getattr(self.actor_critic.model.config, "_name_or_path", ""),
-            "learning_rate": self.args.learning_rate,
-            "rollout_buffer_size": self.args.rollout_buffer_size,
-            "ppo_epochs": self.args.ppo_epochs,
-            "clip_range": self.args.clip_range,
-            "clip_range_value": self.args.clip_range_value,
-            "entropy_coef": self.args.entropy_coef,
-            "value_loss_coef": self.args.value_loss_coef,
-            "max_new_tokens": self.args.max_new_tokens,
-            "temperature": self.args.temperature,
-            "top_p": self.args.top_p,
-        }
-
-        init_kwargs = {
-            "project": wandb_project,
-            "entity": wandb_entity,
-            "name": wandb_name,
-            "config": config_dict,
+        init_kwargs: Dict[str, Any] = {
+            "project": project,
+            "entity": entity,
+            "name": name,
+            "config": {
+                "learning_rate": self.args.learning_rate,
+                "rollout_buffer_size": self.args.rollout_buffer_size,
+                "mini_batch_size": self.args.mini_batch_size,
+                "ppo_epochs": self.args.ppo_epochs,
+                "clip_range": self.args.clip_range,
+                "entropy_coef": self.args.entropy_coef,
+                "value_loss_coef": self.args.value_loss_coef,
+                "max_new_tokens": self.args.max_new_tokens,
+                "use_separate_critic": self.args.use_separate_critic,
+            },
         }
 
         if wandb_dir is not None:
@@ -263,54 +333,17 @@ class IPPOTrainer:
         wandb.init(**init_kwargs)
         self.wandb_initialized = True
 
-    def _setup_formatter(
-        self,
-        formatters: Optional[
-            Union[Callable[[Dict[str, Any]], str], Sequence[Callable]]
-        ],
-    ) -> None:
-        default_formatter = lambda x: x.get("prompt", "")
-
-        if formatters is None:
-            self.formatter = default_formatter
-        elif callable(formatters):
-            self.formatter = formatters
-        else:
-            raise ValueError(
-                "formatters must be None or a single callable for IPPOTrainer."
-            )
-
-    def _load_model(
-        self,
-        model: Optional[Union[str, PreTrainedModel]],
-    ) -> CausalLMWithValueHead:
-        if model is None:
-            raise ValueError("A base model or model identifier must be provided.")
-
-        if isinstance(model, PreTrainedModel):
-            base_model = model
-        elif isinstance(model, str):
-            base_model = AutoModelForCausalLM.from_pretrained(
-                model, **self.model_config.get("model_kwargs", {})
-            )
-            if self.tokenizer is None:
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    model, **self.model_config.get("tokenizer_kwargs", {})
-                )
-        else:
-            raise TypeError("model must be a str or PreTrainedModel instance.")
-
-        return CausalLMWithValueHead(base_model)
-
+    # --------------------------------------------------------------------- #
+    # Data utilities
+    # --------------------------------------------------------------------- #
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
-            raise ValueError("Trainer: training requires a train_dataset.")
-
+            raise ValueError("Training requires a dataset.")
         return DataLoader(
             self.train_dataset,
             batch_size=self.args.per_device_train_batch_size,
             shuffle=False,
-            collate_fn=lambda examples: examples,
+            collate_fn=lambda batch: batch,
         )
 
     def _format_prompt(self, item: Dict[str, Any]) -> str:
@@ -323,21 +356,22 @@ class IPPOTrainer:
         encoded = self.tokenizer(
             prompt,
             return_tensors="pt",
-            padding=True,
             truncation=True,
         )
-        return {k: v.to(self.device) for k, v in encoded.items()}
+        return {
+            "input_ids": encoded["input_ids"].to(self.device),
+            "attention_mask": encoded["attention_mask"].to(self.device),
+        }
 
     def _call_reward_func(
         self, prompts: Sequence[str], completions: Sequence[str]
     ) -> List[float]:
-        params = self._reward_signature.parameters
+        signature = self._reward_signature or inspect.signature(self.reward_func)
+        params = signature.parameters
         if len(params) == 1:
-            raw = self.reward_func(completions)
-        elif len(params) >= 2:
-            raw = self.reward_func(prompts, completions)
+            raw = self.reward_func(completions)  # type: ignore[arg-type]
         else:
-            raw = self.reward_func(completions)
+            raw = self.reward_func(prompts, completions)  # type: ignore[arg-type]
 
         if isinstance(raw, torch.Tensor):
             rewards = raw.detach().cpu().tolist()
@@ -347,250 +381,332 @@ class IPPOTrainer:
             rewards = [float(raw)]
         return [float(self.reward_processor(r)) for r in rewards]
 
-    def _logprobs_and_entropy(
-        self,
-        logits: torch.Tensor,
-        target_tokens: torch.Tensor,
-        prompt_len: int,
-    ) -> Dict[str, torch.Tensor]:
-        seq_len = target_tokens.size(1)
-        if seq_len == 0:
-            zero = torch.zeros(target_tokens.size(0), device=logits.device)
-            return {"logprobs": zero, "entropy": zero}
-
-        start_index = max(prompt_len - 1, 0)
-        slice_logits = logits[:, start_index : start_index + seq_len, :]
-        log_probs = F.log_softmax(slice_logits, dim=-1)
-        probs = log_probs.exp()
-
-        gathered_log_probs = log_probs.gather(
-            dim=-1, index=target_tokens.unsqueeze(-1)
-        ).squeeze(-1)
-        entropies = -(probs * log_probs).sum(dim=-1)
-
-        return {
-            "logprobs": gathered_log_probs,
-            "entropy": entropies,
-        }
-
+    # --------------------------------------------------------------------- #
+    # Rollout collection
+    # --------------------------------------------------------------------- #
     def _collect_rollout(self, item: Dict[str, Any]) -> RolloutSample:
         prompt = self._format_prompt(item)
-        prompt_inputs = self._encode_prompt(prompt)
-        prompt_input_ids = prompt_inputs["input_ids"]
-        prompt_attention_mask = prompt_inputs["attention_mask"]
+        encoded_prompt = self._encode_prompt(prompt)
+        prompt_input_ids = encoded_prompt["input_ids"]
+        prompt_attention_mask = encoded_prompt["attention_mask"]
 
         prompt_len = prompt_input_ids.size(1)
 
-        generation_kwargs = {
+        generation_kwargs: Dict[str, Any] = {
             "input_ids": prompt_input_ids,
             "attention_mask": prompt_attention_mask,
             "max_new_tokens": self.args.max_new_tokens,
             "do_sample": bool(self.args.do_sample),
             "temperature": self.args.temperature,
             "top_p": self.args.top_p,
-            "pad_token_id": self.tokenizer.pad_token_id,
+            "pad_token_id": self.args.pad_token_id,
         }
+        if self.args.top_k is not None:
+            generation_kwargs["top_k"] = self.args.top_k
 
-        sequences = self.actor_critic.generate(**generation_kwargs)
+        sequences = self.actor_model.generate(**generation_kwargs)
         if sequences.size(1) <= prompt_len:
-            raise ValueError("Model returned empty completion during rollout.")
+            raise RuntimeError("Model produced an empty completion during rollout.")
 
         response_tokens = sequences[:, prompt_len:]
         completion_text = self.tokenizer.decode(
             response_tokens[0], skip_special_tokens=True
-        ).strip()
-        response_token_len = response_tokens.size(1)
+        )
+        response_len = response_tokens.size(1)
         response_char_length = len(completion_text)
 
         full_attention_mask = torch.ones_like(sequences, device=self.device)
 
         with torch.no_grad():
-            rollout_outputs = self.actor_critic(
-                input_ids=sequences, attention_mask=full_attention_mask
+            logprob, entropy, actor_value = self._policy_eval(
+                sequences, full_attention_mask, prompt_len, response_len
             )
-        logprob_entropy = self._logprobs_and_entropy(
-            rollout_outputs.logits, response_tokens, prompt_len
-        )
-        start_index = max(prompt_len - 1, 0)
-        old_values = rollout_outputs.values[
-            :, start_index : start_index + response_token_len
-        ]
+            if self.args.use_separate_critic:
+                value = self._critic_eval(
+                    sequences, full_attention_mask, prompt_len, response_len
+                )
+            else:
+                if actor_value is None:
+                    raise RuntimeError("Shared value head expected a value prediction.")
+                value = actor_value
 
         rewards = self._call_reward_func([prompt], [completion_text])
-        reward_tensor = torch.tensor(rewards, dtype=torch.float32, device=self.device)
+        reward_tensor = torch.tensor(rewards, device=self.device, dtype=torch.float32)
 
-        token_rewards = reward_tensor.unsqueeze(-1).expand_as(old_values)
-        returns, advantages = self._compute_gae(token_rewards, old_values)
+        returns = reward_tensor.clone()
+        advantage = returns - value
 
-        return RolloutSample(
+        rollout = RolloutSample(
             prompt=prompt,
             completion=completion_text,
-            prompt_input_ids=prompt_input_ids.detach(),
-            prompt_attention_mask=prompt_attention_mask.detach(),
-            full_input_ids=sequences.detach(),
-            full_attention_mask=full_attention_mask.detach(),
-            response_input_ids=response_tokens.detach(),
+            full_input_ids=sequences.squeeze(0).detach().cpu(),
+            attention_mask=full_attention_mask.squeeze(0).detach().cpu(),
             prompt_len=prompt_len,
-            old_logprobs=logprob_entropy["logprobs"].detach(),
-            old_values=old_values.detach(),
-            reward=reward_tensor.detach(),
-            returns=returns.detach(),
-            advantage=advantages.detach(),
-            entropy=logprob_entropy["entropy"].detach(),
+            response_len=response_len,
+            old_logprob=logprob.detach().cpu(),
+            old_value=value.detach().cpu(),
+            reward=reward_tensor.detach().cpu(),
+            returns=returns.detach().cpu(),
+            advantage=advantage.detach().cpu(),
+            entropy=entropy.detach().cpu() if entropy is not None else None,
             metadata={
                 "char_length": response_char_length,
-                "token_length": response_token_len,
+                "token_length": response_len,
             },
         )
+        return rollout
 
-    def _prepare_advantages(self, rollouts: List[RolloutSample]) -> None:
-        flat_advantages = torch.cat([r.advantage.view(-1) for r in rollouts], dim=0)
-        if self.args.advantage_normalization and flat_advantages.numel() > 1:
-            mean = flat_advantages.mean()
-            std = flat_advantages.std(unbiased=False).clamp(min=1e-6)
-            for r in rollouts:
-                r.normalized_advantage = (r.advantage - mean) / std
-        else:
-            for r in rollouts:
-                r.normalized_advantage = r.advantage
+    def _policy_eval(
+        self,
+        sequences: torch.Tensor,
+        attention_mask: torch.Tensor,
+        prompt_len: int,
+        response_len: int,
+        output_values: bool = True,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """
+        Evaluate the actor to retrieve log-probabilities, entropy, and value prediction.
+        """
 
-        clip_val = getattr(self.args, "advantage_clip_value", None)
-        if clip_val is not None and clip_val > 0:
-            for r in rollouts:
-                r.normalized_advantage = torch.clamp(
-                    r.normalized_advantage, -clip_val, clip_val
-                )
+        outputs = self.actor_model(
+            input_ids=sequences,
+            attention_mask=attention_mask,
+            output_values=output_values,
+        )
 
-    def _compute_gae(
-        self, rewards: torch.Tensor, values: torch.Tensor
+        logprob, entropy = self._compute_sequence_stats(
+            sequences, outputs.logits, prompt_len, response_len
+        )
+
+        value = None
+        if output_values and outputs.values is not None:
+            last_index = prompt_len + response_len - 1
+            value = outputs.values[:, last_index]
+
+        return logprob, entropy, value
+
+    def _critic_eval(
+        self,
+        sequences: torch.Tensor,
+        attention_mask: torch.Tensor,
+        prompt_len: int,
+        response_len: int,
+    ) -> torch.Tensor:
+        if self.critic_model is None:
+            raise RuntimeError("Critic model not initialised.")
+
+        outputs = self.critic_model(
+            input_ids=sequences,
+            attention_mask=attention_mask,
+            output_values=True,
+        )
+        last_index = prompt_len + response_len - 1
+        return outputs.values[:, last_index]
+
+    def _compute_sequence_stats(
+        self,
+        sequences: torch.Tensor,
+        logits: torch.Tensor,
+        prompt_len: int,
+        response_len: int,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        gamma = float(self.args.gamma)
-        lam = float(getattr(self.args, "gae_lambda", 0.95))
+        shifted_logits = logits[:, :-1, :]
+        shifted_targets = sequences[:, 1:]
 
-        next_values = torch.zeros_like(values)
-        if values.size(1) > 1:
-            next_values[:, :-1] = values[:, 1:]
+        log_probs = F.log_softmax(shifted_logits, dim=-1)
+        token_log_probs = log_probs.gather(
+            dim=-1, index=shifted_targets.unsqueeze(-1)
+        ).squeeze(-1)
 
-        deltas = rewards + gamma * next_values - values
+        start_index = max(prompt_len - 1, 0)
+        end_index = start_index + response_len
+        response_log_probs = token_log_probs[:, start_index:end_index]
 
-        advantages = torch.zeros_like(values)
-        last_advantage = torch.zeros(values.size(0), device=values.device)
+        logprob_sum = response_log_probs.sum(dim=-1)
 
-        for t in range(values.size(1) - 1, -1, -1):
-            last_advantage = deltas[:, t] + gamma * lam * last_advantage
-            advantages[:, t] = last_advantage
+        response_logits = log_probs[:, start_index:end_index, :]
+        entropies = -(response_logits.exp() * response_logits).sum(dim=-1)
+        entropy_mean = entropies.mean(dim=-1)
 
-        returns = advantages + values
-        return returns, advantages
+        return logprob_sum, entropy_mean
 
-    def _ppo_step(self, sample: RolloutSample) -> Dict[str, torch.Tensor]:
-        outputs = self.actor_critic(
-            input_ids=sample.full_input_ids,
-            attention_mask=sample.full_attention_mask,
-        )
-        logprob_entropy = self._logprobs_and_entropy(
-            outputs.logits, sample.response_input_ids, sample.prompt_len
-        )
-        new_logprobs = logprob_entropy["logprobs"]
-        entropy = logprob_entropy["entropy"]
+    # --------------------------------------------------------------------- #
+    # PPO update logic
+    # --------------------------------------------------------------------- #
+    def _prepare_advantages(self, rollouts: List[RolloutSample]) -> None:
+        if not rollouts:
+            return
 
-        ratio = torch.exp(new_logprobs - sample.old_logprobs)
-        clipped_ratio = torch.clamp(
-            ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range
+        advantages = torch.stack(
+            [sample.advantage.to(torch.float32).view(-1)[0] for sample in rollouts]
         )
 
-        adv = sample.normalized_advantage
-        policy_loss = -torch.min(ratio * adv, clipped_ratio * adv).mean()
+        if self.args.advantage_normalization and advantages.numel() > 1:
+            mean = advantages.mean()
+            std = advantages.std(unbiased=False).clamp(min=1e-6)
+            for sample in rollouts:
+                sample.normalized_advantage = (sample.advantage - mean) / std
+        else:
+            for sample in rollouts:
+                sample.normalized_advantage = sample.advantage.clone()
 
-        start_index = max(sample.prompt_len - 1, 0)
-        response_len = sample.response_input_ids.size(1)
-        new_values = outputs.values[:, start_index : start_index + response_len]
+    def _ppo_step(self, batch: List[RolloutSample]) -> Dict[str, float]:
+        actor_losses: List[torch.Tensor] = []
+        value_losses: List[torch.Tensor] = []
+        entropies: List[torch.Tensor] = []
+        approx_kls: List[torch.Tensor] = []
+        ratios: List[torch.Tensor] = []
 
-        value_loss_unclipped = (sample.returns - new_values) ** 2
-        value_clipped = sample.old_values + torch.clamp(
-            new_values - sample.old_values,
-            -self.args.clip_range_value,
-            self.args.clip_range_value,
-        )
-        value_loss_clipped = (sample.returns - value_clipped) ** 2
-        value_loss = 0.5 * torch.max(value_loss_unclipped, value_loss_clipped).mean()
+        for sample in batch:
+            sequences = sample.full_input_ids.to(self.device).unsqueeze(0)
+            attention_mask = sample.attention_mask.to(self.device).unsqueeze(0)
 
-        loss = (
-            policy_loss
-            + self.args.value_loss_coef * value_loss
-            - self.args.entropy_coef * entropy.mean()
-        )
+            logprob, entropy, actor_value = self._policy_eval(
+                sequences,
+                attention_mask,
+                sample.prompt_len,
+                sample.response_len,
+                output_values=not self.args.use_separate_critic,
+            )
+            if self.args.use_separate_critic:
+                value = self._critic_eval(
+                    sequences,
+                    attention_mask,
+                    sample.prompt_len,
+                    sample.response_len,
+                )
+            else:
+                if actor_value is None:
+                    raise RuntimeError("Value head missing for shared actor-critic.")
+                value = actor_value
 
-        approx_kl = (sample.old_logprobs - new_logprobs).mean()
+            old_logprob = sample.old_logprob.to(self.device)
+            advantage = sample.normalized_advantage.to(self.device)
+            returns = sample.returns.to(self.device)
+
+            ratio = torch.exp(logprob - old_logprob)
+            clipped_ratio = torch.clamp(
+                ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range
+            )
+            surrogate_1 = ratio * advantage
+            surrogate_2 = clipped_ratio * advantage
+            policy_loss = -torch.min(surrogate_1, surrogate_2)
+
+            value_target = returns
+            if (
+                self.args.value_clip_range is not None
+                and not self.args.use_separate_critic
+            ):
+                clipped_value = sample.old_value.to(self.device) + torch.clamp(
+                    value - sample.old_value.to(self.device),
+                    -self.args.value_clip_range,
+                    self.args.value_clip_range,
+                )
+                value_error = torch.max(
+                    (value_target - value) ** 2,
+                    (value_target - clipped_value) ** 2,
+                )
+            else:
+                value_error = (value_target - value) ** 2
+
+            actor_losses.append(policy_loss)
+            value_losses.append(value_error)
+            entropies.append(entropy)
+            approx_kls.append((old_logprob - logprob).detach())
+            ratios.append(ratio.detach())
+
+        actor_loss = torch.stack(actor_losses).mean()
+        value_loss = torch.stack(value_losses).mean()
+        entropy_mean = torch.stack(entropies).mean()
+        approx_kl = torch.stack(approx_kls).mean()
+        ratio_mean = torch.stack(ratios).mean()
+
+        actor_total = actor_loss - self.args.entropy_coef * entropy_mean
+        value_total = self.args.value_loss_coef * value_loss
+
+        if self.args.use_separate_critic:
+            self.actor_optimizer.zero_grad()
+            actor_total.backward()
+            torch.nn.utils.clip_grad_norm_(
+                self.actor_model.parameters(), self.args.max_grad_norm
+            )
+            self.actor_optimizer.step()
+
+            self.critic_optimizer.zero_grad()
+            value_total.backward()
+            torch.nn.utils.clip_grad_norm_(
+                self.critic_model.parameters(), self.args.max_grad_norm  # type: ignore[arg-type]
+            )
+            self.critic_optimizer.step()
+        else:
+            self.optimizer.zero_grad()
+            (actor_total + value_total).backward()
+            torch.nn.utils.clip_grad_norm_(
+                self.actor_model.parameters(), self.args.max_grad_norm
+            )
+            self.optimizer.step()
 
         return {
-            "loss": loss,
-            "policy_loss": policy_loss.detach(),
-            "value_loss": value_loss.detach(),
-            "entropy": entropy.detach().mean(),
-            "approx_kl": approx_kl.detach(),
-            "ratio": ratio.detach().mean(),
+            "policy_loss": actor_loss.detach().item(),
+            "value_loss": value_loss.detach().item(),
+            "entropy": entropy_mean.detach().item(),
+            "approx_kl": approx_kl.item(),
+            "ratio": ratio_mean.item(),
         }
 
-    def _apply_gradients(self, loss: torch.Tensor) -> None:
-        self.optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            self.actor_critic.parameters(), self.args.max_grad_norm
-        )
-        self.optimizer.step()
-
     def _update(self, rollouts: List[RolloutSample]) -> Dict[str, float]:
-        self._prepare_advantages(rollouts)
-        metrics = defaultdict(list)
+        if not rollouts:
+            return {}
 
-        rewards = torch.cat([sample.reward.view(-1) for sample in rollouts], dim=0)
-        returns = torch.cat([sample.returns.view(-1) for sample in rollouts], dim=0)
+        self._prepare_advantages(rollouts)
+        rewards = torch.stack([sample.reward for sample in rollouts]).float()
+
+        metrics = defaultdict(list)
         metrics["reward_mean"].append(rewards.mean().item())
-        metrics["return_mean"].append(returns.mean().item())
 
         if self.metrics_callback is not None:
-            extra_metrics = self.metrics_callback(rollouts)
-            if isinstance(extra_metrics, dict):
-                for key, value in extra_metrics.items():
-                    try:
+            try:
+                extra = self.metrics_callback(rollouts)
+                if isinstance(extra, dict):
+                    for key, value in extra.items():
                         metrics[key].append(float(value))
-                    except (TypeError, ValueError):
-                        continue
+            except Exception:
+                pass
 
         stop_early = False
         for epoch in range(self.args.ppo_epochs):
-            for sample in rollouts:
-                step_metrics = self._ppo_step(sample)
-                loss = step_metrics.pop("loss")
-                if loss is None or not torch.isfinite(loss):
-                    continue
-
-                approx_kl_tensor = step_metrics.get("approx_kl")
-                approx_kl_scalar: Optional[float] = None
-                if approx_kl_tensor is not None:
-                    approx_kl_scalar = float(approx_kl_tensor.item())
-                    if not math.isfinite(approx_kl_scalar):
-                        approx_kl_scalar = None
-
-                self._apply_gradients(loss)
-
+            random.shuffle(rollouts)
+            for start in range(0, len(rollouts), self.args.mini_batch_size):
+                batch = rollouts[start : start + self.args.mini_batch_size]
+                step_metrics = self._ppo_step(batch)
                 for key, value in step_metrics.items():
-                    metrics[key].append(value.item())
+                    metrics[key].append(value)
 
-                if approx_kl_scalar is not None and approx_kl_scalar > float(
-                    self.args.target_kl
+                approx_kl = step_metrics.get("approx_kl")
+                if (
+                    not stop_early
+                    and self.args.target_kl is not None
+                    and approx_kl is not None
+                    and approx_kl > float(self.args.target_kl)
                 ):
                     stop_early = True
                     break
             if stop_early:
                 break
 
-        return {k: float(sum(v) / max(len(v), 1)) for k, v in metrics.items()}
+        averaged = {
+            key: float(sum(values) / len(values))
+            for key, values in metrics.items()
+            if values
+        }
+        return averaged
 
+    # --------------------------------------------------------------------- #
+    # Training loop
+    # --------------------------------------------------------------------- #
     def train(self) -> None:
         dataloader = self.get_train_dataloader()
-        total_epochs = int(self.args.num_train_epochs)
+        total_epochs = self.args.num_train_epochs
 
         for epoch in range(total_epochs):
             epoch_metrics = defaultdict(list)
@@ -601,35 +717,54 @@ class IPPOTrainer:
                     if len(self.rollout_buffer) >= self.args.rollout_buffer_size:
                         metrics = self._update(self.rollout_buffer)
                         self.rollout_buffer.clear()
+                        self._log_metrics(metrics)
+                        self.global_step += 1
                         for key, value in metrics.items():
                             epoch_metrics[key].append(value)
-                        self.global_step += 1
-                        self._handle_logging(metrics)
 
             if self.rollout_buffer:
                 metrics = self._update(self.rollout_buffer)
                 self.rollout_buffer.clear()
+                self._log_metrics(metrics)
+                self.global_step += 1
                 for key, value in metrics.items():
                     epoch_metrics[key].append(value)
-                self.global_step += 1
-                self._handle_logging(metrics)
 
-            averaged = {
-                k: float(sum(v) / len(v)) for k, v in epoch_metrics.items() if v
+            summary = {
+                key: float(sum(values) / len(values))
+                for key, values in epoch_metrics.items()
+                if values
             }
-            if averaged:
-                print(f"Epoch {epoch + 1}/{total_epochs} metrics: {averaged}")
+            if summary:
+                print(f"Epoch {epoch + 1}/{total_epochs} metrics: {summary}")
 
-    def _handle_logging(self, metrics: Dict[str, float]) -> None:
-        if self.wandb_initialized:
+    # --------------------------------------------------------------------- #
+    # Logging and persistence
+    # --------------------------------------------------------------------- #
+    def _log_metrics(self, metrics: Dict[str, float]) -> None:
+        if not metrics:
+            return
+        if self.wandb_initialized and wandb is not None:
             wandb.log(metrics, step=self.global_step)
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
-        self.actor_critic.model.save_pretrained(output_dir)
-        torch.save(
-            self.actor_critic.value_head.state_dict(),
-            os.path.join(output_dir, "ippo_value_head.pt"),
-        )
+        self.actor_model.model.save_pretrained(output_dir)
+        if self.actor_model.value_head is not None:
+            torch.save(
+                self.actor_model.value_head.state_dict(),
+                os.path.join(output_dir, "value_head.pt"),
+            )
+
+        if self.critic_model is not None:
+            critic_dir = os.path.join(output_dir, "critic")
+            os.makedirs(critic_dir, exist_ok=True)
+            self.critic_model.model.save_pretrained(critic_dir)
+            if self.critic_model.value_head is not None:
+                torch.save(
+                    self.critic_model.value_head.state_dict(),
+                    os.path.join(critic_dir, "value_head.pt"),
+                )
+
         if self.tokenizer is not None:
             self.tokenizer.save_pretrained(output_dir)
