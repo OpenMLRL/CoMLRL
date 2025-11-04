@@ -51,8 +51,8 @@ def main():
 
     value_model = AutoModelForCausalLMWithValueHead.from_pretrained(base_model)
     ppo_trainer = PPOTrainer(
-        config=ppo_config,
-        model=value_model,
+        ppo_config,
+        value_model,
         ref_model=ref_model,
         tokenizer=tokenizer,
         dataset=dataset,
