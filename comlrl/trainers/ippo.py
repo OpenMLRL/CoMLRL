@@ -419,8 +419,7 @@ class IPPOTrainer:
         rewards = self._call_reward_func([prompt], [completion_text])
         reward_tensor = torch.tensor(rewards, dtype=torch.float32, device=self.device)
 
-        token_rewards = torch.zeros_like(old_values)
-        token_rewards[:, -1] = reward_tensor
+        token_rewards = reward_tensor.unsqueeze(-1).expand_as(old_values)
         returns, advantages = self._compute_gae(token_rewards, old_values)
 
         return RolloutSample(
