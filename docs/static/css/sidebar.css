@@ -40,7 +40,7 @@
 
 /* Ensure sidebar logo displays at readable size */
 .book-brand img {
-  width: 200px;
+  width: 160px;
   height: auto;
   display: block;
 }
