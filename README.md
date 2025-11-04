@@ -1,4 +1,4 @@
-<img src="docs/assets/comlrl.png" width="450px;" alt=""/>
+<img src="docs/assets/comlrl.png" width="400px;" alt=""/>
 
 <hr style="border-top: 0.2px solid #ddd;">
 
@@ -65,6 +65,8 @@ $$
   J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} \sim \mathbf{\pi}_{\mathbf{\theta}}}
   \Bigg[\frac{1}{|\mathcal{G}|}\sum_{g \in \mathcal{G}} \Big(R^{(g)}_t - \max(R_t^{\mathcal{G}}) \Big)\cdot \log \pi_{\theta_i}(a^{(g)}_{i,t}|h_{i,t})\Bigg];
 $$
+
+- **IPPO:** Independent PPO with parameter sharing between actor and critic for single-agent, single-turn fine-tuning. Includes PPO ratio/value clipping, entropy regularization, and comes with a Qwen-3B TL;DR summarization example.
 
 - More algs are coming soon!
 
