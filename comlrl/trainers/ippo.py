@@ -99,8 +99,8 @@ class RolloutSample:
     full_attention_mask: torch.Tensor
     response_input_ids: torch.Tensor
     prompt_len: int
-    old_logprob: torch.Tensor
-    old_value: torch.Tensor
+    old_logprobs: torch.Tensor
+    old_values: torch.Tensor
     reward: torch.Tensor
     returns: torch.Tensor
     advantage: torch.Tensor
@@ -337,12 +337,13 @@ class IPPOTrainer:
         target_tokens: torch.Tensor,
         prompt_len: int,
     ) -> Dict[str, torch.Tensor]:
-        if target_tokens.size(1) == 0:
+        seq_len = target_tokens.size(1)
+        if seq_len == 0:
             zero = torch.zeros(target_tokens.size(0), device=logits.device)
-            return {"logprob": zero, "entropy": zero}
+            return {"logprobs": zero, "entropy": zero}
 
         start_index = max(prompt_len - 1, 0)
-        slice_logits = logits[:, start_index : start_index + target_tokens.size(1), :]
+        slice_logits = logits[:, start_index : start_index + seq_len, :]
         log_probs = F.log_softmax(slice_logits, dim=-1)
         probs = log_probs.exp()
 
@@ -352,8 +353,8 @@ class IPPOTrainer:
         entropies = -(probs * log_probs).sum(dim=-1)
 
         return {
-            "logprob": gathered_log_probs.sum(dim=-1),
-            "entropy": entropies.mean(dim=-1),
+            "logprobs": gathered_log_probs,
+            "entropy": entropies,
         }
 
     def _collect_rollout(self, item: Dict[str, Any]) -> RolloutSample:
@@ -363,12 +364,6 @@ class IPPOTrainer:
         prompt_attention_mask = prompt_inputs["attention_mask"]
 
         prompt_len = prompt_input_ids.size(1)
-
-        with torch.no_grad():
-            prompt_outputs = self.actor_critic(
-                input_ids=prompt_input_ids, attention_mask=prompt_attention_mask
-            )
-            old_value = prompt_outputs.values[:, -1]
 
         generation_kwargs = {
             "input_ids": prompt_input_ids,
@@ -398,11 +393,14 @@ class IPPOTrainer:
         logprob_entropy = self._logprobs_and_entropy(
             rollout_outputs.logits, response_tokens, prompt_len
         )
+        start_index = max(prompt_len - 1, 0)
+        response_len = response_tokens.size(1)
+        old_values = rollout_outputs.values[:, start_index : start_index + response_len]
 
         rewards = self._call_reward_func([prompt], [completion_text])
         reward_tensor = torch.tensor(rewards, dtype=torch.float32, device=self.device)
-        returns = reward_tensor.clone()
-        advantage = returns - old_value
+        returns = reward_tensor.unsqueeze(-1).expand_as(old_values)
+        advantage = returns - old_values
 
         return RolloutSample(
             prompt=prompt,
@@ -413,8 +411,8 @@ class IPPOTrainer:
             full_attention_mask=full_attention_mask.detach(),
             response_input_ids=response_tokens.detach(),
             prompt_len=prompt_len,
-            old_logprob=logprob_entropy["logprob"].detach(),
-            old_value=old_value.detach(),
+            old_logprobs=logprob_entropy["logprobs"].detach(),
+            old_values=old_values.detach(),
             reward=reward_tensor.detach(),
             returns=returns.detach(),
             advantage=advantage.detach(),
@@ -422,10 +420,10 @@ class IPPOTrainer:
         )
 
     def _prepare_advantages(self, rollouts: List[RolloutSample]) -> None:
-        advantages = torch.cat([r.advantage for r in rollouts], dim=0)
-        if self.args.advantage_normalization and advantages.numel() > 1:
-            mean = advantages.mean()
-            std = advantages.std(unbiased=False).clamp(min=1e-6)
+        flat_advantages = torch.cat([r.advantage.view(-1) for r in rollouts], dim=0)
+        if self.args.advantage_normalization and flat_advantages.numel() > 1:
+            mean = flat_advantages.mean()
+            std = flat_advantages.std(unbiased=False).clamp(min=1e-6)
             for r in rollouts:
                 r.normalized_advantage = (r.advantage - mean) / std
         else:
@@ -447,10 +445,10 @@ class IPPOTrainer:
         logprob_entropy = self._logprobs_and_entropy(
             outputs.logits, sample.response_input_ids, sample.prompt_len
         )
-        new_logprob = logprob_entropy["logprob"]
+        new_logprobs = logprob_entropy["logprobs"]
         entropy = logprob_entropy["entropy"]
 
-        ratio = torch.exp(new_logprob - sample.old_logprob)
+        ratio = torch.exp(new_logprobs - sample.old_logprobs)
         clipped_ratio = torch.clamp(
             ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range
         )
@@ -458,15 +456,13 @@ class IPPOTrainer:
         adv = sample.normalized_advantage
         policy_loss = -torch.min(ratio * adv, clipped_ratio * adv).mean()
 
-        prompt_outputs = self.actor_critic(
-            input_ids=sample.prompt_input_ids,
-            attention_mask=sample.prompt_attention_mask,
-        )
-        new_value = prompt_outputs.values[:, -1]
+        start_index = max(sample.prompt_len - 1, 0)
+        response_len = sample.response_input_ids.size(1)
+        new_values = outputs.values[:, start_index : start_index + response_len]
 
-        value_loss_unclipped = (sample.returns - new_value) ** 2
-        value_clipped = sample.old_value + torch.clamp(
-            new_value - sample.old_value,
+        value_loss_unclipped = (sample.returns - new_values) ** 2
+        value_clipped = sample.old_values + torch.clamp(
+            new_values - sample.old_values,
             -self.args.clip_range_value,
             self.args.clip_range_value,
         )
@@ -479,13 +475,13 @@ class IPPOTrainer:
             - self.args.entropy_coef * entropy.mean()
         )
 
-        approx_kl = (sample.old_logprob - new_logprob).mean()
+        approx_kl = (sample.old_logprobs - new_logprobs).mean()
 
         return {
             "loss": loss,
             "policy_loss": policy_loss.detach(),
             "value_loss": value_loss.detach(),
-            "entropy": entropy.detach(),
+            "entropy": entropy.detach().mean(),
             "approx_kl": approx_kl.detach(),
             "ratio": ratio.detach().mean(),
         }
@@ -502,8 +498,8 @@ class IPPOTrainer:
         self._prepare_advantages(rollouts)
         metrics = defaultdict(list)
 
-        rewards = torch.cat([sample.reward for sample in rollouts], dim=0)
-        returns = torch.cat([sample.returns for sample in rollouts], dim=0)
+        rewards = torch.cat([sample.reward.view(-1) for sample in rollouts], dim=0)
+        returns = torch.cat([sample.returns.view(-1) for sample in rollouts], dim=0)
         metrics["reward_mean"].append(rewards.mean().item())
         metrics["return_mean"].append(returns.mean().item())
 
