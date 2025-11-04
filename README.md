@@ -1,4 +1,4 @@
-<img src="docs/assets/comlrl.png" width="500px;" alt=""/>
+# <img src="docs/assets/comlrl.png" width="500px;" alt=""/>
 
 [![OpenMLRL](https://img.shields.io/badge/OpenMLRL-Project-blue.svg)](https://openmlrl.github.io)
 [![Hugging Face](https://img.shields.io/badge/huggingface-CoMLRL-yellow.svg)](https://huggingface.co/CoMLRL)
