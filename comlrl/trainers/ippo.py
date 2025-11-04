@@ -5,7 +5,7 @@ import math
 import os
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -70,6 +70,10 @@ class IPPOConfig(TrainingArguments):
         default=0.01, metadata={"help": "Coefficient for entropy bonus."}
     )
     gamma: float = field(default=1.0, metadata={"help": "Discount factor."})
+    gae_lambda: float = field(
+        default=0.95,
+        metadata={"help": "Lambda used for generalized advantage estimation."},
+    )
     advantage_normalization: bool = field(
         default=True,
         metadata={"help": "Normalize advantages within each rollout batch."},
@@ -399,8 +403,10 @@ class IPPOTrainer:
 
         rewards = self._call_reward_func([prompt], [completion_text])
         reward_tensor = torch.tensor(rewards, dtype=torch.float32, device=self.device)
-        returns = reward_tensor.unsqueeze(-1).expand_as(old_values)
-        advantage = returns - old_values
+
+        token_rewards = torch.zeros_like(old_values)
+        token_rewards[:, -1] = reward_tensor
+        returns, advantages = self._compute_gae(token_rewards, old_values)
 
         return RolloutSample(
             prompt=prompt,
@@ -415,7 +421,7 @@ class IPPOTrainer:
             old_values=old_values.detach(),
             reward=reward_tensor.detach(),
             returns=returns.detach(),
-            advantage=advantage.detach(),
+            advantage=advantages.detach(),
             entropy=logprob_entropy["entropy"].detach(),
         )
 
@@ -436,6 +442,28 @@ class IPPOTrainer:
                 r.normalized_advantage = torch.clamp(
                     r.normalized_advantage, -clip_val, clip_val
                 )
+
+    def _compute_gae(
+        self, rewards: torch.Tensor, values: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        gamma = float(self.args.gamma)
+        lam = float(getattr(self.args, "gae_lambda", 0.95))
+
+        next_values = torch.zeros_like(values)
+        if values.size(1) > 1:
+            next_values[:, :-1] = values[:, 1:]
+
+        deltas = rewards + gamma * next_values - values
+
+        advantages = torch.zeros_like(values)
+        last_advantage = torch.zeros(values.size(0), device=values.device)
+
+        for t in range(values.size(1) - 1, -1, -1):
+            last_advantage = deltas[:, t] + gamma * lam * last_advantage
+            advantages[:, t] = last_advantage
+
+        returns = advantages + values
+        return returns, advantages
 
     def _ppo_step(self, sample: RolloutSample) -> Dict[str, torch.Tensor]:
         outputs = self.actor_critic(
