@@ -1,11 +1,6 @@
-"""
-Minimal TL;DR summarization example using the IPPOTrainer.
+"""Minimal TL;DR summarization example using the IPPOTrainer."""
 
-This mirrors the PPO quick-start from TRL but swaps in Qwen-3B and the
-parameter-sharing IPPO trainer.
-"""
-
-from datasets import Dataset
+from datasets import load_dataset
 from transformers import AutoTokenizer
 
 from comlrl.trainers.ippo import IPPOConfig, IPPOTrainer
@@ -37,44 +32,18 @@ def tldr_reward(prompts, responses, target_words: int = 60) -> list[float]:
 
 
 def prompt_formatter(example) -> str:
-    return example["prompt"]
+    if "prompt" in example:
+        return example["prompt"]
+    raise KeyError("Expected 'prompt' field in dataset example.")
 
 
 def main():
-    model_name = "Qwen/Qwen2.5-3B"
+    model_name = "Qwen/Qwen2.5-0.5B"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    prompts = [
-        "Summarize the following Reddit post in a short TL;DR:\n\n"
-        "Title: I finally learned to enjoy cooking\n"
-        "Body: For years I relied on takeout, but over the last three months I started "
-        "experimenting with meal kits, then farmer's market produce. The first dinners were rough, "
-        "yet now my friends actually request seconds. How do I stay motivated through busy work weeks?",
-        "Summarize the following Reddit post in a short TL;DR:\n\n"
-        "Title: Moving abroad with two cats\n"
-        "Body: I'm relocating from Canada to Spain for a two-year contract. I have two indoor cats "
-        "that have never flown before. What steps should I take to make the trip humane and stick to EU regulations?",
-        "Summarize the following Reddit post in a short TL;DR:\n\n"
-        "Title: Startup burnout is real\n"
-        "Body: I co-founded a small AI startup last year. The work is meaningful but the 80-hour weeks "
-        "and constant fundraising pitches are draining. How do other founders avoid torching both health and relationships?",
-        "Summarize the following Reddit post in a short TL;DR:\n\n"
-        "Title: Planning a three-day backpacking loop in Yosemite\n"
-        "Body: Visiting in late July with two friends. We'd like a route with good alpine lakes, moderate mileage, "
-        "and reliable water sources. Any lesser-known loops worth considering?",
-        "Summarize the following Reddit post in a short TL;DR:\n\n"
-        "Title: Remote onboarding woes\n"
-        "Body: Started a new job where everyone is remote. Laptop arrived late, meetings are calendar chaos, "
-        "and I haven't met my manager yet. What are the best moves to ramp up without annoying teammates?",
-        "Summarize the following Reddit post in a short TL;DR:\n\n"
-        "Title: Starting a balcony garden\n"
-        "Body: Small south-facing balcony in an apartment. I'd like to grow herbs and a few veggies with minimal gear. "
-        "How do I set up containers and soil without overspending?",
-    ]
-
-    dataset = Dataset.from_dict({"prompt": prompts})
+    dataset = load_dataset("trl-lib/tldr", split="train").select(range(10))
 
     config = IPPOConfig(
         output_dir="./ippo_qwen_tldr",
