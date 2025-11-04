@@ -7,17 +7,33 @@ from comlrl.trainers.ippo import IPPOConfig, IPPOTrainer
 def tldr_reward(prompts, responses) -> list[float]:
     rewards = []
     for response in responses:
-        normalized = response.strip()
-        generation_length = len(normalized)
+        # Preserve leading whitespace (models often prefix newline) but drop trailing noise.
+        trimmed = response.rstrip()
+        generation_length = len(trimmed)
         reward = -abs(generation_length - 200) / 50.0
         rewards.append(float(reward))
     return rewards
 
 
-def prompt_formatter(example) -> str:
-    if "prompt" in example:
-        return example["prompt"]
-    raise KeyError("Expected 'prompt' field in dataset example.")
+def build_prompt_formatter(tokenizer):
+    def _formatter(example) -> str:
+        if "prompt" not in example:
+            raise KeyError("Expected 'prompt' field in dataset example.")
+
+        prompt = example["prompt"]
+        apply_template = getattr(tokenizer, "apply_chat_template", None)
+        if callable(apply_template):
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You summarize Reddit posts into concise TL;DRs.",
+                },
+                {"role": "user", "content": prompt},
+            ]
+            return apply_template(messages, tokenize=False, add_generation_prompt=True)
+        return prompt
+
+    return _formatter
 
 
 def rollout_metrics(rollouts):
@@ -48,9 +64,9 @@ def main():
         max_new_tokens=96,
         logging_steps=1,
         target_kl=0.5,
-        temperature=0.3,
+        temperature=0.7,
         top_p=0.6,
-        do_sample=False,
+        do_sample=True,
     )
 
     wandb_config = {
@@ -63,7 +79,7 @@ def main():
         model=model_name,
         tokenizer=tokenizer,
         reward_func=tldr_reward,
-        formatters=prompt_formatter,
+        formatters=build_prompt_formatter(tokenizer),
         args=config,
         train_dataset=dataset,
         wandb_config=wandb_config,
