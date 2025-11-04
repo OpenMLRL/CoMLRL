@@ -9,7 +9,7 @@ def tldr_reward(prompts, responses) -> list[float]:
     for response in responses:
         normalized = response.strip()
         generation_length = len(normalized)
-        reward = -abs(generation_length - 200)
+        reward = -abs(generation_length - 200) / 50.0
         rewards.append(float(reward))
     return rewards
 
