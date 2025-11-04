@@ -484,6 +484,11 @@ class IPPOTrainer:
         self._prepare_advantages(rollouts)
         metrics = defaultdict(list)
 
+        rewards = torch.cat([sample.reward for sample in rollouts], dim=0)
+        returns = torch.cat([sample.returns for sample in rollouts], dim=0)
+        metrics["reward_mean"].append(rewards.mean().item())
+        metrics["return_mean"].append(returns.mean().item())
+
         for epoch in range(self.args.ppo_epochs):
             for sample in rollouts:
                 step_metrics = self._ppo_step(sample)

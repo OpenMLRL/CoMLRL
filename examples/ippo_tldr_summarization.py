@@ -4,28 +4,13 @@ from transformers import AutoTokenizer
 from comlrl.trainers.ippo import IPPOConfig, IPPOTrainer
 
 
-def tldr_reward(prompts, responses, target_words: int = 60) -> list[float]:
+def tldr_reward(prompts, responses) -> list[float]:
     rewards = []
-    for prompt, response in zip(prompts, responses):
-        score = 0.0
+    for response in responses:
         normalized = response.strip()
-
-        if normalized.lower().startswith("tl;dr"):
-            score += 0.5
-        else:
-            score -= 0.1
-
-        word_count = max(len(normalized.split()), 1)
-        length_ratio = min(word_count / target_words, target_words / word_count)
-        score += 0.5 * length_ratio
-
-        if any(
-            keyword in normalized.lower()
-            for keyword in ["summary", "overall", "in short"]
-        ):
-            score += 0.1
-
-        rewards.append(float(score))
+        generation_length = len(normalized)
+        reward = -abs(generation_length - 200)
+        rewards.append(float(reward))
     return rewards
 
 
