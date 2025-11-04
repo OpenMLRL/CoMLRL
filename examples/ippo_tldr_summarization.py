@@ -45,9 +45,12 @@ def main():
         num_train_epochs=10,
         rollout_buffer_size=2,
         ppo_epochs=2,
-        max_new_tokens=128,
+        max_new_tokens=96,
         logging_steps=1,
         target_kl=0.5,
+        temperature=0.3,
+        top_p=0.6,
+        do_sample=False,
     )
 
     wandb_config = {

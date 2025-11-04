@@ -57,6 +57,12 @@ class IPPOConfig(TrainingArguments):
     top_p: float = field(
         default=0.9, metadata={"help": "Nucleus sampling top-p value during rollout."}
     )
+    do_sample: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use stochastic sampling during rollout generation."
+        },
+    )
     clip_range: float = field(
         default=0.2, metadata={"help": "PPO policy ratio clipping range."}
     )
@@ -379,7 +385,7 @@ class IPPOTrainer:
             "input_ids": prompt_input_ids,
             "attention_mask": prompt_attention_mask,
             "max_new_tokens": self.args.max_new_tokens,
-            "do_sample": True,
+            "do_sample": bool(self.args.do_sample),
             "temperature": self.args.temperature,
             "top_p": self.args.top_p,
             "pad_token_id": self.tokenizer.pad_token_id,
