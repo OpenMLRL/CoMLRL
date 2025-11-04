@@ -125,16 +125,20 @@ def main() -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    config = PPOConfig(
-        model_name=model_name,
-        batch_size=1,
-        mini_batch_size=1,
-        ppo_epochs=4,
-        learning_rate=1e-6,
-        seed=42,
-        log_with="wandb",
-        project_kwargs={"project": "mlrl", "name": "trl_length_ppo"},
-    )
+    config = PPOConfig()
+    config_kwargs = {
+        "model_name": model_name,
+        "batch_size": 1,
+        "mini_batch_size": 1,
+        "ppo_epochs": 4,
+        "learning_rate": 1e-6,
+        "seed": 42,
+        "log_with": "wandb",
+        "project_kwargs": {"project": "mlrl", "name": "trl_length_ppo"},
+    }
+    for key, value in config_kwargs.items():
+        if hasattr(config, key):
+            setattr(config, key, value)
 
     dataset = build_dataset()
     generation_kwargs = make_generation_kwargs(tokenizer)
