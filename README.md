@@ -64,7 +64,7 @@ $$
   \Bigg[\frac{1}{|\mathcal{G}|}\sum_{g \in \mathcal{G}} \Big(R^{(g)}_t - \max(R_t^{\mathcal{G}}) \Big)\cdot \log \pi_{\theta_i}(a^{(g)}_{i,t}|h_{i,t})\Bigg];
 $$
 
-- **IPPO:** Independent PPO with parameter sharing between actor and critic for single-agent, single-turn fine-tuning. Includes PPO ratio/value clipping, entropy regularization, and comes with a Qwen-3B TL;DR summarization example.
+- **IPPO:** Independent PPO with parameter sharing between actor and critic for single-agent, single-turn fine-tuning.
 
 - More algs are coming soon!
 
