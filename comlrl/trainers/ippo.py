@@ -72,7 +72,7 @@ class IPPOConfig:
     logging_steps: int = 10
     log_rollouts: bool = False
     normalize_rewards: bool = True
-    reward_norm_eps: float = 1e-6
+    reward_norm_eps: float = 1e-3
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
@@ -563,7 +563,9 @@ class IPPOTrainer:
             return
 
         mean = flat.mean()
-        std = flat.std(unbiased=False).clamp(min=self.args.reward_norm_eps)
+        std = flat.std(unbiased=False)
+        if std < self.args.reward_norm_eps:
+            return
         normalized = (returns - mean) / std
 
         for sample, norm_value in zip(rollouts, normalized):
@@ -611,6 +613,18 @@ class IPPOTrainer:
             advantage = sample.normalized_advantage.to(self.device)
             returns = sample.returns.to(self.device)
 
+            if (
+                not torch.isfinite(logprob).all()
+                or not torch.isfinite(old_logprob).all()
+            ):
+                raise FloatingPointError(
+                    "Encountered non-finite logprob during PPO step."
+                )
+            if not torch.isfinite(advantage).all():
+                raise FloatingPointError("Advantage contains non-finite values.")
+            if not torch.isfinite(returns).all():
+                raise FloatingPointError("Returns contain non-finite values.")
+
             ratio = torch.exp(logprob - old_logprob)
             clipped_ratio = torch.clamp(
                 ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range
@@ -649,25 +663,18 @@ class IPPOTrainer:
         ratio_mean = torch.stack(ratios).mean()
 
         if not torch.isfinite(actor_loss) or not torch.isfinite(value_loss):
-            return {
-                "policy_loss": float("nan"),
-                "value_loss": float("nan"),
-                "entropy": float("nan"),
-                "approx_kl": float("nan"),
-                "ratio": float("nan"),
-            }
+            raise FloatingPointError(
+                "Non-finite policy/value loss detected. Reduce learning rates or "
+                "adjust normalization settings."
+            )
 
         actor_total = actor_loss - self.args.entropy_coef * entropy_mean
         value_total = self.args.value_loss_coef * value_loss
 
         if not torch.isfinite(actor_total) or not torch.isfinite(value_total):
-            return {
-                "policy_loss": float("nan"),
-                "value_loss": float("nan"),
-                "entropy": float("nan"),
-                "approx_kl": float("nan"),
-                "ratio": float("nan"),
-            }
+            raise FloatingPointError(
+                "Non-finite combined PPO loss encountered. Training halted."
+            )
 
         if self.args.use_separate_critic:
             self.actor_optimizer.zero_grad()
