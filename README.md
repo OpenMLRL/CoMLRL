@@ -73,7 +73,7 @@ We support various MARL trainers for LLM collaboration:
 
 - PPO-based methods:
 
-  - **IPPO:** Independent PPO with parameter sharing (separate model or shared value head), credits to [IPPO](https://arxiv.org/abs/2011.09533).
+  - **IPPO:** Independent PPO with parameter sharing (separate model or shared value head), credits to [IPPO<sup>1</sup>](https://arxiv.org/abs/2011.09533), [IPPO<sup>2</sup>](https://arxiv.org/abs/2103.01955), and [PPO](https://arxiv.org/abs/1707.06347).
 
 ## Environments
 
