@@ -648,8 +648,26 @@ class IPPOTrainer:
         approx_kl = torch.stack(approx_kls).mean()
         ratio_mean = torch.stack(ratios).mean()
 
+        if not torch.isfinite(actor_loss) or not torch.isfinite(value_loss):
+            return {
+                "policy_loss": float("nan"),
+                "value_loss": float("nan"),
+                "entropy": float("nan"),
+                "approx_kl": float("nan"),
+                "ratio": float("nan"),
+            }
+
         actor_total = actor_loss - self.args.entropy_coef * entropy_mean
         value_total = self.args.value_loss_coef * value_loss
+
+        if not torch.isfinite(actor_total) or not torch.isfinite(value_total):
+            return {
+                "policy_loss": float("nan"),
+                "value_loss": float("nan"),
+                "entropy": float("nan"),
+                "approx_kl": float("nan"),
+                "ratio": float("nan"),
+            }
 
         if self.args.use_separate_critic:
             self.actor_optimizer.zero_grad()
