@@ -47,7 +47,7 @@ class IPPOConfig:
     mini_batch_size: int = 4
     ppo_epochs: int = 4
     clip_range: float = 0.2
-    value_clip_range: Optional[float] = None
+    value_clip_range: Optional[float] = 0.2
     value_loss_coef: float = 0.5
     entropy_coef: float = 0.01
     advantage_normalization: bool = True
@@ -71,6 +71,8 @@ class IPPOConfig:
     num_turns: int = 1
     logging_steps: int = 10
     log_rollouts: bool = False
+    normalize_rewards: bool = True
+    reward_norm_eps: float = 1e-6
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
@@ -537,6 +539,9 @@ class IPPOTrainer:
         if not rollouts:
             return
 
+        if self.args.normalize_rewards:
+            self._normalize_returns(rollouts)
+
         advantages = torch.stack(
             [sample.advantage.to(torch.float32).view(-1)[0] for sample in rollouts]
         )
@@ -549,6 +554,28 @@ class IPPOTrainer:
         else:
             for sample in rollouts:
                 sample.normalized_advantage = sample.advantage.clone()
+
+    def _normalize_returns(self, rollouts: List[RolloutSample]) -> None:
+        returns = torch.stack([sample.returns for sample in rollouts]).float()
+        returns = returns.view(len(rollouts), -1)
+        flat = returns.view(-1)
+        if flat.numel() < 2:
+            return
+
+        mean = flat.mean()
+        std = flat.std(unbiased=False).clamp(min=self.args.reward_norm_eps)
+        normalized = (returns - mean) / std
+
+        for sample, norm_value in zip(rollouts, normalized):
+            norm_tensor = (
+                norm_value.view_as(sample.returns)
+                .to(sample.returns.dtype)
+                .detach()
+                .clone()
+            )
+            sample.returns = norm_tensor
+            sample.advantage = norm_tensor - sample.old_value.to(norm_tensor.dtype)
+            sample.normalized_advantage = None
 
     def _ppo_step(self, batch: List[RolloutSample]) -> Dict[str, float]:
         actor_losses: List[torch.Tensor] = []

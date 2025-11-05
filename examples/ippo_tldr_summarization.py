@@ -79,6 +79,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ppo-epochs", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=5e-6)
     parser.add_argument("--critic-learning-rate", type=float, default=None)
+    parser.add_argument("--value-loss-coef", type=float, default=0.2)
+    parser.add_argument("--value-clip-range", type=float, default=0.2)
+    parser.add_argument("--disable-reward-normalization", action="store_true")
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.6)
@@ -110,6 +113,12 @@ def main() -> None:
         rollout_buffer_size=args.rollout_batch_size,
         mini_batch_size=args.mini_batch_size,
         ppo_epochs=args.ppo_epochs,
+        value_loss_coef=args.value_loss_coef,
+        value_clip_range=(
+            None
+            if args.value_clip_range is None or args.value_clip_range <= 0
+            else args.value_clip_range
+        ),
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_p=args.top_p,
@@ -120,6 +129,7 @@ def main() -> None:
         seed=args.seed,
         use_separate_critic=args.separate_critic,
         critic_model_name_or_path=args.critic_model,
+        normalize_rewards=not args.disable_reward_normalization,
     )
 
     wandb_config = None
