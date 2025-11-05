@@ -16,13 +16,13 @@
 
 ## Installation
 
-To install a stable version from PyPI with pip:
+You can install the stable version of this library from PyPI using pip:
 
 ```bash
 python3 -m pip install comlrl
 ```
 
-To use the latest version of CoMLRL, clone the repository, and install it in editable mode:
+To use the latest version of CoMLRL, please install it by cloning this repository:
 
 ```bash
 cd CoMLRL
@@ -30,11 +30,11 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-<em><sub>Please make sure a compatible `torch` is installed according to your system and CUDA version.</sub></em>
+<em><sub>Please make sure you have a compatible `torch` installed according to the CUDA.</sub></em>
 
 ## Usage
 
-Here is an example to train 2 `Qwen-2.5-0.5B` agents to summarize Reddit posts with MAGRPO. The objective is to have a summary with 2 paragraphs, where the second one is 3 times longer than the first one.
+See a simple example of training 2 `Qwen-2.5` agents to collaborate to summarize Reddit posts with MAGRPO:
 
 ```python
 from datasets import load_dataset
@@ -62,6 +62,8 @@ trainer.train()
 
 
 ## Trainers
+
+We support various MARL trainers for LLM collaboration:
 
 - **MAREINFORCE:** Multi-Agent REINFORCE without a baseline.
 
@@ -93,11 +95,9 @@ $$
 
 - **IPPO:** Independent PPO with parameter sharing between actor and critic for single-agent, single-turn fine-tuning.
 
-- More algs are coming soon!
-
 ## Environments
 
-This library supports LLM collaboration in various environments:
+See examples of LLM collaboration in various domains:
 
 - [Writing Collaboration](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
   - [TLDR](https://huggingface.co/datasets/trl-lib/tldr) - Summarizing Reddit posts.
@@ -111,7 +111,7 @@ This library supports LLM collaboration in various environments:
 
 ## Contributing
 
-See [contributing guidelines](https://OpenMLRL.github.io/CoMLRL/contributing/) on setting up a development environment and contribute.
+We welcome contributions from the community! Please see [contributing guidelines](https://OpenMLRL.github.io/CoMLRL/contributing/) on setting up a development environment and contribute.
 
 Thanks to the gracious help of contributors:
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
@@ -124,7 +124,7 @@ Thanks to the gracious help of contributors:
  </tr>
 </table>
 <!-- ALL-CONTRIBUTORS-LIST:END -->
-<sub>🤔 - Foundational Ideas; 🚧 - Maintenance; 💻 - Code; 📖 - Documentation; 🐛 - Bug Report.</sub>
+<sub>🤔: Foundational Ideas; 🚧: Maintenance; 💻: Code; 📖: Documentation; 🐛: Bug Report.</sub>
 
 ## Citation
 
