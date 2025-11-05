@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use CoMLRL, please cite the accompanying paper."
+title: "CoMLRL: Cooperative Multi-LLM Reinforcement Learning"
+authors:
+  - family-names: Liu
+    given-names: Shuo
+  - family-names: Chen
+    given-names: Tianle
+  - family-names: Liang
+    given-names: Zeyu
+  - family-names: Lyu
+    given-names: Xueguang
+  - family-names: Amato
+    given-names: Christopher
+preferred-citation:
+  type: article
+  title: "LLM Collaboration With Multi-Agent Reinforcement Learning"
+  authors:
+    - family-names: Liu
+      given-names: Shuo
+    - family-names: Chen
+      given-names: Tianle
+    - family-names: Liang
+      given-names: Zeyu
+    - family-names: Lyu
+      given-names: Xueguang
+    - family-names: Amato
+      given-names: Christopher
+  year: 2025
+  archive: arXiv
+  eprint: 2508.04652
+  url: https://arxiv.org/abs/2508.04652
+repository-code: https://github.com/OpenMLRL/CoMLRL
