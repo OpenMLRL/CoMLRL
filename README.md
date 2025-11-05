@@ -111,7 +111,7 @@ See examples of LLM collaboration in various domains:
 
 ## Contributing
 
-We welcome contributions from the community! Please see [contributing guidelines](https://OpenMLRL.github.io/CoMLRL/contributing/) on setting up a development environment and contribute.
+We welcome contributions from the community! Please see [contributing guidelines](./CONTRIBUTING.md) on setting up a development environment and contribute.
 
 Thanks to the gracious help of contributors:
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
