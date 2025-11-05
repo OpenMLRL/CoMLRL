@@ -87,6 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-p", type=float, default=0.6)
     parser.add_argument("--top-k", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--entropy-coef", type=float, default=0.01)
     parser.add_argument("--use-wandb", action="store_true")
     parser.add_argument("--wandb-project", type=str, default="mlrl")
     parser.add_argument("--wandb-entity", type=str, default=None)
@@ -125,6 +126,7 @@ def main() -> None:
         top_k=args.top_k,
         do_sample=True,
         target_kl=0.3,
+        entropy_coef=args.entropy_coef,
         logging_steps=1,
         seed=args.seed,
         use_separate_critic=args.separate_critic,
