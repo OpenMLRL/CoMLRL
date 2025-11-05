@@ -73,6 +73,7 @@ class IPPOConfig:
     log_rollouts: bool = False
     normalize_rewards: bool = True
     reward_norm_eps: float = 1e-3
+    on_policy: bool = False
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
@@ -87,6 +88,13 @@ class IPPOConfig:
             raise ValueError("Independent PPO only supports a single agent/turn.")
         if self.critic_learning_rate is None:
             self.critic_learning_rate = self.learning_rate
+        if self.on_policy:
+            self.rollout_buffer_size = 1
+            self.mini_batch_size = 1
+            self.ppo_epochs = 1
+            self.clip_range = 0.0
+            self.normalize_rewards = False
+            self.advantage_normalization = False
 
 
 @dataclass
@@ -625,13 +633,21 @@ class IPPOTrainer:
             if not torch.isfinite(returns).all():
                 raise FloatingPointError("Returns contain non-finite values.")
 
-            ratio = torch.exp(logprob - old_logprob)
-            clipped_ratio = torch.clamp(
-                ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range
-            )
-            surrogate_1 = ratio * advantage
-            surrogate_2 = clipped_ratio * advantage
-            policy_loss = -torch.min(surrogate_1, surrogate_2)
+            if self.args.on_policy:
+                ratio = torch.ones_like(logprob)
+                policy_loss = -(advantage * logprob)
+                approx_kls.append(torch.zeros_like(logprob).detach())
+                ratios.append(ratio.detach())
+            else:
+                ratio = torch.exp(logprob - old_logprob)
+                clipped_ratio = torch.clamp(
+                    ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range
+                )
+                surrogate_1 = ratio * advantage
+                surrogate_2 = clipped_ratio * advantage
+                policy_loss = -torch.min(surrogate_1, surrogate_2)
+                approx_kls.append((old_logprob - logprob).detach())
+                ratios.append(ratio.detach())
 
             value_target = returns
             if (
@@ -653,14 +669,12 @@ class IPPOTrainer:
             actor_losses.append(policy_loss)
             value_losses.append(value_error)
             entropies.append(entropy)
-            approx_kls.append((old_logprob - logprob).detach())
-            ratios.append(ratio.detach())
 
         actor_loss = torch.stack(actor_losses).mean()
         value_loss = torch.stack(value_losses).mean()
         entropy_mean = torch.stack(entropies).mean()
-        approx_kl = torch.stack(approx_kls).mean()
-        ratio_mean = torch.stack(ratios).mean()
+        approx_kl = torch.stack(approx_kls).mean() if approx_kls else torch.tensor(0.0)
+        ratio_mean = torch.stack(ratios).mean() if ratios else torch.tensor(1.0)
 
         if not torch.isfinite(actor_loss) or not torch.isfinite(value_loss):
             raise FloatingPointError(

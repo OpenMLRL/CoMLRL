@@ -89,6 +89,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--entropy-coef", type=float, default=0.01)
     parser.add_argument("--target-kl", type=float, default=0.3)
+    parser.add_argument("--on-policy", action="store_true")
     parser.add_argument("--use-wandb", action="store_true")
     parser.add_argument("--wandb-project", type=str, default="mlrl")
     parser.add_argument("--wandb-entity", type=str, default=None)
@@ -137,6 +138,7 @@ def main() -> None:
         use_separate_critic=args.separate_critic,
         critic_model_name_or_path=args.critic_model,
         normalize_rewards=not args.disable_reward_normalization,
+        on_policy=args.on_policy,
     )
 
     wandb_config = None
