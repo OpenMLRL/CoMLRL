@@ -93,6 +93,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Use vanilla policy gradient without ratio clipping.",
     )
+    parser.add_argument(
+        "--disable-advantage-normalization",
+        action="store_true",
+        help="Skip batching advantage normalization.",
+    )
     parser.add_argument("--target-kl", type=float, default=0.3)
     parser.add_argument("--use-wandb", action="store_true")
     parser.add_argument("--wandb-project", type=str, default="mlrl")
@@ -132,6 +137,7 @@ def main() -> None:
         top_k=args.top_k,
         do_sample=True,
         use_importance_sampling=not args.disable_importance_sampling,
+        advantage_normalization=not args.disable_advantage_normalization,
         target_kl=(
             None
             if args.target_kl is not None and args.target_kl <= 0
