@@ -52,6 +52,7 @@ class IPPOConfig:
     entropy_coef: float = 0.01
     advantage_normalization: bool = True
     target_kl: Optional[float] = 0.3
+    use_importance_sampling: bool = True
     gamma: float = 1.0
     gae_lambda: float = 1.0
     max_new_tokens: int = 128
@@ -632,13 +633,18 @@ class IPPOTrainer:
             if not torch.isfinite(returns).all():
                 raise FloatingPointError("Returns contain non-finite values.")
 
-            ratio = torch.exp(logprob - old_logprob)
-            clipped_ratio = torch.clamp(
-                ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range
-            )
-            surrogate_1 = ratio * advantage
-            surrogate_2 = clipped_ratio * advantage
-            policy_loss = -torch.min(surrogate_1, surrogate_2)
+            importance_delta = logprob - old_logprob
+            if self.args.use_importance_sampling:
+                ratio = torch.exp(importance_delta)
+                clipped_ratio = torch.clamp(
+                    ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range
+                )
+                surrogate_1 = ratio * advantage
+                surrogate_2 = clipped_ratio * advantage
+                policy_loss = -torch.min(surrogate_1, surrogate_2)
+            else:
+                policy_loss = -(logprob * advantage)
+                ratio = torch.exp(importance_delta.detach())
 
             value_target = returns
             if (

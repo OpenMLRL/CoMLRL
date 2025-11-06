@@ -88,6 +88,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--entropy-coef", type=float, default=0.002)
+    parser.add_argument(
+        "--disable-importance-sampling",
+        action="store_true",
+        help="Use vanilla policy gradient without ratio clipping.",
+    )
     parser.add_argument("--target-kl", type=float, default=0.3)
     parser.add_argument("--use-wandb", action="store_true")
     parser.add_argument("--wandb-project", type=str, default="mlrl")
@@ -126,6 +131,7 @@ def main() -> None:
         top_p=args.top_p,
         top_k=args.top_k,
         do_sample=True,
+        use_importance_sampling=not args.disable_importance_sampling,
         target_kl=(
             None
             if args.target_kl is not None and args.target_kl <= 0
