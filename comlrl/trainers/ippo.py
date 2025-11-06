@@ -42,7 +42,7 @@ class IPPOConfig:
     adam_beta1: float = 0.9
     adam_beta2: float = 0.999
     adam_epsilon: float = 1e-8
-    max_grad_norm: float = 1.0
+    max_grad_norm: float = 0.5
     rollout_buffer_size: int = 8
     mini_batch_size: int = 4
     ppo_epochs: int = 4
@@ -778,7 +778,7 @@ class IPPOTrainer:
                     not stop_early
                     and self.args.target_kl is not None
                     and approx_kl is not None
-                    and approx_kl > float(self.args.target_kl)
+                    and abs(float(approx_kl)) > float(self.args.target_kl)
                 ):
                     stop_early = True
                     break
