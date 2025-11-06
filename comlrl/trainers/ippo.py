@@ -585,6 +585,11 @@ class IPPOTrainer:
         entropies: List[torch.Tensor] = []
         approx_kls: List[torch.Tensor] = []
         ratios: List[torch.Tensor] = []
+        normalized_adv_values: List[float] = []
+        raw_adv_values: List[float] = []
+        return_values: List[float] = []
+        old_value_values: List[float] = []
+        value_pred_values: List[float] = []
 
         for sample in batch:
             sequences = sample.full_input_ids.to(self.device).unsqueeze(0)
@@ -609,9 +614,11 @@ class IPPOTrainer:
                     raise RuntimeError("Value head missing for shared actor-critic.")
                 value = actor_value
 
+            old_value = sample.old_value.to(self.device, dtype=value.dtype)
             old_logprob = sample.old_logprob.to(self.device)
-            advantage = sample.normalized_advantage.to(self.device)
-            returns = sample.returns.to(self.device)
+            advantage = sample.normalized_advantage.to(self.device, dtype=value.dtype)
+            raw_advantage = sample.advantage.to(self.device, dtype=value.dtype)
+            returns = sample.returns.to(self.device, dtype=value.dtype)
 
             if (
                 not torch.isfinite(logprob).all()
@@ -638,8 +645,8 @@ class IPPOTrainer:
                 self.args.value_clip_range is not None
                 and not self.args.use_separate_critic
             ):
-                clipped_value = sample.old_value.to(self.device) + torch.clamp(
-                    value - sample.old_value.to(self.device),
+                clipped_value = old_value + torch.clamp(
+                    value - old_value,
                     -self.args.value_clip_range,
                     self.args.value_clip_range,
                 )
@@ -655,12 +662,39 @@ class IPPOTrainer:
             entropies.append(entropy)
             approx_kls.append((old_logprob - logprob).detach())
             ratios.append(ratio.detach())
+            normalized_adv_values.extend(
+                advantage.detach().to(torch.float32).view(-1).cpu().tolist()
+            )
+            raw_adv_values.extend(
+                raw_advantage.detach().to(torch.float32).view(-1).cpu().tolist()
+            )
+            return_values.extend(
+                returns.detach().to(torch.float32).view(-1).cpu().tolist()
+            )
+            old_value_values.extend(
+                old_value.detach().to(torch.float32).view(-1).cpu().tolist()
+            )
+            value_pred_values.extend(
+                value.detach().to(torch.float32).view(-1).cpu().tolist()
+            )
 
         actor_loss = torch.stack(actor_losses).mean()
         value_loss = torch.stack(value_losses).mean()
         entropy_mean = torch.stack(entropies).mean()
         approx_kl = torch.stack(approx_kls).mean()
         ratio_mean = torch.stack(ratios).mean()
+
+        def _summarize(values: List[float], prefix: str) -> Dict[str, float]:
+            if not values:
+                return {}
+            tensor = torch.tensor(values, dtype=torch.float32)
+            summary = {
+                f"{prefix}_mean": float(tensor.mean().item()),
+                f"{prefix}_abs_max": float(tensor.abs().max().item()),
+            }
+            if tensor.numel() > 1:
+                summary[f"{prefix}_std"] = float(tensor.std(unbiased=False).item())
+            return summary
 
         if not torch.isfinite(actor_loss) or not torch.isfinite(value_loss):
             raise FloatingPointError(
@@ -704,6 +738,11 @@ class IPPOTrainer:
             "entropy": entropy_mean.detach().item(),
             "approx_kl": approx_kl.item(),
             "ratio": ratio_mean.item(),
+            **_summarize(normalized_adv_values, "advantage_norm"),
+            **_summarize(raw_adv_values, "advantage_raw"),
+            **_summarize(return_values, "returns"),
+            **_summarize(old_value_values, "old_value"),
+            **_summarize(value_pred_values, "value_pred"),
         }
 
     def _update(self, rollouts: List[RolloutSample]) -> Dict[str, float]:
