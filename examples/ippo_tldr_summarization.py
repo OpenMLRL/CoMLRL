@@ -73,6 +73,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-size", type=int, default=300)
     parser.add_argument("--num-train-epochs", type=int, default=8)
     parser.add_argument("--disable-reward-normalization", action="store_true")
+    parser.add_argument("--actor-learning-rate", type=float, default=3e-6)
+    parser.add_argument("--critic-learning-rate", type=float, default=2e-6)
+    parser.add_argument("--value-loss-coef", type=float, default=0.15)
     parser.add_argument("--wandb-project", type=str, default="ippo")
     parser.add_argument("--wandb-entity", type=str, default="OpenMLRL")
     parser.add_argument("--wandb-run-name", type=str, default="ippo_tldr")
@@ -96,6 +99,9 @@ def main() -> None:
         use_separate_critic=args.separate_critic,
         critic_model_name_or_path=args.critic_model,
         normalize_rewards=not args.disable_reward_normalization,
+        learning_rate=args.actor_learning_rate,
+        critic_learning_rate=args.critic_learning_rate,
+        value_loss_coef=args.value_loss_coef,
     )
 
     wandb_config = {
