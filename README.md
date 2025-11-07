@@ -34,7 +34,7 @@ pip install -e .
 
 ## Usage
 
-See a simple example of training 2 `Qwen-2.5` agents to collaborate to summarize Reddit posts with MAGRPO:
+Quick start by training 2 `Qwen-2.5` agents to summarize Reddit posts with MAGRPO:
 
 ```python
 from datasets import load_dataset
