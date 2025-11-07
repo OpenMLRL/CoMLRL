@@ -106,6 +106,8 @@ Thanks to the gracious help of contributors:
 
 ## Citation
 
+Please cite our paper if you find this library useful in your research:
+
 ```bibtex
 @misc{liu2025llmcollaborationmultiagentreinforcement,
       title={LLM Collaboration With Multi-Agent Reinforcement Learning},
