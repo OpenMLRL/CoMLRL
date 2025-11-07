@@ -61,7 +61,7 @@ trainer.train()
 ```
 
 
-## Trainers
+## MARL Trainers
 
 We support various MARL trainers for LLM collaboration:
 
