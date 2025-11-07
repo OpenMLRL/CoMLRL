@@ -109,7 +109,7 @@ Thanks to the gracious help of contributors:
 Please cite our paper if you find this library useful in your research:
 
 ```bibtex
-@misc{liu2025llmcollaborationmultiagentreinforcement,
+@misc{liu2025comlrl,
       title={LLM Collaboration With Multi-Agent Reinforcement Learning},
       author={Shuo Liu and Tianle Chen and Zeyu Liang and Xueguang Lyu and Christopher Amato},
       year={2025},
