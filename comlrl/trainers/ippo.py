@@ -36,8 +36,8 @@ class IPPOConfig:
     """Configuration container for PPO fine-tuning."""
 
     output_dir: str = "./ippo_output"
-    learning_rate: float = 5e-6
-    critic_learning_rate: Optional[float] = None
+    learning_rate: float = 3e-6
+    critic_learning_rate: Optional[float] = 2e-6
     weight_decay: float = 0.0
     adam_beta1: float = 0.9
     adam_beta2: float = 0.999
@@ -45,24 +45,19 @@ class IPPOConfig:
     max_grad_norm: float = 0.5
     rollout_buffer_size: int = 8
     mini_batch_size: int = 4
-    ppo_epochs: int = 4
-    clip_range: float = 0.2
+    ppo_epochs: int = 1
     value_clip_range: Optional[float] = 0.2
-    value_loss_coef: float = 0.5
-    entropy_coef: float = 0.01
+    value_loss_coef: float = 0.15
+    entropy_coef: float = 0.0
     advantage_normalization: bool = True
-    target_kl: Optional[float] = 0.3
-    use_importance_sampling: bool = True
-    gamma: float = 1.0
-    gae_lambda: float = 1.0
     max_new_tokens: int = 128
-    temperature: float = 1.0
-    top_p: float = 1.0
+    temperature: float = 0.6
+    top_p: float = 0.6
     top_k: Optional[int] = None
     do_sample: bool = True
-    num_train_epochs: int = 1
+    num_train_epochs: int = 8
     per_device_train_batch_size: int = 1
-    seed: Optional[int] = None
+    seed: Optional[int] = 42
     use_separate_critic: bool = False
     critic_model_name_or_path: Optional[str] = None
     critic_value_head_hidden_dim: Optional[int] = None
@@ -70,8 +65,6 @@ class IPPOConfig:
     pad_token_id: Optional[int] = None
     num_agents: int = 1
     num_turns: int = 1
-    logging_steps: int = 10
-    log_rollouts: bool = False
     normalize_rewards: bool = True
     reward_norm_eps: float = 1e-3
 
@@ -104,7 +97,6 @@ class RolloutSample:
     returns: torch.Tensor
     advantage: torch.Tensor
     normalized_advantage: Optional[torch.Tensor] = None
-    entropy: Optional[torch.Tensor] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -317,7 +309,6 @@ class IPPOTrainer:
                 "rollout_buffer_size": self.args.rollout_buffer_size,
                 "mini_batch_size": self.args.mini_batch_size,
                 "ppo_epochs": self.args.ppo_epochs,
-                "clip_range": self.args.clip_range,
                 "entropy_coef": self.args.entropy_coef,
                 "value_loss_coef": self.args.value_loss_coef,
                 "max_new_tokens": self.args.max_new_tokens,
@@ -421,7 +412,7 @@ class IPPOTrainer:
         full_attention_mask = torch.ones_like(sequences, device=self.device)
 
         with torch.no_grad():
-            logprob, entropy, actor_value = self._policy_eval(
+            logprob, actor_value = self._policy_eval(
                 sequences, full_attention_mask, prompt_len, response_len
             )
             if self.args.use_separate_critic:
@@ -451,10 +442,8 @@ class IPPOTrainer:
             reward=reward_tensor.detach().cpu(),
             returns=returns.detach().cpu(),
             advantage=advantage.detach().cpu(),
-            entropy=entropy.detach().cpu() if entropy is not None else None,
             metadata={
                 "char_length": response_char_length,
-                "token_length": response_len,
             },
         )
         return rollout
@@ -466,9 +455,9 @@ class IPPOTrainer:
         prompt_len: int,
         response_len: int,
         output_values: bool = True,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
-        Evaluate the actor to retrieve log-probabilities, entropy, and value prediction.
+        Evaluate the actor to retrieve log-probabilities and (optional) value prediction.
         """
 
         outputs = self.actor_model(
@@ -477,7 +466,7 @@ class IPPOTrainer:
             output_values=output_values,
         )
 
-        logprob, entropy = self._compute_sequence_stats(
+        logprob = self._compute_sequence_stats(
             sequences, outputs.logits, prompt_len, response_len
         )
 
@@ -486,7 +475,7 @@ class IPPOTrainer:
             last_index = prompt_len + response_len - 1
             value = outputs.values[:, last_index]
 
-        return logprob, entropy, value
+        return logprob, value
 
     def _critic_eval(
         self,
@@ -512,7 +501,7 @@ class IPPOTrainer:
         logits: torch.Tensor,
         prompt_len: int,
         response_len: int,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         shifted_logits = logits[:, :-1, :]
         shifted_targets = sequences[:, 1:]
 
@@ -527,11 +516,7 @@ class IPPOTrainer:
 
         logprob_sum = response_log_probs.sum(dim=-1)
 
-        response_logits = log_probs[:, start_index:end_index, :]
-        entropies = -(response_logits.exp() * response_logits).sum(dim=-1)
-        entropy_mean = entropies.mean(dim=-1)
-
-        return logprob_sum, entropy_mean
+        return logprob_sum
 
     # --------------------------------------------------------------------- #
     # PPO update logic
@@ -583,20 +568,12 @@ class IPPOTrainer:
     def _ppo_step(self, batch: List[RolloutSample]) -> Dict[str, float]:
         actor_losses: List[torch.Tensor] = []
         value_losses: List[torch.Tensor] = []
-        entropies: List[torch.Tensor] = []
-        approx_kls: List[torch.Tensor] = []
-        ratios: List[torch.Tensor] = []
-        normalized_adv_values: List[float] = []
-        raw_adv_values: List[float] = []
-        return_values: List[float] = []
-        old_value_values: List[float] = []
-        value_pred_values: List[float] = []
 
         for sample in batch:
             sequences = sample.full_input_ids.to(self.device).unsqueeze(0)
             attention_mask = sample.attention_mask.to(self.device).unsqueeze(0)
 
-            logprob, entropy, actor_value = self._policy_eval(
+            logprob, actor_value = self._policy_eval(
                 sequences,
                 attention_mask,
                 sample.prompt_len,
@@ -618,7 +595,6 @@ class IPPOTrainer:
             old_value = sample.old_value.to(self.device, dtype=value.dtype)
             old_logprob = sample.old_logprob.to(self.device)
             advantage = sample.normalized_advantage.to(self.device, dtype=value.dtype)
-            raw_advantage = sample.advantage.to(self.device, dtype=value.dtype)
             returns = sample.returns.to(self.device, dtype=value.dtype)
 
             if (
@@ -633,18 +609,7 @@ class IPPOTrainer:
             if not torch.isfinite(returns).all():
                 raise FloatingPointError("Returns contain non-finite values.")
 
-            importance_delta = logprob - old_logprob
-            if self.args.use_importance_sampling:
-                ratio = torch.exp(importance_delta)
-                clipped_ratio = torch.clamp(
-                    ratio, 1.0 - self.args.clip_range, 1.0 + self.args.clip_range
-                )
-                surrogate_1 = ratio * advantage
-                surrogate_2 = clipped_ratio * advantage
-                policy_loss = -torch.min(surrogate_1, surrogate_2)
-            else:
-                policy_loss = -(logprob * advantage)
-                ratio = torch.exp(importance_delta.detach())
+            policy_loss = -(logprob * advantage)
 
             value_target = returns
             if (
@@ -665,50 +630,16 @@ class IPPOTrainer:
 
             actor_losses.append(policy_loss)
             value_losses.append(value_error)
-            entropies.append(entropy)
-            approx_kls.append((old_logprob - logprob).detach())
-            ratios.append(ratio.detach())
-            normalized_adv_values.extend(
-                advantage.detach().to(torch.float32).view(-1).cpu().tolist()
-            )
-            raw_adv_values.extend(
-                raw_advantage.detach().to(torch.float32).view(-1).cpu().tolist()
-            )
-            return_values.extend(
-                returns.detach().to(torch.float32).view(-1).cpu().tolist()
-            )
-            old_value_values.extend(
-                old_value.detach().to(torch.float32).view(-1).cpu().tolist()
-            )
-            value_pred_values.extend(
-                value.detach().to(torch.float32).view(-1).cpu().tolist()
-            )
 
         actor_loss = torch.stack(actor_losses).mean()
         value_loss = torch.stack(value_losses).mean()
-        entropy_mean = torch.stack(entropies).mean()
-        approx_kl = torch.stack(approx_kls).mean()
-        ratio_mean = torch.stack(ratios).mean()
-
-        def _summarize(values: List[float], prefix: str) -> Dict[str, float]:
-            if not values:
-                return {}
-            tensor = torch.tensor(values, dtype=torch.float32)
-            summary = {
-                f"{prefix}_mean": float(tensor.mean().item()),
-                f"{prefix}_abs_max": float(tensor.abs().max().item()),
-            }
-            if tensor.numel() > 1:
-                summary[f"{prefix}_std"] = float(tensor.std(unbiased=False).item())
-            return summary
-
         if not torch.isfinite(actor_loss) or not torch.isfinite(value_loss):
             raise FloatingPointError(
                 "Non-finite policy/value loss detected. Reduce learning rates or "
                 "adjust normalization settings."
             )
 
-        actor_total = actor_loss - self.args.entropy_coef * entropy_mean
+        actor_total = actor_loss
         value_total = self.args.value_loss_coef * value_loss
 
         if not torch.isfinite(actor_total) or not torch.isfinite(value_total):
@@ -741,14 +672,6 @@ class IPPOTrainer:
         return {
             "policy_loss": actor_loss.detach().item(),
             "value_loss": value_loss.detach().item(),
-            "entropy": entropy_mean.detach().item(),
-            "approx_kl": approx_kl.item(),
-            "ratio": ratio_mean.item(),
-            **_summarize(normalized_adv_values, "advantage_norm"),
-            **_summarize(raw_adv_values, "advantage_raw"),
-            **_summarize(return_values, "returns"),
-            **_summarize(old_value_values, "old_value"),
-            **_summarize(value_pred_values, "value_pred"),
         }
 
     def _update(self, rollouts: List[RolloutSample]) -> Dict[str, float]:
@@ -770,26 +693,12 @@ class IPPOTrainer:
             except Exception:
                 pass
 
-        stop_early = False
-        for epoch in range(self.args.ppo_epochs):
-            random.shuffle(rollouts)
-            for start in range(0, len(rollouts), self.args.mini_batch_size):
-                batch = rollouts[start : start + self.args.mini_batch_size]
-                step_metrics = self._ppo_step(batch)
-                for key, value in step_metrics.items():
-                    metrics[key].append(value)
-
-                approx_kl = step_metrics.get("approx_kl")
-                if (
-                    not stop_early
-                    and self.args.target_kl is not None
-                    and approx_kl is not None
-                    and abs(float(approx_kl)) > float(self.args.target_kl)
-                ):
-                    stop_early = True
-                    break
-            if stop_early:
-                break
+        random.shuffle(rollouts)
+        for start in range(0, len(rollouts), self.args.mini_batch_size):
+            batch = rollouts[start : start + self.args.mini_batch_size]
+            step_metrics = self._ppo_step(batch)
+            for key, value in step_metrics.items():
+                metrics[key].append(value)
 
         averaged = {
             key: float(sum(values) / len(values))

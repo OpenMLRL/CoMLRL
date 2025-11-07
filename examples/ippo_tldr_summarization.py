@@ -57,10 +57,8 @@ def rollout_metrics(rollouts):
         return {}
 
     char_lengths = [sample.metadata.get("char_length", 0.0) for sample in rollouts]
-    token_lengths = [sample.metadata.get("token_length", 0.0) for sample in rollouts]
     return {
         "response_char_length_mean": float(sum(char_lengths) / len(char_lengths)),
-        "response_token_length_mean": float(sum(token_lengths) / len(token_lengths)),
     }
 
 
@@ -74,34 +72,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=str, default="./ippo_qwen_tldr")
     parser.add_argument("--dataset-size", type=int, default=300)
     parser.add_argument("--num-train-epochs", type=int, default=8)
-    parser.add_argument("--rollout-batch-size", type=int, default=8)
-    parser.add_argument("--mini-batch-size", type=int, default=4)
-    parser.add_argument("--ppo-epochs", type=int, default=6)
-    parser.add_argument("--learning-rate", type=float, default=6e-6)
-    parser.add_argument("--critic-learning-rate", type=float, default=4e-6)
-    parser.add_argument("--value-loss-coef", type=float, default=0.15)
-    parser.add_argument("--value-clip-range", type=float, default=0.2)
     parser.add_argument("--disable-reward-normalization", action="store_true")
-    parser.add_argument("--max-new-tokens", type=int, default=136)
-    parser.add_argument("--temperature", type=float, default=0.55)
-    parser.add_argument("--top-p", type=float, default=0.45)
-    parser.add_argument("--top-k", type=int, default=None)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--entropy-coef", type=float, default=0.002)
-    parser.add_argument(
-        "--disable-importance-sampling",
-        action="store_true",
-        help="Use vanilla policy gradient without ratio clipping.",
-    )
-    parser.add_argument(
-        "--disable-advantage-normalization",
-        action="store_true",
-        help="Skip batching advantage normalization.",
-    )
-    parser.add_argument("--target-kl", type=float, default=0.3)
-    parser.add_argument("--use-wandb", action="store_true")
-    parser.add_argument("--wandb-project", type=str, default="mlrl")
-    parser.add_argument("--wandb-entity", type=str, default=None)
+    parser.add_argument("--wandb-project", type=str, default="ippo")
+    parser.add_argument("--wandb-entity", type=str, default="nu-llpr")
     parser.add_argument("--wandb-run-name", type=str, default="ippo_tldr")
     return parser.parse_args()
 
@@ -119,45 +92,17 @@ def main() -> None:
 
     config = IPPOConfig(
         output_dir=args.output_dir,
-        learning_rate=args.learning_rate,
-        critic_learning_rate=args.critic_learning_rate,
         num_train_epochs=args.num_train_epochs,
-        rollout_buffer_size=args.rollout_batch_size,
-        mini_batch_size=args.mini_batch_size,
-        ppo_epochs=args.ppo_epochs,
-        value_loss_coef=args.value_loss_coef,
-        value_clip_range=(
-            None
-            if args.value_clip_range is None or args.value_clip_range <= 0
-            else args.value_clip_range
-        ),
-        max_new_tokens=args.max_new_tokens,
-        temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=args.top_k,
-        do_sample=True,
-        use_importance_sampling=not args.disable_importance_sampling,
-        advantage_normalization=not args.disable_advantage_normalization,
-        target_kl=(
-            None
-            if args.target_kl is not None and args.target_kl <= 0
-            else args.target_kl
-        ),
-        entropy_coef=args.entropy_coef,
-        logging_steps=1,
-        seed=args.seed,
         use_separate_critic=args.separate_critic,
         critic_model_name_or_path=args.critic_model,
         normalize_rewards=not args.disable_reward_normalization,
     )
 
-    wandb_config = None
-    if args.use_wandb:
-        wandb_config = {
-            "entity": args.wandb_entity,
-            "project": args.wandb_project,
-            "name": args.wandb_run_name,
-        }
+    wandb_config = {
+        "entity": args.wandb_entity,
+        "project": args.wandb_project,
+        "name": args.wandb_run_name,
+    }
 
     trainer = IPPOTrainer(
         model=args.model_name,
