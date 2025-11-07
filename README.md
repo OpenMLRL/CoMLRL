@@ -66,12 +66,12 @@ trainer.train()
 We support various MARL trainers for LLM collaboration:
 
 - **REINFROCE Fine-Tuning Methods**
-  - **MAREINFORCE:** Multi-Agent REINFORCE without a baseline.
-  - **MAGRPO:** Multi-Agent Group-Relative Policy Optimization, credits to [GRPO](https://arxiv.org/pdf/2402.03300),[Dr. GRPO](https://arxiv.org/abs/2503.20783), and [TreeRPO](https://arxiv.org/abs/2506.05183).
-  - **MARLOO:** Multi-Agent REINFORCE Leave-One-Out, credits to [RLOO](https://openreview.net/forum?id=r1lgTGL5DE) and [Revisiting REINFORCE](https://arxiv.org/abs/2402.14740).
-  - **MAReMax:** Multi-Agent REINFORCE with Group Max, credits to [ReMax](https://arxiv.org/abs/2310.10505).
+  - ***MAREINFORCE:*** Multi-Agent REINFORCE without a baseline.
+  - ***MAGRPO:*** Multi-Agent Group-Relative Policy Optimization, credits to [GRPO](https://arxiv.org/pdf/2402.03300),[Dr. GRPO](https://arxiv.org/abs/2503.20783), and [TreeRPO](https://arxiv.org/abs/2506.05183).
+  - ***MARLOO:*** Multi-Agent REINFORCE Leave-One-Out, credits to [RLOO](https://openreview.net/forum?id=r1lgTGL5DE) and [Revisiting REINFORCE](https://arxiv.org/abs/2402.14740).
+  - ***MAReMax:*** Multi-Agent REINFORCE with Group Max, credits to [ReMax](https://arxiv.org/abs/2310.10505).
 - **PPO Methods**
-  - **IPPO:** Independent PPO with parameter sharing (separate model or shared value head), credits to [IPPO<sup>1</sup>](https://arxiv.org/abs/2011.09533), [IPPO<sup>2</sup>](https://arxiv.org/abs/2103.01955), and [PPO](https://arxiv.org/abs/1707.06347).
+  - ***IPPO:*** Independent PPO with parameter sharing (separate model or shared value head), credits to [IPPO<sup>1</sup>](https://arxiv.org/abs/2011.09533), [IPPO<sup>2</sup>](https://arxiv.org/abs/2103.01955), and [PPO](https://arxiv.org/abs/1707.06347).
 
 ## Environments
 
