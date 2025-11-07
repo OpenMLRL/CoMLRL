@@ -66,26 +66,26 @@ trainer.train()
 We support various MARL trainers for LLM collaboration:
 
 - **REINFROCE Fine-Tuning Methods**
-  - ***MAREINFORCE:*** Multi-Agent REINFORCE without a baseline.
-  - ***MAGRPO:*** Multi-Agent Group-Relative Policy Optimization, credits to [GRPO](https://arxiv.org/pdf/2402.03300),[Dr. GRPO](https://arxiv.org/abs/2503.20783), and [TreeRPO](https://arxiv.org/abs/2506.05183).
-  - ***MARLOO:*** Multi-Agent REINFORCE Leave-One-Out, credits to [RLOO](https://openreview.net/forum?id=r1lgTGL5DE) and [Revisiting REINFORCE](https://arxiv.org/abs/2402.14740).
-  - ***MAReMax:*** Multi-Agent REINFORCE with Group Max, credits to [ReMax](https://arxiv.org/abs/2310.10505).
+  - **_MAREINFORCE:_** Multi-Agent REINFORCE without a baseline.
+  - **_MAGRPO:_** Multi-Agent Group-Relative Policy Optimization, credits to [GRPO](https://arxiv.org/pdf/2402.03300),[Dr. GRPO](https://arxiv.org/abs/2503.20783), and [TreeRPO](https://arxiv.org/abs/2506.05183).
+  - **_MARLOO:_** Multi-Agent REINFORCE Leave-One-Out, credits to [RLOO](https://openreview.net/forum?id=r1lgTGL5DE) and [Revisiting REINFORCE](https://arxiv.org/abs/2402.14740).
+  - **_MAReMax:_** Multi-Agent REINFORCE with Group Max, credits to [ReMax](https://arxiv.org/abs/2310.10505).
 - **PPO Methods**
-  - ***IPPO:*** Independent PPO with parameter sharing (separate model or shared value head), credits to [IPPO<sup>1</sup>](https://arxiv.org/abs/2011.09533), [IPPO<sup>2</sup>](https://arxiv.org/abs/2103.01955), and [PPO](https://arxiv.org/abs/1707.06347).
+  - **_IPPO:_** Independent PPO with parameter sharing (separate model or shared value head), credits to [IPPO<sup>1</sup>](https://arxiv.org/abs/2011.09533), [IPPO<sup>2</sup>](https://arxiv.org/abs/2103.01955), and [PPO](https://arxiv.org/abs/1707.06347).
 
 ## Environments
 
 See examples of LLM collaboration in various domains:
 
-- [Writing Collaboration](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
-  - [TLDR](https://huggingface.co/datasets/trl-lib/tldr) - Summarizing Reddit posts.
-  - [ArXiv](http://arxiv.org/abs/1905.00075) - Expanding abstracts into introductions.
-- [Code Generation](https://github.com/OpenMLRL/LLM_Collab_Code_Generation): Generate code solutions for programming problems.
-  - [MBPP](https://arxiv.org/abs/2108.07732) - Mostly basic python problems.
-  - [HumanEval](https://arxiv.org/abs/2107.03374) - Handwritten evaluation problems
-  - [CoopHumanEval](https://huggingface.co/datasets/OpenMLRL/CoopHumanEval) - HumanEval with cooperative nature.
-- [Code Completion](https://github.com/OpenMLRL/LLM_Collab_Code_Completion): Complete code snippets based on given contexts.
-  - [ClassEval](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Complete class-level code based on method stubs and docstrings.
+- [**Writing Collaboration**](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
+  - [**_TLDR_**](https://huggingface.co/datasets/trl-lib/tldr) - Summarizing Reddit posts.
+  - [**_ArXiv_**](http://arxiv.org/abs/1905.00075) - Expanding abstracts into introductions.
+- [**Code Generation**](https://github.com/OpenMLRL/LLM_Collab_Code_Generation): Generate code solutions for programming problems.
+  - [**_MBPP_**](https://arxiv.org/abs/2108.07732) - Mostly basic python problems.
+  - [**_HumanEval_**](https://arxiv.org/abs/2107.03374) - Handwritten evaluation problems
+  - [**_CoopHumanEval_**](https://huggingface.co/datasets/OpenMLRL/CoopHumanEval) - HumanEval with cooperative nature.
+- [**Code Completion**](https://github.com/OpenMLRL/LLM_Collab_Code_Completion): Complete code snippets based on given contexts.
+  - [**_ClassEval_**](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Complete class-level code based on method stubs and docstrings.
 
 ## Contributing
 
