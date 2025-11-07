@@ -74,7 +74,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-train-epochs", type=int, default=8)
     parser.add_argument("--disable-reward-normalization", action="store_true")
     parser.add_argument("--wandb-project", type=str, default="ippo")
-    parser.add_argument("--wandb-entity", type=str, default="nu-llpr")
+    parser.add_argument("--wandb-entity", type=str, default="OpenMLRL")
     parser.add_argument("--wandb-run-name", type=str, default="ippo_tldr")
     return parser.parse_args()
 

@@ -456,7 +456,7 @@ def main():
 
     wandb_config = {
         "project": "code-agents-magrpo",
-        "entity": "nu-llpr",
+        "entity": "OpenMLRL",
         "name": "3-basic-2-edge" if generate_new_examples else "3-basic",
     }
 

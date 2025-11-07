@@ -94,7 +94,7 @@ def example_usage():
 
     wandb_config = {
         "project": "mlrl",
-        "entity": "nu-llpr",
+        "entity": "OpenMLRL",
         "name": "qwen-magrpo-length-ratio",
     }
 

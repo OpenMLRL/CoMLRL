@@ -138,7 +138,7 @@ Scale rewards for a smoother learning signal; keep W&B optional.
 ```python
 wandb_config = {
     "project": "mlrl",
-    "entity": "nu-llpr",
+    "entity": "OpenMLRL",
     "name": "qwen-magrpo-length-ratio",
 }
 

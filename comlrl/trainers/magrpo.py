@@ -333,7 +333,7 @@ class MAGRPOTrainer:
                 self.wandb_config = {}
 
             wandb_project = self.wandb_config.get("project", "mlrl")
-            wandb_entity = self.wandb_config.get("entity", "nu-llpr")
+            wandb_entity = self.wandb_config.get("entity", "OpenMLRL")
 
             # Use different default names based on num_turns
             if self.args.num_turns == 1:
