@@ -73,7 +73,7 @@ We support various MARL trainers for LLM collaboration:
   - **_MARLOO:_** Multi-Agent REINFORCE Leave-One-Out, credits to [RLOO](https://openreview.net/forum?id=r1lgTGL5DE) and [Revisiting REINFORCE](https://arxiv.org/abs/2402.14740).
   - **_MAReMax:_** Multi-Agent REINFORCE with Group Max, credits to [ReMax](https://arxiv.org/abs/2310.10505).
 - **PPO Methods**
-  - **_IPPO:_** Independent PPO with parameter sharing (separate model or shared value head), credits to [IPPO<sup>1</sup>](https://arxiv.org/abs/2011.09533), [IPPO<sup>2</sup>](https://arxiv.org/abs/2103.01955), and [PPO](https://arxiv.org/abs/1707.06347).
+  - **_IPPO:_** Independent PPO with parameter sharing, credits to [IPPO<sup>1</sup>](https://arxiv.org/abs/2011.09533), [IPPO<sup>2</sup>](https://arxiv.org/abs/2103.01955), and [PPO](https://arxiv.org/abs/1707.06347).
 
 ## Environments
 
