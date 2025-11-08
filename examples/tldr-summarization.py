@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--separate-critic", action="store_true")
     parser.add_argument("--output-dir", type=str, default="./ippo_tldr")
     parser.add_argument("--dataset-size", type=int, default=300)
-    parser.add_argument("--num-train-epochs", type=int, default=10)
+    parser.add_argument("--num-train-epochs", type=int, default=12)
     parser.add_argument("--actor-learning-rate", type=float, default=1e-6)
     parser.add_argument("--critic-learning-rate", type=float, default=1e-6)
     parser.add_argument("--value-loss-coef", type=float, default=0.7)
