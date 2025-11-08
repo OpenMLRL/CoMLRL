@@ -65,7 +65,6 @@ class IPPOConfig:
     pad_token_id: Optional[int] = None
     num_agents: int = 1
     num_turns: int = 1
-    normalize_rewards: bool = True
     reward_norm_eps: float = 1e-3
 
     def __post_init__(self) -> None:
@@ -525,8 +524,7 @@ class IPPOTrainer:
         if not rollouts:
             return
 
-        if self.args.normalize_rewards:
-            self._normalize_returns(rollouts)
+        self._normalize_returns(rollouts)
 
         advantages = torch.stack(
             [sample.advantage.to(torch.float32).view(-1)[0] for sample in rollouts]
