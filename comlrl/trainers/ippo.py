@@ -76,14 +76,17 @@ class IPPOConfig:
             self.mini_batch_size = self.rollout_buffer_size
         if self.per_device_train_batch_size != 1:
             raise ValueError("per_device_train_batch_size must be 1 for IPPO.")
-        if self.num_agents != 1 or self.num_turns != 1:
-            raise ValueError("Independent PPO only supports a single agent/turn.")
+        if self.num_agents < 1:
+            raise ValueError("num_agents must be >= 1.")
+        if self.num_turns != 1:
+            raise ValueError("Independent PPO currently supports only a single turn.")
         if self.critic_learning_rate is None:
             self.critic_learning_rate = self.learning_rate
 
 
 @dataclass
 class RolloutSample:
+    agent_idx: int
     prompt: str
     completion: str
     full_input_ids: torch.Tensor
@@ -139,11 +142,11 @@ class IPPOTrainer:
                 torch.cuda.manual_seed_all(self.args.seed)
 
         self.tokenizer = tokenizer
-        self.formatter = self._setup_formatter(formatters)
+        self.formatters = self._setup_formatter(formatters)
         self._reward_signature = self._infer_reward_signature(reward_func)
 
-        self.actor_model: CausalLMWithValueHead
-        self.critic_model: Optional[CausalLMWithValueHead] = None
+        self.actor_models: List[CausalLMWithValueHead] = []
+        self.critic_models: List[Optional[CausalLMWithValueHead]] = []
 
         self.tokenizer = self._ensure_tokenizer(model, self.tokenizer)
         if self.tokenizer.pad_token is None:
@@ -157,8 +160,15 @@ class IPPOTrainer:
             else self.tokenizer.pad_token_id
         )
 
-        self.actor_model = self._load_actor_model(model)
-        self.actor_model.to(self.device)
+        if self.args.num_agents > 1 and isinstance(model, PreTrainedModel):
+            raise ValueError(
+                "Multi-agent IPPO requires `model` to be a pretrained identifier string."
+            )
+
+        for _ in range(self.args.num_agents):
+            actor_model = self._load_actor_model(model)
+            actor_model.to(self.device)
+            self.actor_models.append(actor_model)
 
         if self.args.use_separate_critic:
             critic_identifier = self.args.critic_model_name_or_path or model
@@ -166,37 +176,72 @@ class IPPOTrainer:
                 raise ValueError(
                     "critic_model_name_or_path must be provided when using a separate critic."
                 )
-            self.critic_model = self._load_critic_model(critic_identifier)
-            self.critic_model.to(self.device)
+            if self.args.num_agents > 1 and isinstance(
+                critic_identifier, PreTrainedModel
+            ):
+                raise ValueError(
+                    "Multi-agent IPPO requires string identifiers for separate critics."
+                )
+            for _ in range(self.args.num_agents):
+                critic_model = self._load_critic_model(critic_identifier)
+                critic_model.to(self.device)
+                self.critic_models.append(critic_model)
+        else:
+            self.critic_models = [None] * self.args.num_agents
 
         self._configure_tokenizer_specials()
 
+        self.actor_optimizers: List[torch.optim.Optimizer] = []
+        self.critic_optimizers: List[torch.optim.Optimizer] = []
+
+        for actor_model in self.actor_models:
+            optimizer = torch.optim.AdamW(
+                actor_model.parameters(),
+                lr=self.args.learning_rate,
+                betas=(self.args.adam_beta1, self.args.adam_beta2),
+                eps=self.args.adam_epsilon,
+                weight_decay=self.args.weight_decay,
+            )
+            self.actor_optimizers.append(optimizer)
+
         if self.args.use_separate_critic:
-            self.actor_optimizer = torch.optim.AdamW(
-                self.actor_model.parameters(),
-                lr=self.args.learning_rate,
-                betas=(self.args.adam_beta1, self.args.adam_beta2),
-                eps=self.args.adam_epsilon,
-                weight_decay=self.args.weight_decay,
-            )
-            self.critic_optimizer = torch.optim.AdamW(
-                self.critic_model.parameters(),  # type: ignore[arg-type]
-                lr=self.args.critic_learning_rate,
-                betas=(self.args.adam_beta1, self.args.adam_beta2),
-                eps=self.args.adam_epsilon,
-                weight_decay=self.args.weight_decay,
-            )
-        else:
-            self.optimizer = torch.optim.AdamW(
-                self.actor_model.parameters(),
-                lr=self.args.learning_rate,
-                betas=(self.args.adam_beta1, self.args.adam_beta2),
-                eps=self.args.adam_epsilon,
-                weight_decay=self.args.weight_decay,
-            )
+            for critic_model in self.critic_models:
+                if critic_model is None:
+                    raise RuntimeError("Critic model expected but missing.")
+                optimizer = torch.optim.AdamW(
+                    critic_model.parameters(),
+                    lr=self.args.critic_learning_rate,
+                    betas=(self.args.adam_beta1, self.args.adam_beta2),
+                    eps=self.args.adam_epsilon,
+                    weight_decay=self.args.weight_decay,
+                )
+                self.critic_optimizers.append(optimizer)
 
         self.global_step = 0
-        self.rollout_buffer: List[RolloutSample] = []
+        self.rollout_buffers: List[List[RolloutSample]] = [
+            [] for _ in range(self.args.num_agents)
+        ]
+
+        if self.args.num_agents == 1:
+            self.actor_model = self.actor_models[0]
+            self.rollout_buffer = self.rollout_buffers[0]
+            self.actor_optimizer = self.actor_optimizers[0]
+            if self.args.use_separate_critic:
+                self.critic_model = self.critic_models[0]
+                self.critic_optimizer = self.critic_optimizers[0]
+            else:
+                self.critic_model = None
+                self.optimizer = self.actor_optimizer
+        else:
+            # Maintain legacy attributes (pointing to agent 0) for compatibility.
+            self.actor_model = self.actor_models[0]
+            self.rollout_buffer = self.rollout_buffers[0]
+            self.actor_optimizer = self.actor_optimizers[0]
+            self.critic_model = self.critic_models[0] if self.critic_models else None
+            self.optimizer = self.actor_optimizer
+            self.critic_optimizer = (
+                self.critic_optimizers[0] if self.critic_optimizers else None
+            )
 
         self.wandb_config = wandb_config
         self.wandb_initialized = False
@@ -223,15 +268,23 @@ class IPPOTrainer:
     def _setup_formatter(
         self,
         formatters: Optional[Union[Formatter, Sequence[Formatter]]],
-    ) -> Formatter:
+    ) -> List[Formatter]:
         default_formatter: Formatter = lambda x: x.get("prompt", "")
 
         if formatters is None:
-            return default_formatter
+            return [default_formatter] * self.args.num_agents
         if callable(formatters):
-            return formatters
+            return [formatters] * self.args.num_agents
+        if isinstance(formatters, Sequence) and not isinstance(
+            formatters, (str, bytes)
+        ):
+            if len(formatters) != self.args.num_agents:
+                raise ValueError(
+                    "Number of formatters must match num_agents when providing a sequence."
+                )
+            return list(formatters)
         raise ValueError(
-            "formatters must be None or a single callable for IPPOTrainer."
+            "formatters must be None, a callable, or a sequence of callables."
         )
 
     def _infer_reward_signature(self, fn: RewardFunc):
@@ -278,15 +331,15 @@ class IPPOTrainer:
 
     def _configure_tokenizer_specials(self) -> None:
         pad_id = self.args.pad_token_id
-        self.actor_model.model.config.pad_token_id = pad_id
-        self.actor_model.model.config.eos_token_id = getattr(
-            self.tokenizer, "eos_token_id", pad_id
-        )
-        if self.critic_model is not None:
-            self.critic_model.model.config.pad_token_id = pad_id
-            self.critic_model.model.config.eos_token_id = getattr(
-                self.tokenizer, "eos_token_id", pad_id
-            )
+        eos_id = getattr(self.tokenizer, "eos_token_id", pad_id)
+        for actor_model in self.actor_models:
+            actor_model.model.config.pad_token_id = pad_id
+            actor_model.model.config.eos_token_id = eos_id
+        for critic_model in self.critic_models:
+            if critic_model is None:
+                continue
+            critic_model.model.config.pad_token_id = pad_id
+            critic_model.model.config.eos_token_id = eos_id
 
     def _init_wandb(self) -> None:
         if self.wandb_initialized:
@@ -339,8 +392,9 @@ class IPPOTrainer:
             collate_fn=lambda batch: batch,
         )
 
-    def _format_prompt(self, item: Dict[str, Any]) -> str:
-        prompt = self.formatter(item)
+    def _format_prompt(self, item: Dict[str, Any], agent_idx: int) -> str:
+        formatter = self.formatters[agent_idx]
+        prompt = formatter(item)
         if not isinstance(prompt, str):
             raise ValueError("Formatter must return a string prompt.")
         return prompt
@@ -357,14 +411,31 @@ class IPPOTrainer:
         }
 
     def _call_reward_func(
-        self, prompts: Sequence[str], completions: Sequence[str]
+        self, prompts: Sequence[str], agent_completions: Sequence[Sequence[str]]
     ) -> List[float]:
         signature = self._reward_signature or inspect.signature(self.reward_func)
         params = signature.parameters
-        if len(params) == 1:
-            raw = self.reward_func(completions)  # type: ignore[arg-type]
-        else:
-            raw = self.reward_func(prompts, completions)  # type: ignore[arg-type]
+        num_agents = self.args.num_agents
+
+        def _call_with_args():
+            param_count = len(params)
+            if num_agents == 1:
+                if param_count == 1:
+                    return self.reward_func(agent_completions[0])  # type: ignore[arg-type]
+                return self.reward_func(prompts, agent_completions[0])  # type: ignore[arg-type]
+
+            if param_count == num_agents:
+                return self.reward_func(*agent_completions)  # type: ignore[arg-type]
+            if param_count == num_agents + 1:
+                return self.reward_func(prompts, *agent_completions)  # type: ignore[arg-type]
+            if param_count == 1:
+                return self.reward_func(agent_completions)  # type: ignore[arg-type]
+            return self.reward_func(*agent_completions)  # type: ignore[arg-type]
+
+        try:
+            raw = _call_with_args()
+        except TypeError:
+            raw = self.reward_func(*agent_completions)  # type: ignore[arg-type]
 
         if isinstance(raw, torch.Tensor):
             rewards = raw.detach().cpu().tolist()
@@ -372,83 +443,144 @@ class IPPOTrainer:
             rewards = list(raw)
         else:
             rewards = [float(raw)]
-        return [float(self.reward_processor(r)) for r in rewards]
+
+        processed = [float(self.reward_processor(r)) for r in rewards]
+        if num_agents == 1:
+            return processed
+
+        if len(processed) == 1:
+            return processed * num_agents
+        if len(processed) == num_agents:
+            return processed
+        raise ValueError(
+            f"Reward function must return either 1 or {num_agents} values per prompt for multi-agent IPPO."
+        )
 
     # --------------------------------------------------------------------- #
     # Rollout collection
     # --------------------------------------------------------------------- #
-    def _collect_rollout(self, item: Dict[str, Any]) -> RolloutSample:
-        prompt = self._format_prompt(item)
-        encoded_prompt = self._encode_prompt(prompt)
-        prompt_input_ids = encoded_prompt["input_ids"]
-        prompt_attention_mask = encoded_prompt["attention_mask"]
+    def _collect_rollouts(self, item: Dict[str, Any]) -> List[RolloutSample]:
+        prompts: List[str] = []
+        completions: List[str] = []
+        rollout_data: List[Dict[str, Any]] = []
 
-        prompt_len = prompt_input_ids.size(1)
+        for agent_idx, actor_model in enumerate(self.actor_models):
+            prompt = self._format_prompt(item, agent_idx)
+            encoded_prompt = self._encode_prompt(prompt)
+            prompt_input_ids = encoded_prompt["input_ids"]
+            prompt_attention_mask = encoded_prompt["attention_mask"]
+            prompt_len = prompt_input_ids.size(1)
 
-        generation_kwargs: Dict[str, Any] = {
-            "input_ids": prompt_input_ids,
-            "attention_mask": prompt_attention_mask,
-            "max_new_tokens": self.args.max_new_tokens,
-            "do_sample": bool(self.args.do_sample),
-            "temperature": self.args.temperature,
-            "top_p": self.args.top_p,
-            "pad_token_id": self.args.pad_token_id,
-        }
-        if self.args.top_k is not None:
-            generation_kwargs["top_k"] = self.args.top_k
+            generation_kwargs: Dict[str, Any] = {
+                "input_ids": prompt_input_ids,
+                "attention_mask": prompt_attention_mask,
+                "max_new_tokens": self.args.max_new_tokens,
+                "do_sample": bool(self.args.do_sample),
+                "temperature": self.args.temperature,
+                "top_p": self.args.top_p,
+                "pad_token_id": self.args.pad_token_id,
+            }
+            if self.args.top_k is not None:
+                generation_kwargs["top_k"] = self.args.top_k
 
-        sequences = self.actor_model.generate(**generation_kwargs)
-        if sequences.size(1) <= prompt_len:
-            raise RuntimeError("Model produced an empty completion during rollout.")
+            sequences = actor_model.generate(**generation_kwargs)
+            if sequences.size(1) <= prompt_len:
+                raise RuntimeError("Model produced an empty completion during rollout.")
 
-        response_tokens = sequences[:, prompt_len:]
-        completion_text = self.tokenizer.decode(
-            response_tokens[0], skip_special_tokens=True
-        )
-        response_len = response_tokens.size(1)
-        response_char_length = len(completion_text)
-
-        full_attention_mask = torch.ones_like(sequences, device=self.device)
-
-        with torch.no_grad():
-            logprob, actor_value = self._policy_eval(
-                sequences, full_attention_mask, prompt_len, response_len
+            response_tokens = sequences[:, prompt_len:]
+            completion_text = self.tokenizer.decode(
+                response_tokens[0], skip_special_tokens=True
             )
-            if self.args.use_separate_critic:
-                value = self._critic_eval(
-                    sequences, full_attention_mask, prompt_len, response_len
+            response_len = response_tokens.size(1)
+            response_char_length = len(completion_text)
+
+            full_attention_mask = torch.ones_like(sequences, device=self.device)
+
+            with torch.no_grad():
+                logprob, actor_value = self._policy_eval(
+                    actor_model,
+                    sequences,
+                    full_attention_mask,
+                    prompt_len,
+                    response_len,
                 )
+                if self.args.use_separate_critic:
+                    critic_model = self.critic_models[agent_idx]
+                    if critic_model is None:
+                        raise RuntimeError("Critic model missing for agent.")
+                    value = self._critic_eval(
+                        critic_model,
+                        sequences,
+                        full_attention_mask,
+                        prompt_len,
+                        response_len,
+                    )
+                else:
+                    if actor_value is None:
+                        raise RuntimeError(
+                            "Shared value head expected a value prediction."
+                        )
+                    value = actor_value
+
+            prompts.append(prompt)
+            completions.append(completion_text)
+            rollout_data.append(
+                {
+                    "agent_idx": agent_idx,
+                    "prompt": prompt,
+                    "completion": completion_text,
+                    "sequences": sequences,
+                    "attention_mask": full_attention_mask,
+                    "prompt_len": prompt_len,
+                    "response_len": response_len,
+                    "logprob": logprob,
+                    "value": value,
+                    "char_length": response_char_length,
+                }
+            )
+
+        completion_lists = [[text] for text in completions]
+        rewards = self._call_reward_func(prompts, completion_lists)
+
+        if len(rewards) != len(rollout_data):
+            if len(rewards) == 1:
+                rewards = rewards * len(rollout_data)
             else:
-                if actor_value is None:
-                    raise RuntimeError("Shared value head expected a value prediction.")
-                value = actor_value
+                raise ValueError(
+                    "Reward function returned unexpected number of values."
+                )
 
-        rewards = self._call_reward_func([prompt], [completion_text])
-        reward_tensor = torch.tensor(rewards, device=self.device, dtype=torch.float32)
+        rollouts: List[RolloutSample] = []
+        for data, reward in zip(rollout_data, rewards):
+            reward_tensor = torch.tensor(
+                [reward], device=self.device, dtype=torch.float32
+            )
+            returns = reward_tensor.clone()
+            advantage = returns - data["value"]
 
-        returns = reward_tensor.clone()
-        advantage = returns - value
+            rollouts.append(
+                RolloutSample(
+                    agent_idx=data["agent_idx"],
+                    prompt=data["prompt"],
+                    completion=data["completion"],
+                    full_input_ids=data["sequences"].squeeze(0).detach().cpu(),
+                    attention_mask=data["attention_mask"].squeeze(0).detach().cpu(),
+                    prompt_len=data["prompt_len"],
+                    response_len=data["response_len"],
+                    old_logprob=data["logprob"].detach().cpu(),
+                    old_value=data["value"].detach().cpu(),
+                    reward=reward_tensor.detach().cpu(),
+                    returns=returns.detach().cpu(),
+                    advantage=advantage.detach().cpu(),
+                    metadata={"char_length": data["char_length"]},
+                )
+            )
 
-        rollout = RolloutSample(
-            prompt=prompt,
-            completion=completion_text,
-            full_input_ids=sequences.squeeze(0).detach().cpu(),
-            attention_mask=full_attention_mask.squeeze(0).detach().cpu(),
-            prompt_len=prompt_len,
-            response_len=response_len,
-            old_logprob=logprob.detach().cpu(),
-            old_value=value.detach().cpu(),
-            reward=reward_tensor.detach().cpu(),
-            returns=returns.detach().cpu(),
-            advantage=advantage.detach().cpu(),
-            metadata={
-                "char_length": response_char_length,
-            },
-        )
-        return rollout
+        return rollouts
 
     def _policy_eval(
         self,
+        actor_model: CausalLMWithValueHead,
         sequences: torch.Tensor,
         attention_mask: torch.Tensor,
         prompt_len: int,
@@ -459,7 +591,7 @@ class IPPOTrainer:
         Evaluate the actor to retrieve log-probabilities and (optional) value prediction.
         """
 
-        outputs = self.actor_model(
+        outputs = actor_model(
             input_ids=sequences,
             attention_mask=attention_mask,
             output_values=output_values,
@@ -478,15 +610,13 @@ class IPPOTrainer:
 
     def _critic_eval(
         self,
+        critic_model: CausalLMWithValueHead,
         sequences: torch.Tensor,
         attention_mask: torch.Tensor,
         prompt_len: int,
         response_len: int,
     ) -> torch.Tensor:
-        if self.critic_model is None:
-            raise RuntimeError("Critic model not initialised.")
-
-        outputs = self.critic_model(
+        outputs = critic_model(
             input_ids=sequences,
             attention_mask=attention_mask,
             output_values=True,
@@ -563,7 +693,16 @@ class IPPOTrainer:
             sample.advantage = norm_tensor - sample.old_value.to(norm_tensor.dtype)
             sample.normalized_advantage = None
 
-    def _ppo_step(self, batch: List[RolloutSample]) -> Dict[str, float]:
+    def _ppo_step(self, agent_idx: int, batch: List[RolloutSample]) -> Dict[str, float]:
+        actor_model = self.actor_models[agent_idx]
+        critic_model = (
+            self.critic_models[agent_idx] if self.args.use_separate_critic else None
+        )
+        actor_optimizer = self.actor_optimizers[agent_idx]
+        critic_optimizer = (
+            self.critic_optimizers[agent_idx] if self.args.use_separate_critic else None
+        )
+
         actor_losses: List[torch.Tensor] = []
         value_losses: List[torch.Tensor] = []
 
@@ -572,6 +711,7 @@ class IPPOTrainer:
             attention_mask = sample.attention_mask.to(self.device).unsqueeze(0)
 
             logprob, actor_value = self._policy_eval(
+                actor_model,
                 sequences,
                 attention_mask,
                 sample.prompt_len,
@@ -579,7 +719,10 @@ class IPPOTrainer:
                 output_values=not self.args.use_separate_critic,
             )
             if self.args.use_separate_critic:
+                if critic_model is None:
+                    raise RuntimeError("Critic model not initialised.")
                 value = self._critic_eval(
+                    critic_model,
                     sequences,
                     attention_mask,
                     sample.prompt_len,
@@ -646,33 +789,37 @@ class IPPOTrainer:
             )
 
         if self.args.use_separate_critic:
-            self.actor_optimizer.zero_grad()
+            if critic_optimizer is None:
+                raise RuntimeError("Critic optimizer missing.")
+            actor_optimizer.zero_grad()
             actor_total.backward()
             torch.nn.utils.clip_grad_norm_(
-                self.actor_model.parameters(), self.args.max_grad_norm
+                actor_model.parameters(), self.args.max_grad_norm
             )
-            self.actor_optimizer.step()
+            actor_optimizer.step()
 
-            self.critic_optimizer.zero_grad()
+            critic_optimizer.zero_grad()
             value_total.backward()
             torch.nn.utils.clip_grad_norm_(
-                self.critic_model.parameters(), self.args.max_grad_norm  # type: ignore[arg-type]
+                critic_model.parameters(), self.args.max_grad_norm  # type: ignore[arg-type]
             )
-            self.critic_optimizer.step()
+            critic_optimizer.step()
         else:
-            self.optimizer.zero_grad()
+            actor_optimizer.zero_grad()
             (actor_total + value_total).backward()
             torch.nn.utils.clip_grad_norm_(
-                self.actor_model.parameters(), self.args.max_grad_norm
+                actor_model.parameters(), self.args.max_grad_norm
             )
-            self.optimizer.step()
+            actor_optimizer.step()
 
         return {
             "policy_loss": actor_loss.detach().item(),
             "value_loss": value_loss.detach().item(),
         }
 
-    def _update(self, rollouts: List[RolloutSample]) -> Dict[str, float]:
+    def _update(
+        self, agent_idx: int, rollouts: List[RolloutSample]
+    ) -> Dict[str, float]:
         if not rollouts:
             return {}
 
@@ -694,7 +841,7 @@ class IPPOTrainer:
         random.shuffle(rollouts)
         for start in range(0, len(rollouts), self.args.mini_batch_size):
             batch = rollouts[start : start + self.args.mini_batch_size]
-            step_metrics = self._ppo_step(batch)
+            step_metrics = self._ppo_step(agent_idx, batch)
             for key, value in step_metrics.items():
                 metrics[key].append(value)
 
@@ -716,22 +863,29 @@ class IPPOTrainer:
             epoch_metrics = defaultdict(list)
             for batch in dataloader:
                 for item in batch:
-                    rollout = self._collect_rollout(item)
-                    self.rollout_buffer.append(rollout)
-                    if len(self.rollout_buffer) >= self.args.rollout_buffer_size:
-                        metrics = self._update(self.rollout_buffer)
-                        self.rollout_buffer.clear()
-                        self._log_metrics(metrics)
-                        self.global_step += 1
-                        for key, value in metrics.items():
-                            epoch_metrics[key].append(value)
+                    rollouts = self._collect_rollouts(item)
+                    for sample in rollouts:
+                        agent_idx = sample.agent_idx
+                        buffer = self.rollout_buffers[agent_idx]
+                        buffer.append(sample)
+                        if len(buffer) >= self.args.rollout_buffer_size:
+                            metrics = self._update(agent_idx, buffer)
+                            buffer.clear()
+                            tagged = self._tag_metrics(metrics, agent_idx)
+                            self._log_metrics(tagged)
+                            self.global_step += 1
+                            for key, value in tagged.items():
+                                epoch_metrics[key].append(value)
 
-            if self.rollout_buffer:
-                metrics = self._update(self.rollout_buffer)
-                self.rollout_buffer.clear()
-                self._log_metrics(metrics)
+            for agent_idx, buffer in enumerate(self.rollout_buffers):
+                if not buffer:
+                    continue
+                metrics = self._update(agent_idx, buffer)
+                buffer.clear()
+                tagged = self._tag_metrics(metrics, agent_idx)
+                self._log_metrics(tagged)
                 self.global_step += 1
-                for key, value in metrics.items():
+                for key, value in tagged.items():
                     epoch_metrics[key].append(value)
 
             summary = {
@@ -745,6 +899,13 @@ class IPPOTrainer:
     # --------------------------------------------------------------------- #
     # Logging and persistence
     # --------------------------------------------------------------------- #
+    def _tag_metrics(
+        self, metrics: Dict[str, float], agent_idx: int
+    ) -> Dict[str, float]:
+        if self.args.num_agents == 1:
+            return metrics
+        return {f"agent_{agent_idx}/{key}": value for key, value in metrics.items()}
+
     def _log_metrics(self, metrics: Dict[str, float]) -> None:
         if not metrics:
             return
@@ -753,22 +914,45 @@ class IPPOTrainer:
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
-        self.actor_model.model.save_pretrained(output_dir)
-        if self.actor_model.value_head is not None:
-            torch.save(
-                self.actor_model.value_head.state_dict(),
-                os.path.join(output_dir, "value_head.pt"),
-            )
-
-        if self.critic_model is not None:
-            critic_dir = os.path.join(output_dir, "critic")
-            os.makedirs(critic_dir, exist_ok=True)
-            self.critic_model.model.save_pretrained(critic_dir)
-            if self.critic_model.value_head is not None:
+        if self.args.num_agents == 1:
+            actor = self.actor_models[0]
+            actor.model.save_pretrained(output_dir)
+            if actor.value_head is not None:
                 torch.save(
-                    self.critic_model.value_head.state_dict(),
-                    os.path.join(critic_dir, "value_head.pt"),
+                    actor.value_head.state_dict(),
+                    os.path.join(output_dir, "value_head.pt"),
                 )
+            critic = self.critic_models[0]
+            if critic is not None:
+                critic_dir = os.path.join(output_dir, "critic")
+                os.makedirs(critic_dir, exist_ok=True)
+                critic.model.save_pretrained(critic_dir)
+                if critic.value_head is not None:
+                    torch.save(
+                        critic.value_head.state_dict(),
+                        os.path.join(critic_dir, "value_head.pt"),
+                    )
+        else:
+            for agent_idx, actor in enumerate(self.actor_models):
+                agent_dir = os.path.join(output_dir, f"agent_{agent_idx}")
+                os.makedirs(agent_dir, exist_ok=True)
+                actor.model.save_pretrained(agent_dir)
+                if actor.value_head is not None:
+                    torch.save(
+                        actor.value_head.state_dict(),
+                        os.path.join(agent_dir, "value_head.pt"),
+                    )
+                critic = self.critic_models[agent_idx]
+                if critic is None:
+                    continue
+                critic_dir = os.path.join(agent_dir, "critic")
+                os.makedirs(critic_dir, exist_ok=True)
+                critic.model.save_pretrained(critic_dir)
+                if critic.value_head is not None:
+                    torch.save(
+                        critic.value_head.state_dict(),
+                        os.path.join(critic_dir, "value_head.pt"),
+                    )
 
         if self.tokenizer is not None:
             self.tokenizer.save_pretrained(output_dir)
