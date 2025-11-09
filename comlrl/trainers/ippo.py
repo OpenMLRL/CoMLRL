@@ -378,6 +378,13 @@ class IPPOTrainer:
             init_kwargs["tags"] = tags
 
         wandb.init(**init_kwargs)
+        wandb.log(
+            {
+                "actor_learning_rate": self.args.actor_learning_rate,
+                "critic_learning_rate": self.args.critic_learning_rate,
+            },
+            step=0,
+        )
         self.wandb_initialized = True
 
     # --------------------------------------------------------------------- #
