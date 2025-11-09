@@ -100,7 +100,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--separate-critic", action="store_true")
     parser.add_argument("--output-dir", type=str, default="./mappo_tldr")
     parser.add_argument("--dataset-size", type=int, default=320)
-    parser.add_argument("--num-train-epochs", type=int, default=6)
+    parser.add_argument("--num-train-epochs", type=int, default=15)
     parser.add_argument("--actor-learning-rate", type=float, default=3e-6)
     parser.add_argument("--critic-learning-rate", type=float, default=2e-6)
     parser.add_argument("--value-loss-coef", type=float, default=0.7)
