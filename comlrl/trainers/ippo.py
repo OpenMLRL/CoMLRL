@@ -47,7 +47,7 @@ class IPPOConfig:
     mini_batch_size: int = 4
     ppo_epochs: int = 1
     value_clip_range: Optional[float] = 0.2
-    value_loss_coef: float = 0.15
+    value_loss_coef: float = 0.7
     entropy_coef: float = 0.0
     advantage_normalization: bool = True
     max_new_tokens: int = 128
