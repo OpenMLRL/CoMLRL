@@ -74,7 +74,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-train-epochs", type=int, default=12)
     parser.add_argument("--actor-learning-rate", type=float, default=1e-6)
     parser.add_argument("--critic-learning-rate", type=float, default=1e-6)
-    parser.add_argument("--value-loss-coef", type=float, default=0.7)
+    parser.add_argument("--value-loss-coef", type=float, default=0.5)
     parser.add_argument("--wandb-project", type=str, default="ippo")
     parser.add_argument("--wandb-entity", type=str, default="OpenMLRL")
     parser.add_argument("--wandb-run-name", type=str, default="ippo_tldr")

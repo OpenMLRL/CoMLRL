@@ -36,7 +36,7 @@ class IPPOConfig:
     """Configuration container for PPO fine-tuning."""
 
     output_dir: str = "./ippo_output"
-    actor_learning_rate: float = 3e-6
+    actor_learning_rate: float = 2e-6
     critic_learning_rate: Optional[float] = 2e-6
     weight_decay: float = 0.0
     adam_beta1: float = 0.9
@@ -47,7 +47,7 @@ class IPPOConfig:
     mini_batch_size: int = 4
     ppo_epochs: int = 1
     value_clip_range: Optional[float] = 0.2
-    value_loss_coef: float = 0.7
+    value_loss_coef: float = 0.5
     entropy_coef: float = 0.0
     advantage_normalization: bool = True
     max_new_tokens: int = 128
