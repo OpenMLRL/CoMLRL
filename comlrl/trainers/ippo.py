@@ -358,6 +358,7 @@ class IPPOTrainer:
             "name": name,
             "config": {
                 "actor_learning_rate": self.args.actor_learning_rate,
+                "critic_learning_rate": self.args.critic_learning_rate,
                 "rollout_buffer_size": self.args.rollout_buffer_size,
                 "mini_batch_size": self.args.mini_batch_size,
                 "ppo_epochs": self.args.ppo_epochs,
