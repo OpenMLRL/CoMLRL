@@ -57,7 +57,6 @@ class IPPOConfig:
     do_sample: bool = True
     num_train_epochs: int = 8
     per_device_train_batch_size: int = 1
-    seed: Optional[int] = 42
     use_separate_critic: bool = False
     critic_model_name_or_path: Optional[str] = None
     critic_value_head_hidden_dim: Optional[int] = None
@@ -134,12 +133,6 @@ class IPPOTrainer:
         if not torch.cuda.is_available():
             # CPU fallback is allowed for experimentation but will be slow.
             print("Warning: CUDA not available. Training will run on CPU.")
-
-        if self.args.seed is not None:
-            random.seed(self.args.seed)
-            torch.manual_seed(self.args.seed)
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed_all(self.args.seed)
 
         self.tokenizer = tokenizer
         self.formatters = self._setup_formatter(formatters)
