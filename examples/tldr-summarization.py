@@ -97,7 +97,7 @@ def main() -> None:
         num_train_epochs=args.num_train_epochs,
         use_separate_critic=args.separate_critic,
         critic_model_name_or_path=args.critic_model,
-        learning_rate=args.actor_learning_rate,
+        actor_learning_rate=args.actor_learning_rate,
         critic_learning_rate=args.critic_learning_rate,
         value_loss_coef=args.value_loss_coef,
     )

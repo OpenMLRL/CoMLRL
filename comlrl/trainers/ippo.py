@@ -36,7 +36,7 @@ class IPPOConfig:
     """Configuration container for PPO fine-tuning."""
 
     output_dir: str = "./ippo_output"
-    learning_rate: float = 3e-6
+    actor_learning_rate: float = 3e-6
     critic_learning_rate: Optional[float] = 2e-6
     weight_decay: float = 0.0
     adam_beta1: float = 0.9
@@ -81,7 +81,7 @@ class IPPOConfig:
         if self.num_turns != 1:
             raise ValueError("Independent PPO currently supports only a single turn.")
         if self.critic_learning_rate is None:
-            self.critic_learning_rate = self.learning_rate
+            self.critic_learning_rate = self.actor_learning_rate
 
 
 @dataclass
@@ -197,7 +197,7 @@ class IPPOTrainer:
         for actor_model in self.actor_models:
             optimizer = torch.optim.AdamW(
                 actor_model.parameters(),
-                lr=self.args.learning_rate,
+                lr=self.args.actor_learning_rate,
                 betas=(self.args.adam_beta1, self.args.adam_beta2),
                 eps=self.args.adam_epsilon,
                 weight_decay=self.args.weight_decay,
@@ -357,7 +357,7 @@ class IPPOTrainer:
             "entity": entity,
             "name": name,
             "config": {
-                "learning_rate": self.args.learning_rate,
+                "actor_learning_rate": self.args.actor_learning_rate,
                 "rollout_buffer_size": self.args.rollout_buffer_size,
                 "mini_batch_size": self.args.mini_batch_size,
                 "ppo_epochs": self.args.ppo_epochs,

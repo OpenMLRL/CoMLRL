@@ -142,7 +142,7 @@ def main() -> None:
     config = IPPOConfig(
         output_dir=args.output_dir,
         num_train_epochs=args.num_train_epochs,
-        learning_rate=args.actor_learning_rate,
+        actor_learning_rate=args.actor_learning_rate,
         critic_learning_rate=args.critic_learning_rate,
         value_loss_coef=args.value_loss_coef,
         rollout_buffer_size=args.rollout_buffer_size,
