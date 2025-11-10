@@ -53,4 +53,16 @@
       /* no-op */
     }
   });
+
+  // Cmd+K / Ctrl+K shortcut for search
+  document.addEventListener('keydown', function(e) {
+    // Cmd+K (Mac) or Ctrl+K (Windows/Linux)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault();
+      var searchInput = document.querySelector('.book-search input');
+      if (searchInput) {
+        searchInput.focus();
+      }
+    }
+  });
   </script>

@@ -8,7 +8,7 @@ $menu-item-color: #545b74;    /* darker by 10 each channel */
 $menu-brand-color: #202532;   /* darker by 10 each channel */
 
 /* Single source of truth for sidebar width */
-$sidebar-width: 18rem;
+$sidebar-width: 17rem;
 
 /* Article text color (derived from sidebar) */
 $article-text-color: $menu-item-color; /* keep variable for potential reuse */
@@ -17,7 +17,7 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
   background: $menu-bg;
   border-right: 1px solid $menu-border;
   color: $menu-text;
-  flex: 0 0 18rem; /* slightly wider */
+  flex: 0 0 17rem; /* slightly wider */
   width: 17rem;   /* match flex-basis */
   position: sticky;
   top: 0;
@@ -26,7 +26,7 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
 }
 
 .book-menu .book-menu-content {
-  padding: 0.75rem;
+  padding: 1.2rem;
   width: $sidebar-width;
 }
 
@@ -70,7 +70,7 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
   font-weight: 700 !important;
   pointer-events: none;
   cursor: default;
-  font-size: 1.05rem; /* section name size (+0.05rem) */
+  font-size: 1rem; /* section name size */
   color: $menu-section-color;
 }
 .book-menu li.book-section > label,
@@ -78,7 +78,7 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
 .book-menu .book-menu-content > ul > li > label,
 .book-menu .book-menu-content > ul > li > summary {
   font-weight: 700 !important;
-  font-size: 1.05rem; /* section name size (+0.05rem) */
+  font-size: 1rem; /* section name size */
   color: $menu-section-color;
 }
 
@@ -95,7 +95,7 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
   pointer-events: auto;
   cursor: pointer;
   padding-left: 1.5rem; /* adjusted indent for child items */
-  font-size: 0.90rem; /* file (page) link size (+0.05rem) */
+  font-size: 0.9rem; /* file (page) link size */
   color: $menu-item-color;
 }
 
@@ -123,13 +123,36 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
   margin-left: 2rem;
   margin-right: 0rem;
 }
-.book-article h1 { font-size: 1.3rem; font-weight: 700; color: $menu-section-color !important; }
-.book-article h2 { font-size: 1.1rem; font-weight: 700; color: $menu-section-color !important; }
-.book-article h3 { font-size: 1.0rem; font-weight: 700; color: $menu-section-color !important; }
+.book-article h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: $menu-section-color !important;
+  margin-top: 2rem;
+  margin-bottom: 1.25rem;
+}
+.book-article h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: $menu-section-color !important;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+.book-article h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: $menu-section-color !important;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
 /* Neutralize smaller headings to body size */
 .book-article h4,
 .book-article h5,
-.book-article h6 { font-size: 0.95rem; color: $menu-item-color !important; }
+.book-article h6 {
+  font-size: 1rem;
+  color: $menu-item-color !important;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
 
 /* Remove ToC completely */
 .book-toc {
@@ -139,6 +162,62 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
 /* Hide TOC toggle control in header */
 .book-header label[for="toc-control"] {
   display: none !important;
+}
+
+/* Tab container spacing */
+.book-tabs {
+  margin-top: 2rem !important;
+  margin-bottom: 2rem !important;
+}
+
+/* Tab labels bold, content normal */
+.book-tabs label {
+  font-weight: 700 !important;
+  font-size: 0.88rem !important;
+  margin: 0.2rem;
+}
+
+/* Tab content font size */
+.book-tabs .book-tabs-content {
+  font-size: 0.95rem !important;
+}
+
+/* Search box keyboard shortcut hint */
+.book-search {
+  position: relative;
+}
+
+.book-search input {
+  padding-right: 3.5rem !important;
+}
+
+.book-search::after {
+  content: '⌘K';
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.75rem;
+  color: #999;
+  background: #f0f0f0;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  pointer-events: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
+}
+
+/* Show Ctrl+K on non-Mac systems */
+@media (pointer: fine) {
+  .book-search::after {
+    content: 'Ctrl+K';
+  }
+}
+
+/* Override back to ⌘K on Mac */
+@supports (-webkit-touch-callout: none) {
+  .book-search::after {
+    content: '⌘K';
+  }
 }
 
 /* Floating copyright footer across the page */
