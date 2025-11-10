@@ -3,26 +3,56 @@ title: CoMLRL Quick Demo
 weight: 1
 ---
 
-This example demonstrates MAGRPO on a small storytelling task with a length‑ratio reward. Two agents generate per prompt: Agent 1 produces a compact setup; Agent 2 produces a longer continuation. The reward favors a 2–3× length ratio between Agent 2 and Agent 1.
+This tutorial demonstrates how to train 2 LLM agents to collaborate to telling a story. The first agent generates a compact story setup, while the second agent produces a longer version. The reward function encourages the second agent's output to be 2–3× longer than the first agent's.
 
-## Imports
+To run this demo, please have at least 24 GB of GPU memory available. And you can visualized the training process by setting up your WandB.
 
-What’s used: Hugging Face models/tokenizer, Hugging Face `Dataset` to hold prompts, MAGRPO trainer/config, a simple reward processor (for scaling), and utilities.
+## Import Libraries
 
 ```python
 import math
 from functools import partial
-
 from datasets import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
 from comlrl.utils.reward_processor import RewardProcessors
 from comlrl.trainers.magrpo import MAGRPOConfig, MAGRPOTrainer
 ```
 
-## Reward
+## Dataset Preparation
 
-We want Agent 2’s output to be roughly 2–3× longer than Agent 1’s. Outside that band, we decay the reward exponentially by the distance from the nearest bound.
+We first create a dataset of creative prompts for the agents to work on.
+
+```python
+train_data = {
+    "prompt": [
+        "Describe a city in the clouds:",
+        "Invent a new holiday and explain it:",
+        "Write a bedtime story for a dragon:",
+        "Explain how teleportation might work:",
+        "Tell a joke about dinosaurs:",
+        "Describe a world without electricity:",
+        "Create a superhero with a unique power:",
+        "Write a scene where the moon talks:",
+        "Invent a new type of fruit:",
+        "Design a playground on Mars:",
+    ]
+}
+train_dataset = Dataset.from_dict(train_data)
+```
+
+## Agent Initialization
+
+We load a tokenizer to convert text into tokens that the model can process and initialized 2 separate instances.
+
+```python
+model_name = "Qwen/Qwen2.5-0.5B"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+agents = [AutoModelForCausalLM.from_pretrained(model_name) for _ in range(2)]
+```
+
+## Define the Reward Function
+
+The reward function measures how well the agents collaborate. It gives maximum reward (1.0) when the second agent's output is 2–3× longer than the first agent's. If the length ratio falls outside this range, the reward decays exponentially based on how far it deviates.
 
 ```python
 def proper_length_ratio_reward(
@@ -53,70 +83,9 @@ def proper_length_ratio_reward(
     return rewards
 ```
 
-## Data (prompts)
+## Configure Training
 
-A tiny prompt set is enough for a functional demo; expand this for real experiments.
-
-```python
-train_data = {
-    "prompt": [
-        "Write a story about a robot:",
-        "Explain quantum physics:",
-        "Create a recipe for chocolate cake:",
-        "Describe a city in the clouds:",
-        "Invent a new holiday and explain it:",
-        "Write a bedtime story for a dragon:",
-        "Explain how teleportation might work:",
-        "Design a futuristic bicycle:",
-        "Tell a joke about dinosaurs:",
-        "Write a poem about the ocean at night:",
-        "Describe a world without electricity:",
-        "Create a superhero with a unique power:",
-        "Write a scene where the moon talks:",
-        "Explain black holes to a 5-year-old:",
-        "Invent a new type of fruit:",
-        "Design a playground on Mars:",
-        "Write a love letter between two stars:",
-        "Invent a game played by aliens:",
-        "Explain Wi-Fi to someone from the 1800s:",
-        "Create a workout plan for robots:",
-        "Describe a hotel at the bottom of the ocean:",
-        "Write a story about a lost shadow:",
-        "Invent a musical instrument from glass:",
-        "Design a zoo for extinct animals:",
-        "Write a diary entry from a raindrop:",
-        "Describe a world where pets can talk:",
-        "Explain how dreams are made:",
-        "Create a menu for a restaurant in space:",
-        "Write a letter from a tree to a human:",
-        "Describe a rainbow factory:",
-        "Write a scene from a robot cooking show:",
-        "Explain the weather like a pirate would:",
-    ]
-}
-train_dataset = Dataset.from_dict(train_data)
-```
-
-## Tokenizer
-
-Load the tokenizer from your chosen base model. For quick tests, a smaller model is fine.
-
-```python
-model_name = "Qwen/Qwen2.5-0.5B"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-```
-
-## Models
-
-Two identical base models act as two agents. Scale model size to match VRAM; the original script notes ~24GB for larger runs.
-
-```python
-agents = [AutoModelForCausalLM.from_pretrained(model_name) for _ in range(2)]
-```
-
-## MAGRPO config
-
-Use a modest configuration for a fast run; increase epochs/generations for stronger results.
+We set up the training configuration with hyperparameters like learning rate, batch size, and the number of generations each agent produces per prompt.
 
 ```python
 config = MAGRPOConfig(
@@ -131,15 +100,15 @@ config = MAGRPOConfig(
 )
 ```
 
-## Trainer setup
+## Create the Trainer
 
-Scale rewards for a smoother learning signal; keep W&B optional.
+We instantiate the MAGRPO trainer with our agents, reward function, and configuration. The reward is scaled by 100× to provide a stronger learning signal.
 
 ```python
 wandb_config = {
-    "project": "mlrl",
-    "entity": "OpenMLRL",
-    "name": "qwen-magrpo-length-ratio",
+    "project": <your-project-name>,
+    "entity": <your-entity-name>,
+    "name": "length-ratio-demo",
 }
 
 configured_reward_func = partial(
@@ -157,21 +126,11 @@ trainer = MAGRPOTrainer(
 )
 ```
 
-## Train and save
+## Run Training
 
-Run a short training loop and checkpoint the final models.
+Finally, we start the training process. The trainer will optimize both agents to maximize the collaborative reward, then save the trained models.
 
 ```python
 trainer.train()
-trainer.save_model(f"{config.output_dir}/final_models")
-print("Training complete!")
+trainer.save_model(f"{config.output_dir}/models")
 ```
-
----
-
-Notes
-
-- Based on `examples/story-len-ratio.py`.
-- VRAM tip: the original script notes ~24GB VRAM for larger models; use a smaller model if constrained.
-- For longer runs, increase `num_train_epochs`, adjust `num_generations`, and expand the prompt list.
-- See the User Guide → Multi‑Turn for Joint Mode, External feedback, and Termination settings.

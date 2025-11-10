@@ -26,7 +26,3 @@ Thanks for your interest in helping build CoMLRL! This guide walks you through r
 4. Open a pull request to the upstream repository and wait for review.
 
 {{% /steps %}}
-
-## Sponsorship
-
-Fine-tuning LLMs with MARL requires substantial computational resources. We appreciate any sponsorship to help cover these costs. Please reach out to the [maintainers](liu.shuo2@northeastern.edu) for sponsorship.
