@@ -32,8 +32,8 @@ class IPPOConfig:
     """Configuration container for PPO fine-tuning."""
 
     output_dir: str = "./ippo_output"
-    actor_learning_rate: float = 2e-6
-    critic_learning_rate: Optional[float] = 2e-6
+    actor_learning_rate: float = 1e-6
+    critic_learning_rate: Optional[float] = 1e-6
     weight_decay: float = 0.0
     adam_beta1: float = 0.9
     adam_beta2: float = 0.999
