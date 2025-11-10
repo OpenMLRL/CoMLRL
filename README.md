@@ -33,26 +33,21 @@ pip install -e .
 ## Features
 
 - **MARL trainers to optimize LLM collaboration:**
-
   - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFROCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/maremax.py).
     - Aligned individual response joint with `joint_mode='align'`.
     - Memory-efficient cross joint with `joint_mode='cross'`.
-
   - **_Multi-Agent PPO:_** Critic-based policy gradient methods, including [IPPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/ippo.py).
     - Canonical IPPO with a separate critic with `use_separate_critic=True`.
     - Memory-efficient critic with value-head over actor with `use_separate_critic=False`.
 
 - **Environments that simulate real-world tasks for training and evaluating LLM collaboration:**
-
   - [**_Writing Collaboration_**](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
     - [TLDR](https://huggingface.co/datasets/trl-lib/tldr) - Summarizing Reddit posts.
     - [ArXiv](http://arxiv.org/abs/1905.00075) - Expanding abstracts into introductions.
-
   - [**_Code Generation_**](https://github.com/OpenMLRL/LLM_Collab_Code_Generation): Generate code solutions for programming problems.
     - [MBPP](https://arxiv.org/abs/2108.07732) - Mostly basic python problems.
     - [HumanEval](https://arxiv.org/abs/2107.03374) - Handwritten evaluation problems
     - [CoopHumanEval](https://huggingface.co/datasets/OpenMLRL/CoopHumanEval) - HumanEval with cooperative nature.
-
   - [**_Code Completion_**](https://github.com/OpenMLRL/LLM_Collab_Code_Completion): Complete code snippets based on given contexts.
     - [ClassEval](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Complete class-level code based on method stubs and docstrings.
 
