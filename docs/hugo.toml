@@ -27,6 +27,11 @@ disableKinds = ["taxonomy"]
   [markup.goldmark]
     [markup.goldmark.renderer]
       unsafe = true
+  [markup.highlight]
+    style = "friendly"
+    lineNos = false
+    lineNumbersInTable = false
+    noClasses = true
 
 [module]
   # Import the Hugo Book theme via Hugo Modules
