@@ -45,7 +45,7 @@ Cooperative MARL methods are grounded in the theory of Dec-POMDP. The agents are
 
 ## Features
 
-- We develop many trainers.
+- We support various classical MARL trainers.
 - Examples of LLM collaboration is in the scenarios.
 
 <img src="/img/demo.gif" width="800px;" alt=""/>
