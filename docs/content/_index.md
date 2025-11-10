@@ -31,15 +31,15 @@ Cooperative MARL methods are grounded in the theory of <a href="https://www.fran
 
 {{% tab "Q&A" %}}
 
-- <em style="font-weight: 500; color: #a45b74;"> "Do you include test-time multi-agent methods?"</em>
+- <em style="font-weight: 500; color: #843b54;"> "Does CoMLRL include test-time multi-agent methods?"</em>
 
   No, this library primarily focuses on optimizing LLM collaboration by MARL. Designing multi-agent test-time interactions is not our strength. Users refer to <a href="https://github.com/microsoft/autogen">AutoGen</a>, <a href="https://langroid.github.io/langroid/">langroid</a>, <a href="https://github.com/TsinghuaC3I/MARTI">MARTI</a> for help.
 
-- <em style="font-weight: 500; color: #a45b74;"> "Do you support self-play or self-improvement by MARL?"</em>
+- <em style="font-weight: 500; color: #843b54;"> "Does CoMLRL support self-play or self-improvement by MARL?"</em>
 
   No, we are just focusing LLM collaboration formalized as <a href="https://www.fransoliehoek.net/docs/OliehoekAmato16book.pdf">Dec-POMDP</a>. The algorithms in this library does not cover competitive or mixed-game scenarios. Users may refer to <a href="https://github.com/spiral-rl/spiral">Spiral</a> and <a href="https://github.com/vsubramaniam851/multiagent-ft/tree/main">MAFT</a> for help.
 
-- <em style="font-weight: 500; color: #a45b74;"> "Do you support distributed training?"</em>
+- <em style="font-weight: 500; color: #843b54;"> "Does CoMLRL support distributed training?"</em>
 
   No, the current propose of this library is to show the effectiveness of MARL in proof of concepts using small-scale LLMs. Distributed training for large-scale LLMs will be supported in the future.
 
@@ -66,6 +66,10 @@ Cooperative MARL methods are grounded in the theory of <a href="https://www.fran
     - [ClassEval](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Complete class-level code based on method stubs and docstrings.
 
 <img src="/img/demo.gif" width="800px;" alt=""/>
+
+---
+
+# Table of Contents
 
 ## User Guide
 - [Installation]({{< ref "/docs/user-guide/installation" >}})
