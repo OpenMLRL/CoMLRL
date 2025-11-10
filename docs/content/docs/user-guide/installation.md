@@ -19,4 +19,6 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+{{% hint warning %}}
 Please make sure you have compatible `torch` installed according to your CUDA.
+{{% /hint %}}

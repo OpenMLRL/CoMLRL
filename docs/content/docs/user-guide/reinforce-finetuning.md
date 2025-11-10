@@ -26,7 +26,7 @@ These classes are derived from `comlrl.trainers.magrpo.MAGRPOTrainer`. Interface
 Multi‑Agent Group‑Relative Policy Optimization optimizes each agent with a group‑relative baseline computed among sibling joint actions at the same node.
 
 {{< katex display=true >}}
-J(\theta_i) = \mathbb{E}\left[ \frac{1}{|\mathcal{G}|}\sum_{g \in \mathcal{G}}
+J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} \sim \mathbf{\pi}_{\mathbf{\theta}}}\left[ \frac{1}{|\mathcal{G}|}\sum_{g \in \mathcal{G}}
 \Big(R^{(g)}_t - \operatorname{mean}(R^{\mathcal{G}}_t)\Big)
 \cdot \log \pi_{\theta_i}\big(a^{(g)}_{i,t} \mid h_{i,t}\big) \right].
 {{< /katex >}}
@@ -64,6 +64,10 @@ J(\theta_i) = \mathbb{E}\left[ \frac{1}{|\mathcal{G}|}\sum_{g \in \mathcal{G}}
 - `wandb_config`: Configuration for Weights & Biases logging (optional)
 - `model_config`: Model configuration dict (optional)
 - `args`: Instance of `MAGRPOConfig` (optional)
+{{% /hint %}}
+
+{{% hint warning %}}
+CoMLRL implements on-policy GRPO, which computes the policy gradient using the current policy's samples without importance sampling or ratio clipping.
 {{% /hint %}}
 
 {{% hint warning %}}

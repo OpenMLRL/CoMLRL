@@ -8,17 +8,19 @@ PPO is a widely used policy gradient method that employs generalized advantage e
 
 ## IPPO
 
-Independent PPO ([IPPO](https://arxiv.org/abs/2011.09533)) optimizes each agent's policy independently while using joint returns from multiple agents. Each agent maintains its own actor and critic, other agents serve as part of the environment.
+Independent PPO ([IPPO](https://arxiv.org/abs/2011.09533)) optimizes each agent's policy independently while using joint returns from multiple agents. Each agent maintains its own actor and critic, other agents serve as part of the environment. The policy objective is:
 
 {{< katex display=true >}}
-L^{\text{CLIP}}(\theta_i) = \mathbb{E}\left[\min\left(r_i(\theta_i) \hat{A}_i, \text{clip}(r_i(\theta_i), 1-\epsilon, 1+\epsilon) \hat{A}_i\right)\right]
+J(\theta_i) = \mathbb{E}_{o_{i,0} \sim \mathcal{D}, h_i \sim \pi_{\theta_i}}\left[\log \pi_{\theta_i}(a_{i,t}|h_{i,t}) \cdot \sum_{l=0}^{\infty} (\gamma\lambda)^l \delta_{i,t+l} + \beta \mathcal{H}(\pi_{\theta_i})\right]
 {{< /katex >}}
 
-where {{< katex inline=true >}}r_i(\theta_i) = \frac{\pi_{\theta_i}(a_i|s)}{\pi_{\theta_i^{\text{old}}}(a_i|s)}{{< /katex >}} is the probability ratio, {{< katex inline=true >}}\hat{A}_i{{< /katex >}} is the advantage estimate, and {{< katex inline=true >}}\epsilon{{< /katex >}} is the clipping parameter.
+where {{< katex inline=true >}}\delta_{i,t} = r_{i,t} + \gamma V_\phi(h_{i,t+1}) - V_\phi(h_{i,t}){{< /katex >}} is the temporal difference error, {{< katex inline=true >}}\gamma{{< /katex >}} is the discount factor, {{< katex inline=true >}}\lambda{{< /katex >}} is the GAE parameter that balances bias and variance, and {{< katex inline=true >}}\mathcal{H}(\pi_{\theta_i}){{< /katex >}} is the entropy bonus with coefficient {{< katex inline=true >}}\beta{{< /katex >}}.
 
-**Separate Critic**: This architecture uses an independent model dedicated to value estimation, completely separate from the actor. It provides better separation of concerns between policy and value learning, allows different learning rates for actor and critic, and enables independent optimization schedules. However, it requires significantly more memory as it maintains two full models, and increases computational cost during training.
+CoMLRL supports two IPPO architectures for critic implementation:
 
-**Value Head**: This architecture attaches a small value prediction head directly to the actor model, sharing the base model's representations. It is more memory-efficient since only one base model is loaded, simpler to implement and maintain, and naturally aligns actor and critic representations. However, it tightly couples actor and critic updates, uses the same learning rate for both (unless explicitly separated), and may lead to interference between policy and value learning.
+- **Separate Critic**: Uses an independent model dedicated to value estimation, completely separate from the actor. It provides more stable training but requires longer training time and larger VRAM usage.
+
+- **Value Head**: Attaches a small value prediction head directly to the actor model, sharing the base model's representations. It reduces VRAM usage, but since both actor and critic share the same model, gradient errors can be amplified during training.
 
 {{% hint info %}}
 **IPPOConfig** provides parameters for configuring the PPO training:
@@ -66,6 +68,12 @@ where {{< katex inline=true >}}r_i(\theta_i) = \frac{\pi_{\theta_i}(a_i|s)}{\pi_
 - `model_config`: Model configuration dict (optional)
 - `wandb_config`: Configuration for Weights & Biases logging (optional)
 - `metrics_callback`: Optional callback for custom metrics
+{{% /hint %}}
 
+{{% hint warning %}}
+CoMLRL implements on-policy IPPO, which computes the policy gradient using the current policy's samples without importance sampling or ratio clipping.
+{{% /hint %}}
+
+{{% hint warning %}}
 The trainer enforces `per_device_train_batch_size=1` and currently only supports single-turn training (`num_turns=1`).
 {{% /hint %}}
