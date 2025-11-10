@@ -31,13 +31,13 @@ Cooperative MARL methods are grounded in the theory of <a href="https://www.fran
 
 {{% tab "Q&A" %}}
 
-- <em style="font-weight: 500; color: #a45b74;"> "Do you have test-time multi-agent methods?"</em>
+- <em style="font-weight: 500; color: #a45b74;"> "Do you include test-time multi-agent methods?"</em>
 
   No, this library primarily focuses on optimizing LLM collaboration by MARL. Designing multi-agent test-time interactions is not our strength. Users refer to <a href="https://github.com/microsoft/autogen">AutoGen</a>, <a href="https://langroid.github.io/langroid/">langroid</a>, <a href="https://github.com/TsinghuaC3I/MARTI">MARTI</a> for help.
 
 - <em style="font-weight: 500; color: #a45b74;"> "Do you support self-play or self-improvement by MARL?"</em>
 
-  No, we are just focusing LLM collaboration formalized as <a href="https://www.fransoliehoek.net/docs/OliehoekAmato16book.pdf">Dec-POMDP</a>. The algorithms in this library does not cover competitive or mixed-game scenarios. Users may refer to <a href="https://github.com/spiral-rl/spiral">Spiral</a> and <a href="https://github.com/vsubramaniam851/multiagent-ft/tree/main">Multi-Agent Fine-Tuning</a> for help.
+  No, we are just focusing LLM collaboration formalized as <a href="https://www.fransoliehoek.net/docs/OliehoekAmato16book.pdf">Dec-POMDP</a>. The algorithms in this library does not cover competitive or mixed-game scenarios. Users may refer to <a href="https://github.com/spiral-rl/spiral">Spiral</a> and <a href="https://github.com/vsubramaniam851/multiagent-ft/tree/main">MAFT</a> for help.
 
 - <em style="font-weight: 500; color: #a45b74;"> "Do you support distributed training?"</em>
 
@@ -49,7 +49,37 @@ Cooperative MARL methods are grounded in the theory of <a href="https://www.fran
 
 ## Features
 
-- We support various classical MARL trainers.
-- Examples of LLM collaboration is in the scenarios.
+- **Supports multiple MARL trainers to optimize LLM collaboration:**
+  - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFROCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/maremax.py).
+  - **_Multi-Agent PPO:_** Critic-based policy gradient methods, including [IPPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/ippo.py).
+    - Canonical PPO with a separate critic by setting `use_separate_critic=True`.
+    - Efficient training critic with value-head by setting `use_separate_critic=False` (default).
+- **Environments that simulate real-world tasks for training and evaluating LLM collaboration:**
+  - [**_Writing Collaboration_**](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
+    - [TLDR](https://huggingface.co/datasets/trl-lib/tldr) - Summarizing Reddit posts.
+    - [ArXiv](http://arxiv.org/abs/1905.00075) - Expanding abstracts into introductions.
+  - [**_Code Generation_**](https://github.com/OpenMLRL/LLM_Collab_Code_Generation): Generate code solutions for programming problems.
+    - [MBPP](https://arxiv.org/abs/2108.07732) - Mostly basic python problems.
+    - [HumanEval](https://arxiv.org/abs/2107.03374) - Handwritten evaluation problems
+    - [CoopHumanEval](https://huggingface.co/datasets/OpenMLRL/CoopHumanEval) - HumanEval with cooperative nature.
+  - [**_Code Completion_**](https://github.com/OpenMLRL/LLM_Collab_Code_Completion): Complete code snippets based on given contexts.
+    - [ClassEval](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Complete class-level code based on method stubs and docstrings.
 
 <img src="/img/demo.gif" width="800px;" alt=""/>
+
+## User Guide
+- [Installation]({{< ref "/docs/user-guide/installation" >}})
+- [Multi-Agent REINFORCE]({{< ref "/docs/user-guide/reinforce-finetuning" >}})
+- [Multi-Agent PPO]({{< ref "/docs/user-guide/ppo-finetuning" >}})
+- [Multi-Turn Training]({{< ref "/docs/user-guide/multi-turn" >}})
+
+## Environments
+- [Article Writing]({{< ref "/docs/env/writing-collaboration" >}})
+- [Code Completion]({{< ref "/docs/env/code-completion" >}})
+- [Code Generation]({{< ref "/docs/env/code-generation" >}})
+
+## Examples
+- [Quick Demo]({{< ref "/docs/examples/quick-demo" >}})
+
+## Development
+- [Contributing]({{< ref "/docs/dev/contributing" >}})

@@ -75,20 +75,6 @@ We support various MARL trainers for LLM collaboration:
 - **PPO Fine-Tuning**
   - **_IPPO:_** Independent PPO, credits to [IPPO<sup>1</sup>](https://arxiv.org/abs/2011.09533), [IPPO<sup>2</sup>](https://arxiv.org/abs/2103.01955), and [PPO](https://arxiv.org/abs/1707.06347).
 
-## Environments
-
-See examples of LLM collaboration in various domains:
-
-- [**Writing Collaboration**](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
-  - [**_TLDR_**](https://huggingface.co/datasets/trl-lib/tldr) - Summarizing Reddit posts.
-  - [**_ArXiv_**](http://arxiv.org/abs/1905.00075) - Expanding abstracts into introductions.
-- [**Code Generation**](https://github.com/OpenMLRL/LLM_Collab_Code_Generation): Generate code solutions for programming problems.
-  - [**_MBPP_**](https://arxiv.org/abs/2108.07732) - Mostly basic python problems.
-  - [**_HumanEval_**](https://arxiv.org/abs/2107.03374) - Handwritten evaluation problems
-  - [**_CoopHumanEval_**](https://huggingface.co/datasets/OpenMLRL/CoopHumanEval) - HumanEval with cooperative nature.
-- [**Code Completion**](https://github.com/OpenMLRL/LLM_Collab_Code_Completion): Complete code snippets based on given contexts.
-  - [**_ClassEval_**](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Complete class-level code based on method stubs and docstrings.
-
 ## Contributing
 
 We welcome contributions from the community! Please see [contributing guidelines](./CONTRIBUTING.md) on setting up a development environment and contribute.
