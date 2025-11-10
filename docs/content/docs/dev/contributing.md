@@ -11,7 +11,7 @@ Thanks for your interest in helping build CoMLRL! This guide walks you through r
 
 1. Fork the upstream repository.
 
-2. Git clone and synchronize with upstream.
+2. Clone your fork and synchronize with upstream:
     ```bash
       git clone https://github.com/<your-username>/CoMLRL.git
       cd CoMLRL
@@ -21,12 +21,12 @@ Thanks for your interest in helping build CoMLRL! This guide walks you through r
       git fetch upstream && git rebase upstream/main
     ```
 
-3. Implement new features or fix bugs, and updating documentation as needed.
+3. Implement new features or fix bugs, updating documentation as needed.
 
-4. Open pull requests to the upstream repository and wait for review.
+4. Open a pull request to the upstream repository and wait for review.
 
 {{% /steps %}}
 
 ## Sponsorship
 
-It takes a lot of resources to fine-tune LLMs with MARL. We would appreciate any sponsorship to help with the resource costs. Please reach out to the maintainers for sponsorship opportunities.
+Fine-tuning LLMs with MARL requires substantial computational resources. We appreciate any sponsorship to help cover these costs. Please reach out to the [maintainers](liu.shuo2@northeastern.edu) for sponsorship.
