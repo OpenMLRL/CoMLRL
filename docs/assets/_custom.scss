@@ -284,3 +284,24 @@ body {
   .omlrl-footer { display: none !important; }
   body { padding-bottom: 0; }
 }
+
+/* Lighter hint box backgrounds (15% lighter) */
+.book-hint.info {
+  background-color: #f4f9ff !important; /* lighter sky blue */
+  border-left-color: #a0d2f0 !important;
+}
+
+.book-hint.warning {
+  background-color: #fffcf0 !important; /* darker yellow/orange */
+  border-left-color: #ffe3a0 !important;
+}
+
+.book-hint.danger {
+  background-color: #fff7f8 !important; /* lighter red */
+  border-left-color: #ffd4dc !important;
+}
+
+.book-hint.success {
+  background-color: #f2faf3 !important; /* darker green */
+  border-left-color: #c2e4c5 !important;
+}
