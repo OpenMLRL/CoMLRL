@@ -65,4 +65,26 @@
       }
     }
   });
+
+  // Add copy buttons to code blocks
+  document.addEventListener('DOMContentLoaded', function() {
+    var codeBlocks = document.querySelectorAll('pre');
+    codeBlocks.forEach(function(codeBlock) {
+      var button = document.createElement('button');
+      button.className = 'copy-code-button';
+      button.textContent = 'Copy';
+      button.addEventListener('click', function() {
+        var code = codeBlock.querySelector('code');
+        var text = code.textContent;
+        navigator.clipboard.writeText(text).then(function() {
+          button.textContent = 'Copied!';
+          setTimeout(function() {
+            button.textContent = 'Copy';
+          }, 2000);
+        });
+      });
+      codeBlock.style.position = 'relative';
+      codeBlock.appendChild(button);
+    });
+  });
   </script>

@@ -2,45 +2,40 @@
 title: Contributing
 weight: 2
 ---
-## Overview
 
-Contributions are welcome. Please start with an issue or draft PR describing the change and motivation.
+Thanks for your interest in helping build CoMLRL! This guide walks you through reporting issues, contributing changes, and keeping the codebase healthy.
 
-## How to contribute
+## Development Workflow
 
-- Fork the repo and create a feature branch.
-- Keep changes focused; add tests where practical.
-- Open a PR early for feedback.
+1.
+2. **Implement your change**
+   - Keep commits focused; document behaviour changes.
+   - Update READMEs, examples, or tutorials when you alter user-facing workflows.
+3. **Validate locally**
+   - Run tests and pre-commit hooks before pushing.
+   - For training scripts, run a smoke test (small dataset/few steps) and capture key metrics for your PR description.
+4. **Open a pull request**
+   - Reference related issues or discussions.
+   - Summarize changes, note test evidence, and list follow-up items if any.
+   - Expect collaborative review; feedback improves quality.
 
-## Code style
 
-- Follow PEP8; run `pre-commit` hooks locally if possible.
-- Keep docs and examples up to date when APIs change.
+{{% steps %}}
 
-## Testing
+1. Fork the upstream repository.
 
-- Add minimal tests for new functionality.
-- Prefer deterministic examples and seeds.
+2. Git clone and synchronize with upstream.
+    ```bash
+      git clone https://github.com/<your-username>/CoMLRL.git
+      cd CoMLRL
+      git remote add upstream https://github.com/OpenMLRL/CoMLRL.git
+      git fetch upstream
+      git checkout -b feature/<short-description> upstream/main
+      git fetch upstream && git rebase upstream/main
+    ```
 
-## Pre-commit
+3. Implement new features or fix bugs, and updating documentation as needed.
 
-- Configure and run `pre-commit` to format/lint.
+4. Open pull requests to the upstream repository.
 
-## PR checklist
-
-- Description and motivation
-- Tests (or rationale if not applicable)
-- Docs updated
-
-## Local setup
-
-Use a fresh environment and install in editable mode:
-
-```bash
-cd CoMLRL
-conda create -n comlrl python=3.10
-conda activate comlrl
-pip install -r requirements.txt # torch need to be compatible
-pip install -r requirements.txt  # ensure torch wheel is compatible
-pip install -e .
-```
+{{% /steps %}}
