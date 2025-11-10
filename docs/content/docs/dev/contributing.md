@@ -5,20 +5,7 @@ weight: 2
 
 Thanks for your interest in helping build CoMLRL! This guide walks you through reporting issues, contributing changes, and keeping the codebase healthy.
 
-## Development Workflow
-
-1.
-2. **Implement your change**
-   - Keep commits focused; document behaviour changes.
-   - Update READMEs, examples, or tutorials when you alter user-facing workflows.
-3. **Validate locally**
-   - Run tests and pre-commit hooks before pushing.
-   - For training scripts, run a smoke test (small dataset/few steps) and capture key metrics for your PR description.
-4. **Open a pull request**
-   - Reference related issues or discussions.
-   - Summarize changes, note test evidence, and list follow-up items if any.
-   - Expect collaborative review; feedback improves quality.
-
+## Development
 
 {{% steps %}}
 
@@ -36,6 +23,10 @@ Thanks for your interest in helping build CoMLRL! This guide walks you through r
 
 3. Implement new features or fix bugs, and updating documentation as needed.
 
-4. Open pull requests to the upstream repository.
+4. Open pull requests to the upstream repository and wait for review.
 
 {{% /steps %}}
+
+## Sponsorship
+
+It takes a lot of resources to fine-tune LLMs with MARL. We would appreciate any sponsorship to help with the resource costs. Please reach out to the maintainers for sponsorship opportunities.
