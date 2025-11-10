@@ -32,24 +32,51 @@ pip install -e .
 
 ## Features
 
-- **MARL trainers to optimize LLM collaboration:**
-  - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFROCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/maremax.py).
-    - Aligned individual response joint with `joint_mode='align'`
-    - Memory-efficient cross joint with `joint_mode='cross'`.
-  - **_Multi-Agent PPO:_** Critic-based policy gradient methods, including [IPPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/ippo.py).
-    - Canonical IPPO with a separate critic with `use_separate_critic=True`
-    - Memory-efficient critic with value-head over actor with `use_separate_critic=False`.
-- **Environments that simulate real-world tasks for training and evaluating LLM collaboration:**
-  - [**_Writing Collaboration_**](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
-    - [TLDR](https://huggingface.co/datasets/trl-lib/tldr) - Summarizing Reddit posts.
-    - [ArXiv](http://arxiv.org/abs/1905.00075) - Expanding abstracts into introductions.
-  - [**_Code Generation_**](https://github.com/OpenMLRL/LLM_Collab_Code_Generation): Generate code solutions for programming problems.
-    - [MBPP](https://arxiv.org/abs/2108.07732) - Mostly basic python problems.
-    - [HumanEval](https://arxiv.org/abs/2107.03374) - Handwritten evaluation problems
-    - [CoopHumanEval](https://huggingface.co/datasets/OpenMLRL/CoopHumanEval) - HumanEval with cooperative nature.
-  - [**_Code Completion_**](https://github.com/OpenMLRL/LLM_Collab_Code_Completion): Complete code snippets based on given contexts.
-    - [ClassEval](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Complete class-level code based on method stubs and docstrings.
-
+<ul>
+  <li><strong>MARL trainers to optimize LLM collaboration:</strong>
+    <ul>
+      <li><strong><em>Multi-Agent REINFORCE</em>:</strong> Critic-free policy gradient methods, including
+        <a href="https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/mareinforce.py">MAREINFROCE</a>,
+        <a href="https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/magrpo.py">MAGRPO</a>,
+        <a href="https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/marloo.py">MARLOO</a>,
+        <a href="https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/maremax.py">MAREMAX</a>.
+        <ul>
+          <li>Aligned individual response joint with <code>joint_mode='align'</code>.</li>
+          <li>Memory-efficient cross joint with <code>joint_mode='cross'</code>.</li>
+        </ul>
+      </li>
+      <li><strong><em>Multi-Agent PPO:</em></strong> Critic-based policy gradient methods, including
+        <a href="https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/ippo.py">IPPO</a>.
+        <ul>
+          <li>Canonical IPPO with a separate critic with <code>use_separate_critic=True</code>.</li>
+          <li>Memory-efficient critic with value-head over actor with <code>use_separate_critic=False</code>.</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li><strong>Environments that simulate real-world tasks for training and evaluating LLM collaboration:</strong>
+    <ul>
+      <li><a href="https://github.com/OpenMLRL/LLM_Collab_Writing"><strong><em>Writing Collaboration</em></strong></a>: Multiple LLM agents collaborate on processing articles.
+        <ul>
+          <li><a href="https://huggingface.co/datasets/trl-lib/tldr">TLDR</a> - Summarizing Reddit posts.</li>
+          <li><a href="http://arxiv.org/abs/1905.00075">ArXiv</a> - Expanding abstracts into introductions.</li>
+        </ul>
+      </li>
+      <li><a href="https://github.com/OpenMLRL/LLM_Collab_Code_Generation"><strong><em>Code Generation</em></strong></a>: Generate code solutions for programming problems.
+        <ul>
+          <li><a href="https://arxiv.org/abs/2108.07732">MBPP</a> - Mostly basic python problems.</li>
+          <li><a href="https://arxiv.org/abs/2107.03374">HumanEval</a> - Handwritten evaluation problems</li>
+          <li><a href="https://huggingface.co/datasets/OpenMLRL/CoopHumanEval">CoopHumanEval</a> - HumanEval with cooperative nature.</li>
+        </ul>
+      </li>
+      <li><a href="https://github.com/OpenMLRL/LLM_Collab_Code_Completion"><strong><em>Code Completion</em></strong></a>: Complete code snippets based on given contexts.
+        <ul>
+          <li><a href="https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation">ClassEval</a> - Complete class-level code based on method stubs and docstrings.</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
 
 <img src="docs/assets/demo.gif" width="600px;" alt=""/>
 
