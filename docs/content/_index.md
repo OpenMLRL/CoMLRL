@@ -49,7 +49,7 @@ Cooperative MARL methods are grounded in the theory of <a href="https://www.fran
 
 ## Features
 
-- **Supports multiple MARL trainers to optimize LLM collaboration:**
+- **MARL trainers to optimize LLM collaboration:**
   - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFROCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/maremax.py).
     - Aligned individual response joint with `joint_mode='align'` and memory-efficient cross joint with `joint_mode='cross'`.
   - **_Multi-Agent PPO:_** Critic-based policy gradient methods, including [IPPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/ippo.py).
