@@ -99,6 +99,18 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
   color: $menu-item-color;
 }
 
+/* Add spacing between top-level sections */
+.book-menu .book-menu-content > ul > li,
+.book-menu .book-menu-content nav > ul > li {
+  margin-bottom: 2rem !important;
+}
+
+/* Remove margin from last section */
+.book-menu .book-menu-content > ul > li:last-child,
+.book-menu .book-menu-content nav > ul > li:last-child {
+  margin-bottom: 0rem !important;
+}
+
 /* Normalize nested list indent so Trainer matches other sections */
 .book-menu .book-menu-content nav > ul > li > ul {
   padding-inline-start: 0 !important; /* theme sets 1.5em; zero for consistency */
@@ -185,6 +197,8 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
 /* Search box keyboard shortcut hint */
 .book-search {
   position: relative;
+  margin-top: 1rem !important;
+  margin-bottom: 2rem !important;
 }
 
 .book-search input {

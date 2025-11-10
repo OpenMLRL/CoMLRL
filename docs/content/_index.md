@@ -10,12 +10,14 @@ title: ""
 
 {{% tab "LLM Collaboration" %}}
 
-LLM collaboration refers to the problems where LLM agents cooperatively solve tasks in multi-agent systems. The tasks are specified in natural language and provided to the each agent as a prompt, and the agent generates a response synchronously based on its individual instructions. The set of these responses jointly forms a solution. Most tasks cannot be resolved in one turn. Users and systems validate the solutions to provide additional requirements or suggestions for LLMs. These components also serve as part
+LLM collaboration refers to the problems where LLM agents cooperatively solve tasks in multi-agent systems. The tasks are specified in language and provided to the each agent as a prompt, and the agent generates a response synchronously based on its individual instructions. The set of all these responses jointly forms a solution. Most tasks cannot be resolved in one turn. Users and systems validate the solutions to provide additional requirements or suggestions for LLMs. These components serve as part
 of the environment for LLM collaboration, whose states may change based on the agents’ outputs. The updates are embedded into prompts for subsequent turns. This iterative process continues until the task is completed or a turn limit is reached.
 
 {{% /tab %}}
 
 {{% tab "MARL Fine-Tuning" %}}
+
+Many studies have explored LLM-based multi-agent systems for completing tasks with multiple interacting agents. However, most of these models are pretrained separately and are not specifically optimized for coordination, which limits their performance. In addition, designing effective prompts remains difficult and uncleared. Cooperative MARL methods have been extensively studied, which optimizes a team of agents towards a shared objective. They naturally fits LLM collaboration and motivates us to bring advances from well-established MARL community to LLM-based multi-agent systems.
 
 {{% /tab %}}
 
@@ -24,6 +26,10 @@ of the environment for LLM collaboration, whose states may change based on the a
 {{% /tab %}}
 
 {{% tab "Q&A" %}}
+
+<em style="font-weight: 500; color: #a45b74;"> "Do you have multi-agent inference-time interaction?"</em>
+
+This project focuses on LLM collaboration and does not cover competitive or mixed-game scenarios.
 
 {{% /tab %}}
 
