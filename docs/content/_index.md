@@ -25,19 +25,23 @@ Many studies have explored LLM-based multi-agent systems for completing tasks wi
 
 {{% tab "Decentralization" %}}
 
-Cooperative MARL methods are grounded in the theory of Dec-POMDP. The agents are executing decentralizedly, which has many advantages. First, unlike knowledge distillation, pruning, or quantization, it accelerates LLM inference without incurring information loss. Moreover, decentralization reduces the computational and memory burden of maintaining long-context dependencies and conducting joint decision-making within a single model. By assigning specific subtasks to individual agents, the system achieves more modular, efficient, and lightweight reasoning. In addition, effective cooperation among small local language models can offer a safe and cost-efficient solution for offline and edge intelligence.
+Cooperative MARL methods are grounded in the theory of <a href="https://www.fransoliehoek.net/docs/OliehoekAmato16book.pdf">Dec-POMDP</a>. The agents are executing decentralizedly, which has many advantages. Unlike knowledge distillation, pruning, or quantization, it accelerates LLM inference without incurring information loss. Moreover, decentralization reduces the computational and memory burden of maintaining long-context dependencies and conducting joint decision-making within a single model. By assigning specific subtasks to individual agents, the system achieves more modular, efficient, and lightweight reasoning. In addition, effective cooperation among small local language models can offer a safe and cost-efficient solution for offline and edge intelligence.
 
 {{% /tab %}}
 
 {{% tab "Q&A" %}}
 
-- <em style="font-weight: 500; color: #a45b74;"> "Do you have multi-agent test-time methods?"</em>
+- <em style="font-weight: 500; color: #a45b74;"> "Do you have test-time multi-agent methods?"</em>
 
-  This project primarily focuses on optimizing LLM collaboration by MARL fine-tuning, multi-agent test-time cooperation is not our strength. We recommend users refer to AutoGen, LangChain, MARTI.
+  No, this library primarily focuses on optimizing LLM collaboration by MARL. Designing multi-agent test-time interactions is not our strength. Users refer to <a href="https://github.com/microsoft/autogen">AutoGen</a>, <a href="https://langroid.github.io/langroid/">langroid</a>, <a href="https://github.com/TsinghuaC3I/MARTI">MARTI</a> for help.
 
-- <em style="font-weight: 500; color: #a45b74;"> "Do you have multi-agent self-play?"</em>
+- <em style="font-weight: 500; color: #a45b74;"> "Do you support self-play or self-improvement by MARL?"</em>
 
-  This project does not cover competitive or mixed-game scenarios.
+  No, we are just focusing LLM collaboration formalized as <a href="https://www.fransoliehoek.net/docs/OliehoekAmato16book.pdf">Dec-POMDP</a>. The algorithms in this library does not cover competitive or mixed-game scenarios. Users may refer to <a href="https://github.com/spiral-rl/spiral">Spiral</a> and <a href="https://github.com/vsubramaniam851/multiagent-ft/tree/main">Multi-Agent Fine-Tuning</a> for help.
+
+- <em style="font-weight: 500; color: #a45b74;"> "Do you support distributed training?"</em>
+
+  No, the current propose of this library is to show the effectiveness of MARL in proof of concepts using small-scale LLMs. Distributed training for large-scale LLMs will be supported in the future.
 
 {{% /tab %}}
 
