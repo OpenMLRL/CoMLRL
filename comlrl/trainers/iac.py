@@ -496,12 +496,14 @@ class IACTrainer:
             full_attention_mask = torch.ones_like(sequences, device=self.device)
 
             with torch.no_grad():
-                logprob, actor_value = self._policy_eval(
+                # Policy log-prob uses full prompt+response; value uses prompt only.
+                logprob, _ = self._policy_eval(
                     actor_model,
                     sequences,
                     full_attention_mask,
                     prompt_len,
                     response_len,
+                    output_values=False,
                 )
                 if self.args.use_separate_critic:
                     critic_model = self.critic_models[agent_idx]
@@ -515,11 +517,9 @@ class IACTrainer:
                         response_len,
                     )
                 else:
-                    if actor_value is None:
-                        raise RuntimeError(
-                            "Shared value head expected a value prediction."
-                        )
-                    value = actor_value
+                    value = self._value_on_prompt_only(
+                        actor_model, sequences, full_attention_mask, prompt_len
+                    )
 
             prompts.append(prompt)
             completions.append(completion_text)
@@ -601,11 +601,38 @@ class IACTrainer:
         )
 
         value = None
-        if output_values and outputs.values is not None:
-            last_index = prompt_len + response_len - 1
-            value = outputs.values[:, last_index]
+        if output_values:
+            # When value is requested, compute it on the prompt only to avoid leaking
+            # action tokens into the baseline.
+            value = self._value_on_prompt_only(
+                actor_model, sequences, attention_mask, prompt_len
+            )
 
         return logprob, value
+
+    def _value_on_prompt_only(
+        self,
+        model: CausalLMWithValueHead,
+        sequences: torch.Tensor,
+        attention_mask: torch.Tensor,
+        prompt_len: int,
+    ) -> torch.Tensor:
+        """
+        Compute the value baseline using only the prompt tokens, excluding actions.
+        """
+        prompt_ids = sequences[:, :prompt_len]
+        prompt_mask = (
+            attention_mask[:, :prompt_len] if attention_mask is not None else None
+        )
+        outputs = model(
+            input_ids=prompt_ids,
+            attention_mask=prompt_mask,
+            output_values=True,
+        )
+        if outputs.values is None:
+            raise RuntimeError("Value head is missing for value computation.")
+        last_index = prompt_len - 1
+        return outputs.values[:, last_index]
 
     def _critic_eval(
         self,
@@ -615,13 +642,10 @@ class IACTrainer:
         prompt_len: int,
         response_len: int,
     ) -> torch.Tensor:
-        outputs = critic_model(
-            input_ids=sequences,
-            attention_mask=attention_mask,
-            output_values=True,
+        # Only use the prompt portion for value estimation in separate critic mode.
+        return self._value_on_prompt_only(
+            critic_model, sequences, attention_mask, prompt_len
         )
-        last_index = prompt_len + response_len - 1
-        return outputs.values[:, last_index]
 
     def _compute_sequence_stats(
         self,
@@ -709,13 +733,14 @@ class IACTrainer:
             sequences = sample.full_input_ids.to(self.device).unsqueeze(0)
             attention_mask = sample.attention_mask.to(self.device).unsqueeze(0)
 
-            logprob, actor_value = self._policy_eval(
+            # Policy log-prob uses full sequence; value uses prompt-only baseline.
+            logprob, _ = self._policy_eval(
                 actor_model,
                 sequences,
                 attention_mask,
                 sample.prompt_len,
                 sample.response_len,
-                output_values=not self.args.use_separate_critic,
+                output_values=False,
             )
             if self.args.use_separate_critic:
                 if critic_model is None:
@@ -728,9 +753,9 @@ class IACTrainer:
                     sample.response_len,
                 )
             else:
-                if actor_value is None:
-                    raise RuntimeError("Value head missing for shared actor-critic.")
-                value = actor_value
+                value = self._value_on_prompt_only(
+                    actor_model, sequences, attention_mask, sample.prompt_len
+                )
 
             old_value = sample.old_value.to(self.device, dtype=value.dtype)
             old_logprob = sample.old_logprob.to(self.device)
