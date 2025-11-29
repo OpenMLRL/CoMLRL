@@ -560,11 +560,19 @@ class IACTrainer:
             prompts.append(prompt)
 
         rewards = self._call_reward_func(prompts, completions_per_agent)
+        num_agents = self.args.num_agents
+
+        # Normalize rewards to a per-agent x per-sample matrix for downstream use.
         if len(rewards) == 1:
-            rewards = rewards * num_ret
-        if len(rewards) != num_ret:
+            rewards_matrix = [[rewards[0]] * num_ret for _ in range(num_agents)]
+        elif len(rewards) == num_ret:
+            rewards_matrix = [list(rewards) for _ in range(num_agents)]
+        elif len(rewards) == num_agents:
+            rewards_matrix = [[rewards[a]] * num_ret for a in range(num_agents)]
+        else:
             raise ValueError(
-                "Reward function must return 1 or num_return_sequences values."
+                "Reward function must return 1 value, num_return_sequences values, "
+                "or num_agents values."
             )
 
         rollouts: List[RolloutSample] = []
@@ -576,7 +584,7 @@ class IACTrainer:
                 resp_len = data["response_lens"][i]
                 logprob = data["logprobs"][i]
                 value = data["values"][i]
-                reward = float(self.reward_processor(rewards[i]))
+                reward = float(rewards_matrix[agent_idx][i])
                 reward_tensor = torch.tensor(
                     [reward], device=self.device, dtype=torch.float32
                 )
