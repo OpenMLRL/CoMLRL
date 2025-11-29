@@ -3,6 +3,7 @@ import random
 from functools import partial
 from typing import List
 
+import torch
 import wandb
 from datasets import load_dataset
 from transformers import AutoTokenizer
@@ -84,6 +85,24 @@ def build_prompt_formatters(tokenizer):
     return [make_formatter(concise), make_formatter(detailed)]
 
 
+def value_variance_metrics(rollouts) -> dict[str, float]:
+    """Compute variance of the critic value estimates across collected rollouts."""
+    if not rollouts:
+        return {}
+    values = []
+    for sample in rollouts:
+        val = sample.old_value
+        if torch.is_tensor(val):
+            values.append(val.view(-1).float())
+        else:
+            values.append(torch.tensor([float(val)]))
+    stacked = torch.cat(values) if values else torch.tensor([])
+    variance = (
+        torch.var(stacked, unbiased=False).item() if stacked.numel() > 1 else 0.0
+    )
+    return {"value_variance": float(variance)}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Train IAC (multigen) and MAGRPO on TL;DR length ratio with aligned sampling."
@@ -107,23 +126,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ratio-max", type=float, default=3.0)
     parser.add_argument("--short-target-chars", type=int, default=220)
     parser.add_argument("--short-target-scale", type=float, default=None)
-    parser.add_argument("--wandb-project", type=str, default="iac")
-    parser.add_argument("--wandb-entity", type=str, default="OpenMLRL")
-    parser.add_argument("--wandb-run-name", type=str, default="compare-grpo")
+    parser.add_argument("--wandb-project", type=str, default="compare")
+    parser.add_argument("--wandb-entity", type=str, default="openmlrl")
+    parser.add_argument("--wandb-run-name", type=str, default=None)
     parser.add_argument("--wandb-project-iac", type=str, default=None)
     parser.add_argument("--wandb-entity-iac", type=str, default=None)
-    parser.add_argument("--wandb-run-name-iac", type=str, default=None)
+    parser.add_argument("--wandb-run-name-iac", type=str, default="iac")
     parser.add_argument("--wandb-project-magrpo", type=str, default=None)
     parser.add_argument("--wandb-entity-magrpo", type=str, default=None)
-    parser.add_argument("--wandb-run-name-magrpo", type=str, default=None)
+    parser.add_argument("--wandb-run-name-magrpo", type=str, default="magrpo")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
 
 def _set_seed(seed: int) -> None:
     random.seed(seed)
-    import torch
-
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
@@ -150,18 +167,12 @@ def main() -> None:
 
     formatters = build_prompt_formatters(tokenizer)
 
-    wandb.init(
-        project=args.wandb_project,
-        entity=args.wandb_entity,
-        name=args.wandb_run_name,
-        config=vars(args),
-    )
-
     iac_trainer = IACTrainer(
         model=args.model_name,
         tokenizer=tokenizer,
         reward_func=reward_fn,
         formatters=formatters,
+        metrics_callback=value_variance_metrics,
         args=IACConfig(
             output_dir=f"{args.output_dir}/iac",
             actor_learning_rate=args.actor_learning_rate,
@@ -182,11 +193,23 @@ def main() -> None:
         wandb_config={
             "project": args.wandb_project_iac or args.wandb_project,
             "entity": args.wandb_entity_iac or args.wandb_entity,
-            "name": args.wandb_run_name_iac or "compare-grpo-iac",
+            "name": args.wandb_run_name_iac or "iac",
+            "config_sections": {
+                "dataset": {"name": "trl-lib/tldr", "size": args.dataset_size},
+                "trainer": {
+                    "num_generations": args.num_generations,
+                    "max_new_tokens": args.max_new_tokens,
+                    "temperature": args.temperature,
+                    "top_p": args.top_p,
+                    "top_k": args.top_k,
+                },
+            },
         },
     )
     iac_trainer.train()
     iac_trainer.save_model(f"{args.output_dir}/iac")
+    if wandb.run is not None:
+        wandb.finish()
 
     magrpo_trainer = MAGRPOTrainer(
         model=args.model_name,
@@ -211,13 +234,24 @@ def main() -> None:
         wandb_config={
             "project": args.wandb_project_magrpo or args.wandb_project,
             "entity": args.wandb_entity_magrpo or args.wandb_entity,
-            "name": args.wandb_run_name_magrpo or "compare-grpo-magrpo",
+            "name": args.wandb_run_name_magrpo or "magrpo",
+            "config_sections": {
+                "dataset": {"name": "trl-lib/tldr", "size": args.dataset_size},
+                "trainer": {
+                    "num_generations": args.num_generations,
+                    "max_new_tokens": args.max_new_tokens,
+                    "temperature": args.temperature,
+                    "top_p": args.top_p,
+                    "top_k": args.top_k,
+                },
+            },
         },
     )
     magrpo_trainer.train()
     magrpo_trainer.save_model(f"{args.output_dir}/magrpo")
 
-    wandb.finish()
+    if wandb.run is not None:
+        wandb.finish()
 
 
 if __name__ == "__main__":

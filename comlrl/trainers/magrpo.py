@@ -712,6 +712,9 @@ class MAGRPOTrainer:
                 [] for _ in range(self.args.num_turns)
             ]  # immediate rewards
             epoch_turn_returns = [[] for _ in range(self.args.num_turns)]  # returns
+            epoch_turn_value_variances = [
+                [] for _ in range(self.args.num_turns)
+            ]  # variance of per-node returns used as value estimates
 
             dl = self.get_train_dataloader()
             if not getattr(self, "verbose", True):
@@ -743,23 +746,30 @@ class MAGRPOTrainer:
                 )
 
                 # Log per-batch metrics once (aggregate across turns)
-                if self.wandb_initialized and isinstance(batch_stats, dict):
+                if isinstance(batch_stats, dict):
                     batch_log: Dict[str, Any] = {}
                     n_turns = max(1, int(self.args.num_turns))
                     for t in range(n_turns):
                         stats = batch_stats.get(t) or {}
-                        prefix = f"turn_{t + 1}/"
-                        if "batch_mean_reward" in stats:
-                            batch_log[prefix + "batch_mean_reward"] = stats[
-                                "batch_mean_reward"
-                            ]
-                        if "batch_expected_return" in stats:
-                            batch_log[prefix + "batch_expected_return"] = stats[
-                                "batch_expected_return"
-                            ]
-                        # No per-function reward splitting in single reward mode
+                        if "value_variance" in stats:
+                            epoch_turn_value_variances[t].append(stats["value_variance"])
+                        if self.wandb_initialized:
+                            prefix = f"turn_{t + 1}/"
+                            if "batch_mean_reward" in stats:
+                                batch_log[prefix + "batch_mean_reward"] = stats[
+                                    "batch_mean_reward"
+                                ]
+                            if "batch_expected_return" in stats:
+                                batch_log[prefix + "batch_expected_return"] = stats[
+                                    "batch_expected_return"
+                                ]
+                            if "value_variance" in stats:
+                                batch_log[prefix + "value_variance"] = stats[
+                                    "value_variance"
+                                ]
+                            # No per-function reward splitting in single reward mode
 
-                    if batch_log:
+                    if self.wandb_initialized and batch_log:
                         wandb.log(batch_log)
 
             # Log per-turn epoch averages inline (avoid custom system/* metrics)
@@ -775,6 +785,12 @@ class MAGRPOTrainer:
                         epoch_log[f"turn_{turn_idx + 1}/epoch_avg_return"] = float(
                             np.mean(epoch_turn_returns[turn_idx])
                         )
+                    if epoch_turn_value_variances and epoch_turn_value_variances[
+                        turn_idx
+                    ]:
+                        epoch_log[
+                            f"turn_{turn_idx + 1}/epoch_value_variance"
+                        ] = float(np.mean(epoch_turn_value_variances[turn_idx]))
                 if epoch_log:
                     wandb.log(epoch_log)
 
@@ -802,6 +818,7 @@ class MAGRPOTrainer:
         # Per-turn accumulators for batch-level summaries
         turn_reward_node_means: List[List[float]] = [[] for _ in range(num_turns)]
         turn_return_node_means: List[List[float]] = [[] for _ in range(num_turns)]
+        turn_return_variances: List[List[float]] = [[] for _ in range(num_turns)]
         # No per-function accumulation in single reward mode
         turn_node_counts: List[int] = [0 for _ in range(num_turns)]
 
@@ -1000,6 +1017,8 @@ class MAGRPOTrainer:
                     mean_ret = float(np.mean(vals))
                     epoch_turn_returns[t].append(mean_ret)
                     turn_return_node_means[t].append(mean_ret)
+                    var_ret = float(np.var(vals)) if len(vals) > 1 else 0.0
+                    turn_return_variances[t].append(var_ret)
             for ch in node["children"]:
                 record_turn_returns(ch)
 
@@ -1059,6 +1078,8 @@ class MAGRPOTrainer:
                 stats["batch_expected_return"] = float(
                     np.mean(turn_return_node_means[t])
                 )
+            if turn_return_variances[t]:
+                stats["value_variance"] = float(np.mean(turn_return_variances[t]))
             # No per-reward-function means; use a single reward function
             batch_stats[t] = stats
 

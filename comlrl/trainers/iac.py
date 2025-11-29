@@ -530,6 +530,17 @@ class IACTrainer:
                         actor_model, sequences, full_attention_mask, prompt_len
                     )
 
+            # Log per-history variance across the k generations before buffering.
+            try:
+                if value is not None and value.numel() > 1:
+                    var = torch.var(value.detach(), unbiased=False).item()
+                else:
+                    var = 0.0
+                tagged = self._tag_metrics({"value_variance": float(var)}, agent_idx)
+                self._log_metrics(tagged)
+            except Exception:
+                pass
+
             logprobs = []
             for seq, attn, resp_len in zip(
                 sequences, full_attention_mask, response_lens

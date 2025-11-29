@@ -102,8 +102,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--short-target-chars", type=int, default=220)
     parser.add_argument("--short-target-scale", type=float, default=None)
     parser.add_argument("--wandb-project", type=str, default="compare")
-    parser.add_argument("--wandb-entity", type=str, default="OpenMLRL")
-    parser.add_argument("--wandb-run-name", type=str, default="compare-magrpo")
+    parser.add_argument("--wandb-entity", type=str, default="openmlrl")
+    parser.add_argument("--wandb-run-name", type=str, default="magrpo")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -136,13 +136,6 @@ def main() -> None:
         short_scale=args.short_target_scale,
     )
 
-    wandb.init(
-        project=args.wandb_project,
-        entity=args.wandb_entity,
-        name=args.wandb_run_name,
-        config=vars(args),
-    )
-
     magrpo_args = MAGRPOConfig(
         output_dir=args.output_dir,
         per_device_train_batch_size=1,
@@ -168,12 +161,23 @@ def main() -> None:
             "project": args.wandb_project,
             "entity": args.wandb_entity,
             "name": args.wandb_run_name,
+            "config_sections": {
+                "dataset": {"name": "trl-lib/tldr", "size": args.dataset_size},
+                "trainer": {
+                    "num_generations": args.num_generations,
+                    "max_new_tokens": args.max_new_tokens,
+                    "temperature": args.temperature,
+                    "top_p": args.top_p,
+                    "top_k": args.top_k,
+                },
+            },
         },
     )
 
     trainer.train()
     trainer.save_model(args.output_dir)
-    wandb.finish()
+    if wandb.run is not None:
+        wandb.finish()
 
 
 if __name__ == "__main__":
