@@ -110,6 +110,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wandb-project", type=str, default="iac")
     parser.add_argument("--wandb-entity", type=str, default="OpenMLRL")
     parser.add_argument("--wandb-run-name", type=str, default="compare-grpo")
+    parser.add_argument("--wandb-project-iac", type=str, default=None)
+    parser.add_argument("--wandb-entity-iac", type=str, default=None)
+    parser.add_argument("--wandb-run-name-iac", type=str, default=None)
+    parser.add_argument("--wandb-project-magrpo", type=str, default=None)
+    parser.add_argument("--wandb-entity-magrpo", type=str, default=None)
+    parser.add_argument("--wandb-run-name-magrpo", type=str, default=None)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -176,6 +182,11 @@ def main() -> None:
         formatters=formatters,
         args=iac_config,
         train_dataset=dataset,
+        wandb_config={
+            "project": args.wandb_project_iac or args.wandb_project,
+            "entity": args.wandb_entity_iac or args.wandb_entity,
+            "name": args.wandb_run_name_iac or "compare-grpo-iac",
+        },
     )
     iac_trainer.train()
     iac_trainer.save_model(f"{args.output_dir}/iac")
@@ -203,6 +214,11 @@ def main() -> None:
         formatters=formatters,
         args=magrpo_args,
         train_dataset=dataset,
+        wandb_config={
+            "project": args.wandb_project_magrpo or args.wandb_project,
+            "entity": args.wandb_entity_magrpo or args.wandb_entity,
+            "name": args.wandb_run_name_magrpo or "compare-grpo-magrpo",
+        },
     )
     magrpo_trainer.train()
     magrpo_trainer.save_model(f"{args.output_dir}/magrpo")
