@@ -6,6 +6,7 @@ from typing import List
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
+from comlrl.trainers.iac import IACConfig, IACTrainer
 from comlrl.trainers.magrpo import MAGRPOConfig, MAGRPOTrainer
 
 
@@ -84,10 +85,10 @@ def build_prompt_formatters(tokenizer):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train MAGRPO on TL;DR length ratio (IAC baseline: tldr-len-ratio.py)."
+        description="Train IAC (multigen) and MAGRPO on TL;DR length ratio with aligned sampling."
     )
     parser.add_argument("--model-name", type=str, default="Qwen/Qwen2.5-0.5B")
-    parser.add_argument("--output-dir", type=str, default="./magrpo_tldr")
+    parser.add_argument("--output-dir", type=str, default="./iac_magrpo_multigen")
     parser.add_argument("--dataset-size", type=int, default=128)
     parser.add_argument("--num-train-epochs", type=int, default=10)
     parser.add_argument("--num-generations", type=int, default=4)
@@ -95,14 +96,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--top-p", type=float, default=0.6)
     parser.add_argument("--top-k", type=int, default=None)
-    parser.add_argument("--learning-rate", type=float, default=1e-6)
+    parser.add_argument("--actor-learning-rate", type=float, default=1e-6)
+    parser.add_argument("--critic-learning-rate", type=float, default=1e-6)
+    parser.add_argument("--value-loss-coef", type=float, default=0.5)
+    parser.add_argument("--rollout-buffer-size", type=int, default=8)
+    parser.add_argument("--mini-batch-size", type=int, default=4)
+    parser.add_argument("--ac-epochs", type=int, default=1)
     parser.add_argument("--ratio-min", type=float, default=2.0)
     parser.add_argument("--ratio-max", type=float, default=3.0)
     parser.add_argument("--short-target-chars", type=int, default=220)
     parser.add_argument("--short-target-scale", type=float, default=None)
-    parser.add_argument("--wandb-project", type=str, default="magrpo-tldr")
-    parser.add_argument("--wandb-entity", type=str, default=None)
-    parser.add_argument("--wandb-run-name", type=str, default="magrpo_tldr")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -135,38 +138,63 @@ def main() -> None:
         short_scale=args.short_target_scale,
     )
 
-    wandb_config = {
-        "entity": args.wandb_entity,
-        "project": args.wandb_project,
-        "name": args.wandb_run_name,
-    }
+    formatters = build_prompt_formatters(tokenizer)
 
+    # IAC multigen (aligned sampling count)
+    iac_config = IACConfig(
+        output_dir=f"{args.output_dir}/iac",
+        actor_learning_rate=args.actor_learning_rate,
+        critic_learning_rate=args.critic_learning_rate,
+        value_loss_coef=args.value_loss_coef,
+        rollout_buffer_size=args.rollout_buffer_size,
+        mini_batch_size=args.mini_batch_size,
+        ac_epochs=args.ac_epochs,
+        max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        num_train_epochs=args.num_train_epochs,
+        num_agents=2,
+        num_return_sequences=args.num_generations,
+    )
+
+    iac_trainer = IACTrainer(
+        model=args.model_name,
+        tokenizer=tokenizer,
+        reward_func=reward_fn,
+        formatters=formatters,
+        args=iac_config,
+        train_dataset=dataset,
+    )
+    iac_trainer.train()
+    iac_trainer.save_model(f"{args.output_dir}/iac")
+
+    # MAGRPO with the same sampling count
     magrpo_args = MAGRPOConfig(
-        output_dir=args.output_dir,
+        output_dir=f"{args.output_dir}/magrpo",
         per_device_train_batch_size=1,
-        learning_rate=args.learning_rate,
+        learning_rate=args.actor_learning_rate,
         num_train_epochs=args.num_train_epochs,
         num_generations=args.num_generations,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_p=args.top_p,
+        top_k=args.top_k,
         eval_interval=0,
         num_turns=1,
     )
 
-    trainer = MAGRPOTrainer(
+    magrpo_trainer = MAGRPOTrainer(
         model=args.model_name,
         num_agents=2,
         tokenizer=tokenizer,
         reward_func=reward_fn,
-        formatters=build_prompt_formatters(tokenizer),
+        formatters=formatters,
         args=magrpo_args,
         train_dataset=dataset,
-        wandb_config=wandb_config,
     )
-
-    trainer.train()
-    trainer.save_model(args.output_dir)
+    magrpo_trainer.train()
+    magrpo_trainer.save_model(f"{args.output_dir}/magrpo")
 
 
 if __name__ == "__main__":
