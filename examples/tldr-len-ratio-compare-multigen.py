@@ -3,6 +3,7 @@ import random
 from functools import partial
 from typing import List
 
+import wandb
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
@@ -106,6 +107,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ratio-max", type=float, default=3.0)
     parser.add_argument("--short-target-chars", type=int, default=220)
     parser.add_argument("--short-target-scale", type=float, default=None)
+    parser.add_argument("--wandb-project", type=str, default="iac")
+    parser.add_argument("--wandb-entity", type=str, default="OpenMLRL")
+    parser.add_argument("--wandb-run-name", type=str, default="compare-grpo")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -139,6 +143,13 @@ def main() -> None:
     )
 
     formatters = build_prompt_formatters(tokenizer)
+
+    wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity,
+        name=args.wandb_run_name,
+        config=vars(args),
+    )
 
     # IAC multigen (aligned sampling count)
     iac_config = IACConfig(
@@ -195,6 +206,7 @@ def main() -> None:
     )
     magrpo_trainer.train()
     magrpo_trainer.save_model(f"{args.output_dir}/magrpo")
+    wandb.finish()
 
 
 if __name__ == "__main__":

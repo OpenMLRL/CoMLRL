@@ -3,6 +3,7 @@ import random
 from functools import partial
 from typing import List
 
+import wandb
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
@@ -100,9 +101,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ratio-max", type=float, default=3.0)
     parser.add_argument("--short-target-chars", type=int, default=220)
     parser.add_argument("--short-target-scale", type=float, default=None)
-    parser.add_argument("--wandb-project", type=str, default="magrpo-tldr")
-    parser.add_argument("--wandb-entity", type=str, default=None)
-    parser.add_argument("--wandb-run-name", type=str, default="magrpo_tldr")
+    parser.add_argument("--wandb-project", type=str, default="iac")
+    parser.add_argument("--wandb-entity", type=str, default="OpenMLRL")
+    parser.add_argument("--wandb-run-name", type=str, default="compare-magrpo")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -135,11 +136,12 @@ def main() -> None:
         short_scale=args.short_target_scale,
     )
 
-    wandb_config = {
-        "entity": args.wandb_entity,
-        "project": args.wandb_project,
-        "name": args.wandb_run_name,
-    }
+    wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity,
+        name=args.wandb_run_name,
+        config=vars(args),
+    )
 
     magrpo_args = MAGRPOConfig(
         output_dir=args.output_dir,
@@ -162,11 +164,16 @@ def main() -> None:
         formatters=build_prompt_formatters(tokenizer),
         args=magrpo_args,
         train_dataset=dataset,
-        wandb_config=wandb_config,
+        wandb_config={
+            "project": args.wandb_project,
+            "entity": args.wandb_entity,
+            "name": args.wandb_run_name,
+        },
     )
 
     trainer.train()
     trainer.save_model(args.output_dir)
+    wandb.finish()
 
 
 if __name__ == "__main__":
