@@ -61,6 +61,7 @@ class IACConfig:
     num_agents: int = 1
     num_turns: int = 1
     reward_norm_eps: float = 1e-3
+    num_return_sequences: int = 1
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
@@ -79,6 +80,8 @@ class IACConfig:
             )
         if self.critic_learning_rate is None:
             self.critic_learning_rate = self.actor_learning_rate
+        if self.num_return_sequences < 1:
+            raise ValueError("num_return_sequences must be >= 1.")
 
 
 @dataclass
@@ -451,6 +454,9 @@ class IACTrainer:
             return processed * num_agents
         if len(processed) == num_agents:
             return processed
+        num_ret = int(getattr(self.args, "num_return_sequences", 1))
+        if len(processed) == num_ret:
+            return processed
         raise ValueError(
             f"Reward function must return either 1 or {num_agents} values per prompt for multi-agent IAC."
         )
@@ -460,8 +466,9 @@ class IACTrainer:
     # --------------------------------------------------------------------- #
     def _collect_rollouts(self, item: Dict[str, Any]) -> List[RolloutSample]:
         prompts: List[str] = []
-        completions: List[str] = []
+        completions_per_agent: List[List[str]] = []
         rollout_data: List[Dict[str, Any]] = []
+        num_ret = int(getattr(self.args, "num_return_sequences", 1))
 
         for agent_idx, actor_model in enumerate(self.actor_models):
             prompt = self._format_prompt(item, agent_idx)
@@ -478,6 +485,8 @@ class IACTrainer:
                 "temperature": self.args.temperature,
                 "top_p": self.args.top_p,
                 "pad_token_id": self.args.pad_token_id,
+                "num_return_sequences": num_ret,
+                "num_beams": 1,
             }
             if self.args.top_k is not None:
                 generation_kwargs["top_k"] = self.args.top_k
@@ -487,93 +496,105 @@ class IACTrainer:
                 raise RuntimeError("Model produced an empty completion during rollout.")
 
             response_tokens = sequences[:, prompt_len:]
-            completion_text = self.tokenizer.decode(
-                response_tokens[0], skip_special_tokens=True
-            )
-            response_len = response_tokens.size(1)
-            response_char_length = len(completion_text)
+            pad_id = self.args.pad_token_id
+            response_lens: List[int] = []
+            completion_texts: List[str] = []
+            for seq in response_tokens:
+                if pad_id is not None:
+                    pad_positions = (seq == pad_id).nonzero(as_tuple=False)
+                    resp_len = (
+                        pad_positions[0].item()
+                        if pad_positions.numel() > 0
+                        else seq.size(0)
+                    )
+                else:
+                    resp_len = seq.size(0)
+                response_lens.append(resp_len)
+                completion_texts.append(
+                    self.tokenizer.decode(seq[:resp_len], skip_special_tokens=True)
+                )
 
+            completions_per_agent.append(completion_texts)
             full_attention_mask = torch.ones_like(sequences, device=self.device)
 
             with torch.no_grad():
-                # Policy log-prob uses full prompt+response; value uses prompt only.
-                logprob, _ = self._policy_eval(
+                value = self._value_on_prompt_only(
+                    actor_model, sequences, full_attention_mask, prompt_len
+                )
+
+            logprobs = []
+            for seq, attn, resp_len in zip(
+                sequences, full_attention_mask, response_lens
+            ):
+                lp, _ = self._policy_eval(
                     actor_model,
-                    sequences,
-                    full_attention_mask,
+                    seq.unsqueeze(0),
+                    attn.unsqueeze(0),
                     prompt_len,
-                    response_len,
+                    resp_len,
                     output_values=False,
                 )
-                if self.args.use_separate_critic:
-                    critic_model = self.critic_models[agent_idx]
-                    if critic_model is None:
-                        raise RuntimeError("Critic model missing for agent.")
-                    value = self._critic_eval(
-                        critic_model,
-                        sequences,
-                        full_attention_mask,
-                        prompt_len,
-                        response_len,
-                    )
-                else:
-                    value = self._value_on_prompt_only(
-                        actor_model, sequences, full_attention_mask, prompt_len
-                    )
+                logprobs.append(lp.squeeze(0))
 
-            prompts.append(prompt)
-            completions.append(completion_text)
             rollout_data.append(
                 {
                     "agent_idx": agent_idx,
                     "prompt": prompt,
-                    "completion": completion_text,
+                    "prompt_len": prompt_len,
                     "sequences": sequences,
                     "attention_mask": full_attention_mask,
-                    "prompt_len": prompt_len,
-                    "response_len": response_len,
-                    "logprob": logprob,
-                    "value": value,
-                    "char_length": response_char_length,
+                    "response_lens": response_lens,
+                    "logprobs": logprobs,
+                    "values": value,
+                    "char_lengths": [len(txt) for txt in completion_texts],
                 }
             )
+            prompts.append(prompt)
 
-        completion_lists = [[text] for text in completions]
-        rewards = self._call_reward_func(prompts, completion_lists)
-
-        if len(rewards) != len(rollout_data):
-            if len(rewards) == 1:
-                rewards = rewards * len(rollout_data)
-            else:
-                raise ValueError(
-                    "Reward function returned unexpected number of values."
-                )
+        rewards = self._call_reward_func(prompts, completions_per_agent)
+        if len(rewards) == 1:
+            rewards = rewards * num_ret
+        if len(rewards) != num_ret:
+            raise ValueError(
+                "Reward function must return 1 or num_return_sequences values."
+            )
 
         rollouts: List[RolloutSample] = []
-        for data, reward in zip(rollout_data, rewards):
-            reward_tensor = torch.tensor(
-                [reward], device=self.device, dtype=torch.float32
-            )
-            returns = reward_tensor.clone()
-            advantage = returns - data["value"]
-
-            rollouts.append(
-                RolloutSample(
-                    agent_idx=data["agent_idx"],
-                    prompt=data["prompt"],
-                    completion=data["completion"],
-                    full_input_ids=data["sequences"].squeeze(0).detach().cpu(),
-                    attention_mask=data["attention_mask"].squeeze(0).detach().cpu(),
-                    prompt_len=data["prompt_len"],
-                    response_len=data["response_len"],
-                    old_logprob=data["logprob"].detach().cpu(),
-                    old_value=data["value"].detach().cpu(),
-                    reward=reward_tensor.detach().cpu(),
-                    returns=returns.detach().cpu(),
-                    advantage=advantage.detach().cpu(),
-                    metadata={"char_length": data["char_length"]},
+        for data in rollout_data:
+            agent_idx = data["agent_idx"]
+            for i in range(num_ret):
+                seq = data["sequences"][i]
+                attn = data["attention_mask"][i]
+                resp_len = data["response_lens"][i]
+                logprob = data["logprobs"][i]
+                value = data["values"][i]
+                reward = float(self.reward_processor(rewards[i]))
+                reward_tensor = torch.tensor(
+                    [reward], device=self.device, dtype=torch.float32
                 )
-            )
+                returns = reward_tensor.clone()
+                advantage = returns - value
+
+                rollouts.append(
+                    RolloutSample(
+                        agent_idx=agent_idx,
+                        prompt=data["prompt"],
+                        completion=self.tokenizer.decode(
+                            seq[data["prompt_len"] : data["prompt_len"] + resp_len],
+                            skip_special_tokens=True,
+                        ),
+                        full_input_ids=seq.detach().cpu(),
+                        attention_mask=attn.detach().cpu(),
+                        prompt_len=data["prompt_len"],
+                        response_len=resp_len,
+                        old_logprob=logprob.detach().cpu(),
+                        old_value=value.detach().cpu(),
+                        reward=reward_tensor.detach().cpu(),
+                        returns=returns.detach().cpu(),
+                        advantage=advantage.detach().cpu(),
+                        metadata={"char_length": data["char_lengths"][i]},
+                    )
+                )
 
         return rollouts
 
