@@ -518,9 +518,17 @@ class IACTrainer:
             full_attention_mask = torch.ones_like(sequences, device=self.device)
 
             with torch.no_grad():
-                value = self._value_on_prompt_only(
-                    actor_model, sequences, full_attention_mask, prompt_len
-                )
+                if self.args.use_separate_critic:
+                    critic_model = self.critic_models[agent_idx]
+                    if critic_model is None:
+                        raise RuntimeError("Critic model missing for agent.")
+                    value = self._value_on_prompt_only(
+                        critic_model, sequences, full_attention_mask, prompt_len
+                    )
+                else:
+                    value = self._value_on_prompt_only(
+                        actor_model, sequences, full_attention_mask, prompt_len
+                    )
 
             logprobs = []
             for seq, attn, resp_len in zip(

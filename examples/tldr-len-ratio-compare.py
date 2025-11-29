@@ -101,7 +101,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ratio-max", type=float, default=3.0)
     parser.add_argument("--short-target-chars", type=int, default=220)
     parser.add_argument("--short-target-scale", type=float, default=None)
-    parser.add_argument("--wandb-project", type=str, default="iac")
+    parser.add_argument("--wandb-project", type=str, default="compare")
     parser.add_argument("--wandb-entity", type=str, default="OpenMLRL")
     parser.add_argument("--wandb-run-name", type=str, default="compare-magrpo")
     parser.add_argument("--seed", type=int, default=42)
