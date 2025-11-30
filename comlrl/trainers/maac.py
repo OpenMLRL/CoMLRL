@@ -646,29 +646,29 @@ class MAACTrainer:
             policy_loss = -(logprob * advantage)
             value_error = (returns - value) ** 2
 
-        actor_losses.append(policy_loss)
-        value_losses.append(value_error)
+            actor_losses.append(policy_loss)
+            value_losses.append(value_error)
 
-    actor_loss = torch.stack(actor_losses).mean()
-    value_loss = torch.stack(value_losses).mean()
-    value_total = self.args.value_loss_coef * value_loss
-    if not torch.isfinite(actor_loss) or not torch.isfinite(value_loss):
-        raise FloatingPointError("Non-finite loss detected.")
+        actor_loss = torch.stack(actor_losses).mean()
+        value_loss = torch.stack(value_losses).mean()
+        value_total = self.args.value_loss_coef * value_loss
+        if not torch.isfinite(actor_loss) or not torch.isfinite(value_loss):
+            raise FloatingPointError("Non-finite loss detected.")
 
-    actor_optimizer.zero_grad()
-    actor_loss.backward()
+        actor_optimizer.zero_grad()
+        actor_loss.backward()
         torch.nn.utils.clip_grad_norm_(actor_model.parameters(), self.args.max_grad_norm)
         actor_optimizer.step()
 
-    self.critic_optimizer.zero_grad()
-    value_total.backward()
-    torch.nn.utils.clip_grad_norm_(self.critic_model.parameters(), self.args.max_grad_norm)
-    self.critic_optimizer.step()
+        self.critic_optimizer.zero_grad()
+        value_total.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic_model.parameters(), self.args.max_grad_norm)
+        self.critic_optimizer.step()
 
-    return {
-        "policy_loss": actor_loss.detach().item(),
-        "value_loss": value_loss.detach().item(),
-    }
+        return {
+            "policy_loss": actor_loss.detach().item(),
+            "value_loss": value_loss.detach().item(),
+        }
 
     def _update(self, agent_idx: int, rollouts: List[RolloutSample]) -> Dict[str, float]:
         if not rollouts:
