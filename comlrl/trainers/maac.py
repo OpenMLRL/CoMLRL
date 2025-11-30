@@ -494,25 +494,38 @@ class MAACTrainer:
     # Advantage prep
     # ------------------------------------------------------------------ #
     def _normalize_returns(self, rollouts: List[RolloutSample]) -> None:
-        if not rollouts:
+        returns = torch.stack([sample.returns for sample in rollouts]).float()
+        returns = returns.view(len(rollouts), -1)
+        flat = returns.view(-1)
+        if flat.numel() < 2:
             return
-        returns = torch.stack([sample.returns.view(-1)[0] for sample in rollouts])
-        mean = returns.mean()
-        std = returns.std(unbiased=False)
-        std = std if torch.isfinite(std) and std > 0 else torch.tensor(1.0)
-        for sample in rollouts:
-            norm = (sample.returns - mean) / (std + self.args.reward_norm_eps)
-            sample.returns = norm.detach().clone()
-            sample.advantage = norm - sample.old_value.to(norm.dtype)
+
+        mean = flat.mean()
+        std = flat.std(unbiased=False)
+        if std < self.args.reward_norm_eps:
+            return
+        normalized = (returns - mean) / std
+
+        for sample, norm_value in zip(rollouts, normalized):
+            norm_tensor = (
+                norm_value.view_as(sample.returns)
+                .to(sample.returns.dtype)
+                .detach()
+                .clone()
+            )
+            sample.returns = norm_tensor
+            sample.advantage = norm_tensor - sample.old_value.to(norm_tensor.dtype)
             sample.normalized_advantage = None
 
     def _prepare_advantages(self, rollouts: List[RolloutSample]) -> None:
         if not rollouts:
             return
         self._normalize_returns(rollouts)
+
         advantages = torch.stack(
             [sample.advantage.to(torch.float32).view(-1)[0] for sample in rollouts]
         )
+
         if self.args.advantage_normalization and advantages.numel() > 1:
             mean = advantages.mean()
             std = advantages.std(unbiased=False).clamp(min=1e-6)
@@ -520,7 +533,7 @@ class MAACTrainer:
                 sample.normalized_advantage = (sample.advantage - mean) / std
         else:
             for sample in rollouts:
-                sample.normalized_advantage = sample.advantage
+                sample.normalized_advantage = sample.advantage.clone()
 
     # ------------------------------------------------------------------ #
     # Losses

@@ -95,6 +95,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-train-epochs", type=int, default=10)
     parser.add_argument("--num-generations", type=int, default=4)
     parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument("--temperature", type=float, default=0.6)
+    parser.add_argument("--top-p", type=float, default=0.6)
+    parser.add_argument("--top-k", type=int, default=None)
     parser.add_argument("--actor-learning-rate", type=float, default=1e-6)
     parser.add_argument("--critic-learning-rate", type=float, default=1e-6)
     parser.add_argument("--value-loss-coef", type=float, default=0.5)
@@ -139,9 +142,7 @@ def main() -> None:
     )
 
     use_sampling = args.num_generations > 1
-    sampling_temperature = 0.7
-    sampling_top_p = 0.9
-    sampling_top_k = 50 if use_sampling else None
+    top_k = args.top_k if use_sampling else None
 
     formatters = build_prompt_formatters(tokenizer)
 
@@ -160,9 +161,9 @@ def main() -> None:
             mini_batch_size=args.mini_batch_size,
             ac_epochs=args.ac_epochs,
             max_new_tokens=args.max_new_tokens,
-            temperature=sampling_temperature,
-            top_p=sampling_top_p,
-            top_k=sampling_top_k,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=top_k,
             do_sample=use_sampling,
             num_train_epochs=args.num_train_epochs,
             num_agents=2,
@@ -179,6 +180,9 @@ def main() -> None:
                 "trainer": {
                     "num_generations": args.num_generations,
                     "max_new_tokens": args.max_new_tokens,
+                    "temperature": args.temperature,
+                    "top_p": args.top_p,
+                    "top_k": args.top_k,
                 },
             },
         },
