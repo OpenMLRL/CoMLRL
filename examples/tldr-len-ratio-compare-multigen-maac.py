@@ -188,7 +188,6 @@ def main() -> None:
         },
     )
     trainer.train()
-    trainer.save_model(args.output_dir)
 
     if wandb.run is not None:
         wandb.finish()

@@ -204,7 +204,6 @@ def main() -> None:
         },
     )
     iac_trainer.train()
-    iac_trainer.save_model(f"{args.output_dir}/iac")
     if wandb.run is not None:
         wandb.finish()
 
