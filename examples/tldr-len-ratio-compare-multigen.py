@@ -113,9 +113,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-train-epochs", type=int, default=10)
     parser.add_argument("--num-generations", type=int, default=4)
     parser.add_argument("--max-new-tokens", type=int, default=256)
-    parser.add_argument("--temperature", type=float, default=0.6)
-    parser.add_argument("--top-p", type=float, default=0.6)
-    parser.add_argument("--top-k", type=int, default=None)
     parser.add_argument("--actor-learning-rate", type=float, default=1e-6)
     parser.add_argument("--critic-learning-rate", type=float, default=1e-6)
     parser.add_argument("--value-loss-coef", type=float, default=0.5)
@@ -182,9 +179,6 @@ def main() -> None:
             mini_batch_size=args.mini_batch_size,
             ac_epochs=args.ac_epochs,
             max_new_tokens=args.max_new_tokens,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            top_k=args.top_k,
             num_train_epochs=args.num_train_epochs,
             num_agents=2,
             num_return_sequences=args.num_generations,
@@ -199,9 +193,6 @@ def main() -> None:
                 "trainer": {
                     "num_generations": args.num_generations,
                     "max_new_tokens": args.max_new_tokens,
-                    "temperature": args.temperature,
-                    "top_p": args.top_p,
-                    "top_k": args.top_k,
                 },
             },
         },
@@ -224,9 +215,6 @@ def main() -> None:
             num_train_epochs=args.num_train_epochs,
             num_generations=args.num_generations,
             max_new_tokens=args.max_new_tokens,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            top_k=args.top_k,
             eval_interval=0,
             num_turns=1,
         ),
@@ -240,9 +228,6 @@ def main() -> None:
                 "trainer": {
                     "num_generations": args.num_generations,
                     "max_new_tokens": args.max_new_tokens,
-                    "temperature": args.temperature,
-                    "top_p": args.top_p,
-                    "top_k": args.top_k,
                 },
             },
         },
