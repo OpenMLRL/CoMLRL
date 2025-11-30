@@ -9,7 +9,6 @@ from datasets import load_dataset
 from transformers import AutoTokenizer
 
 from comlrl.trainers.iac import IACConfig, IACTrainer
-from comlrl.trainers.magrpo import MAGRPOConfig, MAGRPOTrainer
 
 
 def dual_length_reward(
@@ -105,10 +104,10 @@ def value_variance_metrics(rollouts) -> dict[str, float]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train IAC (multigen) and MAGRPO on TL;DR length ratio with aligned sampling."
+        description="Train IAC (multi-generation) on TL;DR length ratio with aligned sampling."
     )
     parser.add_argument("--model-name", type=str, default="Qwen/Qwen2.5-0.5B")
-    parser.add_argument("--output-dir", type=str, default="./iac_magrpo_multigen")
+    parser.add_argument("--output-dir", type=str, default="./iac_multigen")
     parser.add_argument("--dataset-size", type=int, default=128)
     parser.add_argument("--num-train-epochs", type=int, default=10)
     parser.add_argument("--num-generations", type=int, default=4)
@@ -125,13 +124,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--short-target-scale", type=float, default=None)
     parser.add_argument("--wandb-project", type=str, default="compare")
     parser.add_argument("--wandb-entity", type=str, default="openmlrl")
-    parser.add_argument("--wandb-run-name", type=str, default=None)
-    parser.add_argument("--wandb-project-iac", type=str, default=None)
-    parser.add_argument("--wandb-entity-iac", type=str, default=None)
-    parser.add_argument("--wandb-run-name-iac", type=str, default="iac")
-    parser.add_argument("--wandb-project-magrpo", type=str, default=None)
-    parser.add_argument("--wandb-entity-magrpo", type=str, default=None)
-    parser.add_argument("--wandb-run-name-magrpo", type=str, default="magrpo")
+    parser.add_argument("--wandb-run-name", type=str, default="iac")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -162,6 +155,13 @@ def main() -> None:
         short_scale=args.short_target_scale,
     )
 
+    # Match MAGRPO compare sampling: sample when generating multiple sequences,
+    # using temperature/top_p defaults and a fixed top_k of 50.
+    use_sampling = args.num_generations > 1
+    sampling_temperature = 0.7
+    sampling_top_p = 0.9
+    sampling_top_k = 50 if use_sampling else None
+
     formatters = build_prompt_formatters(tokenizer)
 
     iac_trainer = IACTrainer(
@@ -179,15 +179,19 @@ def main() -> None:
             mini_batch_size=args.mini_batch_size,
             ac_epochs=args.ac_epochs,
             max_new_tokens=args.max_new_tokens,
+            temperature=sampling_temperature,
+            top_p=sampling_top_p,
+            top_k=sampling_top_k,
+            do_sample=use_sampling,
             num_train_epochs=args.num_train_epochs,
             num_agents=2,
             num_return_sequences=args.num_generations,
         ),
         train_dataset=dataset,
         wandb_config={
-            "project": args.wandb_project_iac or args.wandb_project,
-            "entity": args.wandb_entity_iac or args.wandb_entity,
-            "name": args.wandb_run_name_iac or "iac",
+            "project": args.wandb_project,
+            "entity": args.wandb_entity,
+            "name": args.wandb_run_name,
             "config_sections": {
                 "dataset": {"name": "trl-lib/tldr", "size": args.dataset_size},
                 "trainer": {
@@ -199,42 +203,6 @@ def main() -> None:
     )
     iac_trainer.train()
     iac_trainer.save_model(f"{args.output_dir}/iac")
-    if wandb.run is not None:
-        wandb.finish()
-
-    magrpo_trainer = MAGRPOTrainer(
-        model=args.model_name,
-        num_agents=2,
-        tokenizer=tokenizer,
-        reward_func=reward_fn,
-        formatters=formatters,
-        args=MAGRPOConfig(
-            output_dir=f"{args.output_dir}/magrpo",
-            per_device_train_batch_size=1,
-            learning_rate=args.actor_learning_rate,
-            num_train_epochs=args.num_train_epochs,
-            num_generations=args.num_generations,
-            max_new_tokens=args.max_new_tokens,
-            eval_interval=0,
-            num_turns=1,
-        ),
-        train_dataset=dataset,
-        wandb_config={
-            "project": args.wandb_project_magrpo or args.wandb_project,
-            "entity": args.wandb_entity_magrpo or args.wandb_entity,
-            "name": args.wandb_run_name_magrpo or "magrpo",
-            "config_sections": {
-                "dataset": {"name": "trl-lib/tldr", "size": args.dataset_size},
-                "trainer": {
-                    "num_generations": args.num_generations,
-                    "max_new_tokens": args.max_new_tokens,
-                },
-            },
-        },
-    )
-    magrpo_trainer.train()
-    magrpo_trainer.save_model(f"{args.output_dir}/magrpo")
-
     if wandb.run is not None:
         wandb.finish()
 
