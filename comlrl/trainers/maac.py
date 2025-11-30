@@ -676,6 +676,15 @@ class MAACTrainer:
         self._prepare_advantages(rollouts)
         random.shuffle(rollouts)
         metrics = defaultdict(list)
+
+        values = torch.stack(
+            [sample.old_value.view(-1)[0] for sample in rollouts]
+        ).float()
+        if values.numel() > 1 and torch.isfinite(values).all():
+            metrics["value_variance"].append(
+                float(torch.var(values, unbiased=False).item())
+            )
+
         for start in range(0, len(rollouts), self.args.mini_batch_size):
             batch = rollouts[start : start + self.args.mini_batch_size]
             step_metrics = self._ac_step(agent_idx, batch)
