@@ -684,6 +684,9 @@ class MAACTrainer:
             metrics["value_variance"].append(
                 float(torch.var(values, unbiased=False).item())
             )
+        rewards = torch.stack([sample.reward.view(-1)[0] for sample in rollouts]).float()
+        if rewards.numel() > 0 and torch.isfinite(rewards).all():
+            metrics["reward_mean"].append(float(rewards.mean().item()))
 
         for start in range(0, len(rollouts), self.args.mini_batch_size):
             batch = rollouts[start : start + self.args.mini_batch_size]
@@ -717,8 +720,9 @@ class MAACTrainer:
                             metrics = self._update(agent_idx, buffer)
                             buffer.clear()
                             tagged = self._tag_metrics(metrics, agent_idx)
-                            self._log_metrics(tagged)
-                            self.global_step += 1
+                            if agent_idx == 0:
+                                self._log_metrics(tagged)
+                                self.global_step += 1
                             for key, value in tagged.items():
                                 epoch_metrics[key].append(value)
 
@@ -728,8 +732,9 @@ class MAACTrainer:
                 metrics = self._update(agent_idx, buffer)
                 buffer.clear()
                 tagged = self._tag_metrics(metrics, agent_idx)
-                self._log_metrics(tagged)
-                self.global_step += 1
+                if agent_idx == 0:
+                    self._log_metrics(tagged)
+                    self.global_step += 1
                 for key, value in tagged.items():
                     epoch_metrics[key].append(value)
 
@@ -747,9 +752,8 @@ class MAACTrainer:
     def _tag_metrics(
         self, metrics: Dict[str, float], agent_idx: int
     ) -> Dict[str, float]:
-        if self.args.num_agents == 1:
-            return metrics
-        return {f"agent_{agent_idx}/{key}": value for key, value in metrics.items()}
+        # Keep shared logging (no agent prefix) to mirror compare scripts.
+        return metrics
 
     def _log_metrics(self, metrics: Dict[str, float]) -> None:
         if not metrics:
