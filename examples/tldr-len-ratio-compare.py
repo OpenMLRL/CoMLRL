@@ -93,6 +93,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-train-epochs", type=int, default=10)
     parser.add_argument("--num-generations", type=int, default=4)
     parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument("--temperature", type=float, default=0.6)
+    parser.add_argument("--top-p", type=float, default=0.6)
+    parser.add_argument("--top-k", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=1e-6)
     parser.add_argument("--ratio-min", type=float, default=2.0)
     parser.add_argument("--ratio-max", type=float, default=3.0)
@@ -140,6 +143,8 @@ def main() -> None:
         num_train_epochs=args.num_train_epochs,
         num_generations=args.num_generations,
         max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
+        top_p=args.top_p,
         eval_interval=0,
         num_turns=1,
     )
@@ -161,6 +166,9 @@ def main() -> None:
                 "trainer": {
                     "num_generations": args.num_generations,
                     "max_new_tokens": args.max_new_tokens,
+                    "temperature": args.temperature,
+                    "top_p": args.top_p,
+                    "top_k": args.top_k,
                 },
             },
         },
