@@ -720,9 +720,8 @@ class MAACTrainer:
                             metrics = self._update(agent_idx, buffer)
                             buffer.clear()
                             tagged = self._tag_metrics(metrics, agent_idx)
-                            if agent_idx == 0:
-                                self._log_metrics(tagged)
-                                self.global_step += 1
+                            self._log_metrics(tagged)
+                            self.global_step += 1
                             for key, value in tagged.items():
                                 epoch_metrics[key].append(value)
 
@@ -732,9 +731,8 @@ class MAACTrainer:
                 metrics = self._update(agent_idx, buffer)
                 buffer.clear()
                 tagged = self._tag_metrics(metrics, agent_idx)
-                if agent_idx == 0:
-                    self._log_metrics(tagged)
-                    self.global_step += 1
+                self._log_metrics(tagged)
+                self.global_step += 1
                 for key, value in tagged.items():
                     epoch_metrics[key].append(value)
 
