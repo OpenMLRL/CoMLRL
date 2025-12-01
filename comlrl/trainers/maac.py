@@ -752,8 +752,7 @@ class MAACTrainer:
     def _tag_metrics(
         self, metrics: Dict[str, float], agent_idx: int
     ) -> Dict[str, float]:
-        # Keep shared logging (no agent prefix) to mirror compare scripts.
-        return metrics
+        return {f"turn_1/{key}": value for key, value in metrics.items()}
 
     def _log_metrics(self, metrics: Dict[str, float]) -> None:
         if not metrics:
