@@ -752,7 +752,9 @@ class MAGRPOTrainer:
                     for t in range(n_turns):
                         stats = batch_stats.get(t) or {}
                         if "value_variance" in stats:
-                            epoch_turn_value_variances[t].append(stats["value_variance"])
+                            epoch_turn_value_variances[t].append(
+                                stats["value_variance"]
+                            )
                         if self.wandb_initialized:
                             prefix = f"turn_{t + 1}/"
                             if "batch_mean_reward" in stats:
@@ -785,12 +787,13 @@ class MAGRPOTrainer:
                         epoch_log[f"turn_{turn_idx + 1}/epoch_avg_return"] = float(
                             np.mean(epoch_turn_returns[turn_idx])
                         )
-                    if epoch_turn_value_variances and epoch_turn_value_variances[
-                        turn_idx
-                    ]:
-                        epoch_log[
-                            f"turn_{turn_idx + 1}/epoch_value_variance"
-                        ] = float(np.mean(epoch_turn_value_variances[turn_idx]))
+                    if (
+                        epoch_turn_value_variances
+                        and epoch_turn_value_variances[turn_idx]
+                    ):
+                        epoch_log[f"turn_{turn_idx + 1}/epoch_value_variance"] = float(
+                            np.mean(epoch_turn_value_variances[turn_idx])
+                        )
                 if epoch_log:
                     wandb.log(epoch_log)
 
