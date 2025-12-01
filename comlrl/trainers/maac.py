@@ -192,7 +192,9 @@ class MAACTrainer:
             raise ValueError("model must be provided for MAAC.")
         model_kwargs = self.model_config.get("model_kwargs", {})
         base = (
-            model if isinstance(model, PreTrainedModel) else AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
+            model
+            if isinstance(model, PreTrainedModel)
+            else AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
         )
         return CausalLMWithValueHead(
             base_model=base, attach_value_head=False, value_head_hidden_dim=None
@@ -203,7 +205,9 @@ class MAACTrainer:
     ) -> CausalLMWithValueHead:
         model_kwargs = self.model_config.get("critic_model_kwargs", {})
         base = (
-            model if isinstance(model, PreTrainedModel) else AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
+            model
+            if isinstance(model, PreTrainedModel)
+            else AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
         )
         return CausalLMWithValueHead(
             base_model=base,
@@ -370,7 +374,9 @@ class MAACTrainer:
             if pad_id is not None:
                 pad_positions = (seq == pad_id).nonzero(as_tuple=False)
                 resp_len = (
-                    pad_positions[0].item() if pad_positions.numel() > 0 else seq.size(0)
+                    pad_positions[0].item()
+                    if pad_positions.numel() > 0
+                    else seq.size(0)
                 )
             else:
                 resp_len = seq.size(0)
@@ -573,7 +579,9 @@ class MAACTrainer:
         prompt_len: int,
     ) -> torch.Tensor:
         prompt_ids = sequences[:, :prompt_len]
-        prompt_mask = attention_mask[:, :prompt_len] if attention_mask is not None else None
+        prompt_mask = (
+            attention_mask[:, :prompt_len] if attention_mask is not None else None
+        )
         outputs = model(
             input_ids=prompt_ids,
             attention_mask=prompt_mask,
@@ -637,7 +645,9 @@ class MAACTrainer:
             returns = sample.returns.to(self.device, dtype=value.dtype)
 
             if not torch.isfinite(logprob).all():
-                raise FloatingPointError("Encountered non-finite logprob during AC step.")
+                raise FloatingPointError(
+                    "Encountered non-finite logprob during AC step."
+                )
             if not torch.isfinite(advantage).all():
                 raise FloatingPointError("Advantage contains non-finite values.")
             if not torch.isfinite(returns).all():
@@ -657,12 +667,16 @@ class MAACTrainer:
 
         actor_optimizer.zero_grad()
         actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(actor_model.parameters(), self.args.max_grad_norm)
+        torch.nn.utils.clip_grad_norm_(
+            actor_model.parameters(), self.args.max_grad_norm
+        )
         actor_optimizer.step()
 
         self.critic_optimizer.zero_grad()
         value_total.backward()
-        torch.nn.utils.clip_grad_norm_(self.critic_model.parameters(), self.args.max_grad_norm)
+        torch.nn.utils.clip_grad_norm_(
+            self.critic_model.parameters(), self.args.max_grad_norm
+        )
         self.critic_optimizer.step()
 
         return {
@@ -670,7 +684,9 @@ class MAACTrainer:
             "value_loss": value_loss.detach().item(),
         }
 
-    def _update(self, agent_idx: int, rollouts: List[RolloutSample]) -> Dict[str, float]:
+    def _update(
+        self, agent_idx: int, rollouts: List[RolloutSample]
+    ) -> Dict[str, float]:
         if not rollouts:
             return {}
         self._prepare_advantages(rollouts)
@@ -684,7 +700,9 @@ class MAACTrainer:
             metrics["value_variance"].append(
                 float(torch.var(values, unbiased=False).item())
             )
-        rewards = torch.stack([sample.reward.view(-1)[0] for sample in rollouts]).float()
+        rewards = torch.stack(
+            [sample.reward.view(-1)[0] for sample in rollouts]
+        ).float()
         if rewards.numel() > 0 and torch.isfinite(rewards).all():
             metrics["reward_mean"].append(float(rewards.mean().item()))
 
@@ -717,24 +735,12 @@ class MAACTrainer:
                         buffer = self.rollout_buffers[agent_idx]
                         buffer.append(sample)
                         if len(buffer) >= self.args.rollout_buffer_size:
-                            metrics = self._update(agent_idx, buffer)
-                            buffer.clear()
-                            tagged = self._tag_metrics(metrics, agent_idx)
-                            self._log_metrics(tagged)
-                            self.global_step += 1
-                            for key, value in tagged.items():
-                                epoch_metrics[key].append(value)
+                            self._process_buffer(agent_idx, buffer, epoch_metrics)
 
             for agent_idx, buffer in enumerate(self.rollout_buffers):
                 if not buffer:
                     continue
-                metrics = self._update(agent_idx, buffer)
-                buffer.clear()
-                tagged = self._tag_metrics(metrics, agent_idx)
-                self._log_metrics(tagged)
-                self.global_step += 1
-                for key, value in tagged.items():
-                    epoch_metrics[key].append(value)
+                self._process_buffer(agent_idx, buffer, epoch_metrics)
 
             summary = {
                 key: float(sum(values) / len(values))
@@ -757,6 +763,20 @@ class MAACTrainer:
             return
         if self.wandb_initialized and wandb is not None:
             wandb.log(metrics, step=self.global_step)
+
+    def _process_buffer(
+        self,
+        agent_idx: int,
+        buffer: List[RolloutSample],
+        epoch_metrics: Dict[str, List[float]],
+    ) -> None:
+        metrics = self._update(agent_idx, buffer)
+        buffer.clear()
+        tagged = self._tag_metrics(metrics, agent_idx)
+        self._log_metrics(tagged)
+        self.global_step += 1
+        for key, value in tagged.items():
+            epoch_metrics[key].append(value)
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)

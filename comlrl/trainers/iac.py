@@ -930,24 +930,12 @@ class IACTrainer:
                         buffer = self.rollout_buffers[agent_idx]
                         buffer.append(sample)
                         if len(buffer) >= self.args.rollout_buffer_size:
-                            metrics = self._update(agent_idx, buffer)
-                            buffer.clear()
-                            tagged = self._tag_metrics(metrics, agent_idx)
-                            self._log_metrics(tagged)
-                            self.global_step += 1
-                            for key, value in tagged.items():
-                                epoch_metrics[key].append(value)
+                            self._process_buffer(agent_idx, buffer, epoch_metrics)
 
             for agent_idx, buffer in enumerate(self.rollout_buffers):
                 if not buffer:
                     continue
-                metrics = self._update(agent_idx, buffer)
-                buffer.clear()
-                tagged = self._tag_metrics(metrics, agent_idx)
-                self._log_metrics(tagged)
-                self.global_step += 1
-                for key, value in tagged.items():
-                    epoch_metrics[key].append(value)
+                self._process_buffer(agent_idx, buffer, epoch_metrics)
 
             summary = {
                 key: float(sum(values) / len(values))
@@ -970,6 +958,20 @@ class IACTrainer:
             return
         if self.wandb_initialized and wandb is not None:
             wandb.log(metrics, step=self.global_step)
+
+    def _process_buffer(
+        self,
+        agent_idx: int,
+        buffer: List[RolloutSample],
+        epoch_metrics: Dict[str, List[float]],
+    ) -> None:
+        metrics = self._update(agent_idx, buffer)
+        buffer.clear()
+        tagged = self._tag_metrics(metrics, agent_idx)
+        self._log_metrics(tagged)
+        self.global_step += 1
+        for key, value in tagged.items():
+            epoch_metrics[key].append(value)
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
