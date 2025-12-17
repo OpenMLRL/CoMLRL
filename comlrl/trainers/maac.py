@@ -926,8 +926,29 @@ class MAACTrainer:
                 for key, values in epoch_metrics.items()
                 if values
             }
+            num_turns = max(1, int(getattr(self.args, "num_turns", 1)))
+            epoch_log: Dict[str, float] = {}
+            for turn_idx in range(num_turns):
+                prefix = f"turn_{turn_idx + 1}/"
+
+                def _maybe_log(metric_key: str, epoch_key: str) -> None:
+                    values = epoch_metrics.get(prefix + metric_key)
+                    if values:
+                        epoch_log[prefix + epoch_key] = float(sum(values) / len(values))
+
+                _maybe_log("reward_mean", "epoch_reward_mean")
+                _maybe_log("expected_return", "epoch_avg_return")
+                _maybe_log("value_variance", "epoch_value_variance")
+                _maybe_log("policy_loss", "epoch_policy_loss")
+                _maybe_log("value_loss", "epoch_value_loss")
+
+            if epoch_log:
+                self._log_metrics(epoch_log)
+                self.global_step += 1
+
             if summary:
-                print(f"Epoch {epoch + 1}/{total_epochs} metrics: {summary}")
+                to_print = epoch_log if epoch_log else summary
+                print(f"Epoch {epoch + 1}/{total_epochs} metrics: {to_print}")
 
     # ------------------------------------------------------------------ #
     # Logging and persistence
