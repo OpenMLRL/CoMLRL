@@ -81,6 +81,11 @@ class MAACConfig:
             raise ValueError(
                 "Multi-turn MAAC currently supports num_return_sequences == 1."
             )
+        if self.num_turns > 1 and self.rollout_buffer_size % self.num_turns != 0:
+            raise ValueError(
+                "For multi-turn MAAC, rollout_buffer_size must be a multiple of num_turns "
+                "so per-turn metrics align (e.g., num_turns=2 => buffer_size even)."
+            )
 
 
 class MAACTrainer:
@@ -859,11 +864,10 @@ class MAACTrainer:
     ) -> Dict[str, float]:
         if not rollouts:
             return {}
-        self._prepare_advantages(rollouts)
-        random.shuffle(rollouts)
         metrics = defaultdict(list)
 
-        # Per-prompt reward variance across generations (all agents combined)
+        # Log metrics using raw rewards/returns before normalization.
+        # Note: _prepare_advantages() may normalize sample.returns in-place.
         prompt_rewards: Dict[str, List[float]] = defaultdict(list)
         for sample in rollouts:
             prompt_rewards[sample.prompt].append(
@@ -883,7 +887,21 @@ class MAACTrainer:
         if rewards.numel() > 0 and torch.isfinite(rewards).all():
             mean_reward = float(rewards.mean().item())
             metrics["reward_mean"].append(mean_reward)
-            metrics["expected_return"].append(mean_reward)
+
+        returns = torch.stack(
+            [sample.returns.view(-1)[0] for sample in rollouts]
+        ).float()
+        if returns.numel() > 0 and torch.isfinite(returns).all():
+            metrics["expected_return"].append(float(returns.mean().item()))
+
+        values = torch.stack(
+            [sample.old_value.view(-1)[0] for sample in rollouts]
+        ).float()
+        if values.numel() > 0 and torch.isfinite(values).all():
+            metrics["value_pred_mean"].append(float(values.mean().item()))
+
+        self._prepare_advantages(rollouts)
+        random.shuffle(rollouts)
 
         for start in range(0, len(rollouts), self.args.mini_batch_size):
             batch = rollouts[start : start + self.args.mini_batch_size]
@@ -939,6 +957,7 @@ class MAACTrainer:
                 _maybe_log("reward_mean", "epoch_reward_mean")
                 _maybe_log("expected_return", "epoch_avg_return")
                 _maybe_log("value_variance", "epoch_value_variance")
+                _maybe_log("value_pred_mean", "epoch_value_pred_mean")
                 _maybe_log("policy_loss", "epoch_policy_loss")
                 _maybe_log("value_loss", "epoch_value_loss")
 
@@ -985,14 +1004,18 @@ class MAACTrainer:
 
         buffer.clear()
 
+        # Log all turns at the same wandb step so turn_1 and turn_2 align.
+        combined_log: Dict[str, float] = {}
         for t_idx in sorted(turn_groups.keys()):
             samples = turn_groups[t_idx]
             metrics = self._update(agent_idx, samples)
             tagged = self._tag_metrics(metrics, agent_idx, turn_idx=t_idx)
-            self._log_metrics(tagged)
-            self.global_step += 1
+            combined_log.update(tagged)
             for key, value in tagged.items():
                 epoch_metrics[key].append(value)
+
+        self._log_metrics(combined_log)
+        self.global_step += 1
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
