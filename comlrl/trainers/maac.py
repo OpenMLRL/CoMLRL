@@ -933,9 +933,10 @@ class MAACTrainer:
     # Logging and persistence
     # ------------------------------------------------------------------ #
     def _tag_metrics(
-        self, metrics: Dict[str, float], agent_idx: int
+        self, metrics: Dict[str, float], agent_idx: int, turn_idx: int = 0
     ) -> Dict[str, float]:
-        return {f"turn_1/{key}": value for key, value in metrics.items()}
+        prefix = f"turn_{turn_idx + 1}/"
+        return {prefix + key: value for key, value in metrics.items()}
 
     def _log_metrics(self, metrics: Dict[str, float]) -> None:
         if not metrics:
@@ -949,13 +950,28 @@ class MAACTrainer:
         buffer: List[RolloutSample],
         epoch_metrics: Dict[str, List[float]],
     ) -> None:
-        metrics = self._update(agent_idx, buffer)
+        if not buffer:
+            return
+
+        # Group samples by turn (if available); default to turn 0.
+        has_turn_idx = any(
+            "turn_idx" in (getattr(s, "metadata", {}) or {}) for s in buffer
+        )
+        turn_groups: Dict[int, List[RolloutSample]] = {}
+        for sample in buffer:
+            t_idx = int(sample.metadata.get("turn_idx", 0)) if has_turn_idx else 0
+            turn_groups.setdefault(t_idx, []).append(sample)
+
         buffer.clear()
-        tagged = self._tag_metrics(metrics, agent_idx)
-        self._log_metrics(tagged)
-        self.global_step += 1
-        for key, value in tagged.items():
-            epoch_metrics[key].append(value)
+
+        for t_idx in sorted(turn_groups.keys()):
+            samples = turn_groups[t_idx]
+            metrics = self._update(agent_idx, samples)
+            tagged = self._tag_metrics(metrics, agent_idx, turn_idx=t_idx)
+            self._log_metrics(tagged)
+            self.global_step += 1
+            for key, value in tagged.items():
+                epoch_metrics[key].append(value)
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
