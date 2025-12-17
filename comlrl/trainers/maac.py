@@ -57,6 +57,8 @@ class MAACConfig:
     reward_norm_eps: float = 1e-3
     num_return_sequences: int = 1
     critic_model_name_or_path: Optional[Union[str, PreTrainedModel]] = None
+    num_turns: int = 1
+    discount: float = 0.9
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
@@ -73,6 +75,12 @@ class MAACConfig:
             raise ValueError("num_return_sequences must be >= 1.")
         if self.critic_model_name_or_path is None:
             raise ValueError("critic_model_name_or_path must be provided for MAAC.")
+        if self.num_turns < 1:
+            raise ValueError("num_turns must be >= 1.")
+        if self.num_turns > 1 and self.num_return_sequences != 1:
+            raise ValueError(
+                "Multi-turn MAAC currently supports num_return_sequences == 1."
+            )
 
 
 class MAACTrainer:
@@ -91,6 +99,7 @@ class MAACTrainer:
         model_config: Optional[Dict[str, Any]] = None,
         wandb_config: Optional[Dict[str, Any]] = None,
         metrics_callback: Optional[MetricsCallback] = None,
+        external_transition: Optional[Callable] = None,
     ) -> None:
         if reward_func is None or not callable(reward_func):
             raise ValueError("A callable reward_func must be provided.")
@@ -122,6 +131,10 @@ class MAACTrainer:
             raise ValueError(
                 "Multi-agent MAAC requires `model` to be a pretrained identifier string."
             )
+
+        if self.args.num_turns > 1 and external_transition is None:
+            raise ValueError("Multi-turn MAAC requires an external_transition.")
+        self.external_transition = external_transition
 
         self.actor_models: List[CausalLMWithValueHead] = []
         for _ in range(self.args.num_agents):
@@ -395,6 +408,10 @@ class MAACTrainer:
         }
 
     def _collect_rollouts(self, item: Dict[str, Any]) -> List[RolloutSample]:
+        num_turns = max(1, int(getattr(self.args, "num_turns", 1)))
+        if num_turns > 1:
+            return self._collect_rollouts_multi_turn(item, num_turns)
+
         prompts: List[str] = []
         completions_per_agent: List[List[str]] = []
         rollout_data: List[Dict[str, Any]] = []
@@ -495,6 +512,159 @@ class MAACTrainer:
                 pass
 
         return rollouts
+
+    def _collect_rollouts_multi_turn(
+        self, item: Dict[str, Any], num_turns: int
+    ) -> List[RolloutSample]:
+        if self.args.num_return_sequences != 1:
+            raise ValueError(
+                "Multi-turn MAAC currently supports num_return_sequences == 1."
+            )
+
+        prompt_history = [[] for _ in range(self.args.num_agents)]
+        response_history = [[] for _ in range(self.args.num_agents)]
+        previous_completions: List[Optional[str]] = [None] * self.args.num_agents
+        per_agent_samples: List[List[RolloutSample]] = [
+            [] for _ in range(self.args.num_agents)
+        ]
+        rollouts: List[RolloutSample] = []
+        gamma = float(getattr(self.args, "discount", 0.9))
+
+        for turn_idx in range(num_turns):
+            if turn_idx == 0:
+                turn_prompts = [
+                    self._format_prompt(item, agent_idx)
+                    for agent_idx in range(self.args.num_agents)
+                ]
+            else:
+                if self.external_transition is None:
+                    raise ValueError("external_transition is required for multi-turn.")
+                transition_result = self.external_transition(
+                    prompt=item.get("prompt", ""),
+                    agent_completions=previous_completions,
+                    num_agents=self.args.num_agents,
+                    prompt_history_per_agent=prompt_history,
+                    response_history_per_agent=response_history,
+                )
+                if (
+                    not isinstance(transition_result, (list, tuple))
+                    or len(transition_result) != self.args.num_agents
+                ):
+                    raise ValueError(
+                        "External transition must return per-agent prompts"
+                    )
+                turn_prompts = list(transition_result)
+
+            completions_per_agent: List[List[str]] = []
+            rollout_data: List[Dict[str, Any]] = []
+            for agent_idx, actor_model in enumerate(self.actor_models):
+                prompt = turn_prompts[agent_idx]
+                gen = self._generate(actor_model, prompt)
+                completions_per_agent.append(gen["completions"])
+                rollout_data.append(
+                    {
+                        "agent_idx": agent_idx,
+                        "prompt": prompt,
+                        "prompt_len": gen["prompt_len"],
+                        "sequences": gen["sequences"],
+                        "attention_mask": gen["attention_mask"],
+                        "response_lens": gen["response_lens"],
+                        "completion_texts": gen["completions"],
+                    }
+                )
+                prompt_history[agent_idx].append(prompt)
+
+            rewards = self._call_reward_func(turn_prompts, completions_per_agent)
+            rewards_matrix = self._expand_rewards(rewards, num_ret=1)
+
+            joint_prompt = self._build_joint_prompt(turn_prompts)
+            joint_encoded = self._encode_prompt(joint_prompt)
+            joint_ids = joint_encoded["input_ids"]
+            joint_mask = joint_encoded["attention_mask"]
+            joint_len = joint_ids.size(1)
+            with torch.no_grad():
+                joint_value = self._value_on_prompt_only(
+                    self.critic_model, joint_ids, joint_mask, joint_len
+                )
+
+            for data in rollout_data:
+                agent_idx = data["agent_idx"]
+                seq = data["sequences"][0]
+                attn = data["attention_mask"][0]
+                resp_len = data["response_lens"][0]
+                reward_val = float(rewards_matrix[agent_idx][0])
+                reward_tensor = torch.tensor([reward_val], device=self.device)
+
+                logprob, _ = self._policy_eval(
+                    self.actor_models[agent_idx],
+                    seq.unsqueeze(0),
+                    attn.unsqueeze(0),
+                    data["prompt_len"],
+                    resp_len,
+                    output_values=False,
+                )
+
+                value = joint_value.detach().cpu()
+                completion_text = data["completion_texts"][0]
+                sample = RolloutSample(
+                    agent_idx=agent_idx,
+                    prompt=data["prompt"],
+                    completion=completion_text,
+                    full_input_ids=seq.detach().cpu(),
+                    attention_mask=attn.detach().cpu(),
+                    prompt_len=data["prompt_len"],
+                    response_len=resp_len,
+                    old_logprob=logprob.detach().cpu(),
+                    old_value=value.detach().cpu(),
+                    reward=reward_tensor.detach().cpu(),
+                    returns=reward_tensor.detach().cpu(),
+                    advantage=torch.zeros_like(reward_tensor).detach().cpu(),
+                    normalized_advantage=None,
+                    metadata={
+                        "joint_input_ids": joint_ids.detach().cpu(),
+                        "joint_attention_mask": joint_mask.detach().cpu(),
+                        "joint_prompt_len": joint_len,
+                        "turn_idx": turn_idx,
+                    },
+                )
+                rollouts.append(sample)
+                per_agent_samples[agent_idx].append(sample)
+                response_history[agent_idx].append(completion_text)
+                previous_completions[agent_idx] = completion_text
+
+        for agent_idx in range(self.args.num_agents):
+            future = 0.0
+            for sample in reversed(per_agent_samples[agent_idx]):
+                immediate = float(sample.reward.view(-1)[0].item())
+                future = immediate + gamma * future
+                sample.returns = (
+                    torch.tensor([future], device=self.device).detach().cpu()
+                )
+                sample.advantage = torch.zeros_like(sample.returns)
+                sample.normalized_advantage = None
+
+        if self.metrics_callback is not None:
+            try:
+                extra = self.metrics_callback(rollouts)
+                if isinstance(extra, dict):
+                    self._log_metrics(extra)
+            except Exception:
+                pass
+
+        return rollouts
+
+    def _expand_rewards(self, rewards: List[float], num_ret: int) -> List[List[float]]:
+        """Map reward list to [num_agents x num_ret] matrix."""
+        num_agents = self.args.num_agents
+        if len(rewards) == 1:
+            return [[rewards[0]] * num_ret for _ in range(num_agents)]
+        if len(rewards) == num_ret:
+            return [list(rewards) for _ in range(num_agents)]
+        if len(rewards) == num_agents:
+            return [[rewards[a]] * num_ret for a in range(num_agents)]
+        raise ValueError(
+            "Reward function must return 1 value, num_return_sequences values, or num_agents values."
+        )
 
     # ------------------------------------------------------------------ #
     # Advantage prep
