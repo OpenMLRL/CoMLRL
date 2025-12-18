@@ -60,7 +60,6 @@ class MAACConfig:
     num_turns: int = 1
     discount: float = 0.9
     critic_type: str = "v"  # "v" (V(s)) or "q" (Q(s,a))
-    critic_target: str = "td0"  # "mc" (Monte Carlo) or "td0" (TD(0) on policy)
     early_termination_threshold: Optional[float] = None
     eval_interval: int = 4
     eval_num_samples: int = 4
@@ -94,9 +93,6 @@ class MAACConfig:
         critic_type = (self.critic_type or "v").lower()
         if critic_type not in ("v", "q"):
             raise ValueError("critic_type must be one of: 'v', 'q'.")
-        critic_target = (self.critic_target or "mc").lower()
-        if critic_target not in ("mc", "td0"):
-            raise ValueError("critic_target must be one of: 'mc', 'td0'.")
         if self.eval_interval < 0:
             raise ValueError("eval_interval must be >= 0.")
         if self.eval_num_samples < 1:
@@ -582,10 +578,9 @@ class MAACTrainer:
                     )
                 )
 
-        if (self.args.critic_target or "mc").lower() == "td0":
-            for sample in rollouts:
-                r = float(sample.reward.view(-1)[0].item())
-                sample.metadata["value_target"] = torch.tensor([r]).detach().cpu()
+        for sample in rollouts:
+            r = float(sample.reward.view(-1)[0].item())
+            sample.metadata["value_target"] = torch.tensor([r]).detach().cpu()
 
         if self.metrics_callback is not None:
             try:
@@ -722,7 +717,6 @@ class MAACTrainer:
                 if mean_reward > float(term_threshold):
                     break
 
-        use_td_target = (self.args.critic_target or "mc").lower() == "td0"
         for agent_idx in range(self.args.num_agents):
             traj = per_agent_samples[agent_idx]
             for t, sample in enumerate(traj):
@@ -733,10 +727,7 @@ class MAACTrainer:
                 else:
                     target = r
                 sample.metadata["adv_target"] = torch.tensor([target]).detach().cpu()
-                if use_td_target:
-                    sample.metadata["value_target"] = (
-                        torch.tensor([target]).detach().cpu()
-                    )
+                sample.metadata["value_target"] = torch.tensor([target]).detach().cpu()
 
         for agent_idx in range(self.args.num_agents):
             future = 0.0
@@ -802,9 +793,6 @@ class MAACTrainer:
     def _prepare_advantages(self, rollouts: List[RolloutSample]) -> None:
         if not rollouts:
             return
-        if (self.args.critic_target or "mc").lower() == "mc":
-            self._normalize_returns(rollouts)
-
         advantages = []
         for sample in rollouts:
             target = sample.metadata.get("adv_target") or sample.metadata.get(
