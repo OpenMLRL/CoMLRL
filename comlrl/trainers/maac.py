@@ -59,6 +59,8 @@ class MAACConfig:
     critic_model_name_or_path: Optional[Union[str, PreTrainedModel]] = None
     num_turns: int = 1
     discount: float = 0.9
+    critic_type: str = "v"  # "v" (V(s)) or "q" (Q(s,a))
+    critic_target: str = "td0"  # "mc" (Monte Carlo) or "td0" (TD(0) on policy)
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
@@ -86,6 +88,12 @@ class MAACConfig:
                 "For multi-turn MAAC, rollout_buffer_size must be a multiple of num_turns "
                 "so per-turn metrics align (e.g., num_turns=2 => buffer_size even)."
             )
+        critic_type = (self.critic_type or "v").lower()
+        if critic_type not in ("v", "q"):
+            raise ValueError("critic_type must be one of: 'v', 'q'.")
+        critic_target = (self.critic_target or "mc").lower()
+        if critic_target not in ("mc", "td0"):
+            raise ValueError("critic_target must be one of: 'mc', 'td0'.")
 
 
 class MAACTrainer:
@@ -314,6 +322,38 @@ class MAACTrainer:
         pieces = [f"[Agent {idx}] {p}" for idx, p in enumerate(prompts)]
         return "\n\n".join(pieces)
 
+    def _build_critic_input(
+        self, prompts: Sequence[str], action_completions: Optional[Sequence[str]] = None
+    ) -> str:
+        """Build centralized critic conditioning input.
+
+        - critic_type='v': V(s) conditioned on joint prompt only.
+        - critic_type='q': Q(s,a) conditioned on joint prompt + joint action text.
+        """
+        base = self._build_joint_prompt(prompts)
+        if (self.args.critic_type or "v").lower() == "v":
+            return base
+
+        action_completions = list(action_completions or [])
+        action_lines: List[str] = ["[Joint Action]"]
+        for idx, comp in enumerate(action_completions):
+            action_lines.append(f"[Agent {idx} action]\n{comp}")
+        return base + "\n\n" + "\n\n".join(action_lines)
+
+    def _critic_value_from_text(self, critic_input: str) -> Dict[str, Any]:
+        encoded = self._encode_prompt(critic_input)
+        ids = encoded["input_ids"]
+        mask = encoded["attention_mask"]
+        prompt_len = ids.size(1)
+        value = self._value_on_prompt_only(self.critic_model, ids, mask, prompt_len)
+        return {
+            "critic_input": critic_input,
+            "input_ids": ids,
+            "attention_mask": mask,
+            "prompt_len": prompt_len,
+            "value": value,
+        }
+
     def _infer_reward_signature(self, reward_func: Callable) -> inspect.Signature:
         try:
             return inspect.signature(reward_func)
@@ -452,17 +492,24 @@ class MAACTrainer:
                 "or num_agents values."
             )
 
-        joint_prompt = self._build_joint_prompt(prompts)
-        joint_encoded = self._encode_prompt(joint_prompt)
-        joint_ids = joint_encoded["input_ids"]
-        joint_mask = joint_encoded["attention_mask"]
-        joint_len = joint_ids.size(1)
-        with torch.no_grad():
-            joint_value = self._value_on_prompt_only(
-                self.critic_model, joint_ids, joint_mask, joint_len
-            )
-
         rollouts: List[RolloutSample] = []
+        critic_type = (self.args.critic_type or "v").lower()
+        critic_values_by_i: List[Dict[str, Any]] = []
+        if critic_type == "v":
+            critic_input = self._build_critic_input(prompts)
+            with torch.no_grad():
+                critic_values_by_i = [self._critic_value_from_text(critic_input)]
+        else:
+            for i in range(num_ret):
+                joint_action = [
+                    completions_per_agent[a][i] for a in range(self.args.num_agents)
+                ]
+                critic_input = self._build_critic_input(prompts, joint_action)
+                with torch.no_grad():
+                    critic_values_by_i.append(
+                        self._critic_value_from_text(critic_input)
+                    )
+
         for data in rollout_data:
             agent_idx = data["agent_idx"]
             for i in range(num_ret):
@@ -481,7 +528,15 @@ class MAACTrainer:
                     output_values=False,
                 )
 
-                value = joint_value.detach().cpu()
+                critic_pack = (
+                    critic_values_by_i[0]
+                    if critic_type == "v"
+                    else critic_values_by_i[i]
+                )
+                joint_ids = critic_pack["input_ids"]
+                joint_mask = critic_pack["attention_mask"]
+                joint_len = int(critic_pack["prompt_len"])
+                value = critic_pack["value"].detach().cpu()
                 rollouts.append(
                     RolloutSample(
                         agent_idx=agent_idx,
@@ -504,9 +559,16 @@ class MAACTrainer:
                             "joint_input_ids": joint_ids.detach().cpu(),
                             "joint_attention_mask": joint_mask.detach().cpu(),
                             "joint_prompt_len": joint_len,
+                            "turn_idx": 0,
+                            "adv_target": reward_tensor.detach().cpu(),
                         },
                     )
                 )
+
+        if (self.args.critic_target or "mc").lower() == "td0":
+            for sample in rollouts:
+                r = float(sample.reward.view(-1)[0].item())
+                sample.metadata["value_target"] = torch.tensor([r]).detach().cpu()
 
         if self.metrics_callback is not None:
             try:
@@ -581,16 +643,16 @@ class MAACTrainer:
 
             rewards = self._call_reward_func(turn_prompts, completions_per_agent)
             rewards_matrix = self._expand_rewards(rewards, num_ret=1)
-
-            joint_prompt = self._build_joint_prompt(turn_prompts)
-            joint_encoded = self._encode_prompt(joint_prompt)
-            joint_ids = joint_encoded["input_ids"]
-            joint_mask = joint_encoded["attention_mask"]
-            joint_len = joint_ids.size(1)
+            critic_input = self._build_critic_input(
+                turn_prompts,
+                action_completions=[c[0] for c in completions_per_agent],
+            )
             with torch.no_grad():
-                joint_value = self._value_on_prompt_only(
-                    self.critic_model, joint_ids, joint_mask, joint_len
-                )
+                critic_pack = self._critic_value_from_text(critic_input)
+            joint_ids = critic_pack["input_ids"]
+            joint_mask = critic_pack["attention_mask"]
+            joint_len = int(critic_pack["prompt_len"])
+            joint_value = critic_pack["value"]
 
             for data in rollout_data:
                 agent_idx = data["agent_idx"]
@@ -636,6 +698,22 @@ class MAACTrainer:
                 per_agent_samples[agent_idx].append(sample)
                 response_history[agent_idx].append(completion_text)
                 previous_completions[agent_idx] = completion_text
+
+        use_td_target = (self.args.critic_target or "mc").lower() == "td0"
+        for agent_idx in range(self.args.num_agents):
+            traj = per_agent_samples[agent_idx]
+            for t, sample in enumerate(traj):
+                r = float(sample.reward.view(-1)[0].item())
+                if t < len(traj) - 1:
+                    next_v = float(traj[t + 1].old_value.view(-1)[0].item())
+                    target = r + gamma * next_v
+                else:
+                    target = r
+                sample.metadata["adv_target"] = torch.tensor([target]).detach().cpu()
+                if use_td_target:
+                    sample.metadata["value_target"] = (
+                        torch.tensor([target]).detach().cpu()
+                    )
 
         for agent_idx in range(self.args.num_agents):
             future = 0.0
@@ -701,17 +779,28 @@ class MAACTrainer:
     def _prepare_advantages(self, rollouts: List[RolloutSample]) -> None:
         if not rollouts:
             return
-        self._normalize_returns(rollouts)
+        if (self.args.critic_target or "mc").lower() == "mc":
+            self._normalize_returns(rollouts)
 
-        advantages = torch.stack(
-            [sample.advantage.to(torch.float32).view(-1)[0] for sample in rollouts]
-        )
+        advantages = []
+        for sample in rollouts:
+            target = sample.metadata.get("adv_target") or sample.metadata.get(
+                "value_target"
+            )
+            if target is None:
+                target = sample.returns
+            adv = target.to(torch.float32) - sample.old_value.to(torch.float32)
+            sample.advantage = adv.to(sample.returns.dtype)
+            advantages.append(adv.view(-1)[0])
+        advantages = torch.stack(advantages)
 
         if self.args.advantage_normalization and advantages.numel() > 1:
             mean = advantages.mean()
             std = advantages.std(unbiased=False).clamp(min=1e-6)
             for sample in rollouts:
-                sample.normalized_advantage = (sample.advantage - mean) / std
+                sample.normalized_advantage = (
+                    sample.advantage.to(torch.float32) - mean
+                ) / std
         else:
             for sample in rollouts:
                 sample.normalized_advantage = sample.advantage.clone()
@@ -817,7 +906,11 @@ class MAACTrainer:
 
             old_value = sample.old_value.to(self.device, dtype=value.dtype)
             advantage = sample.normalized_advantage.to(self.device, dtype=value.dtype)
-            returns = sample.returns.to(self.device, dtype=value.dtype)
+            value_target = sample.metadata.get("value_target")
+            if value_target is None:
+                returns = sample.returns.to(self.device, dtype=value.dtype)
+            else:
+                returns = value_target.to(self.device, dtype=value.dtype)
 
             if not torch.isfinite(logprob).all():
                 raise FloatingPointError(
@@ -866,8 +959,6 @@ class MAACTrainer:
             return {}
         metrics = defaultdict(list)
 
-        # Log metrics using raw rewards/returns before normalization.
-        # Note: _prepare_advantages() may normalize sample.returns in-place.
         prompt_rewards: Dict[str, List[float]] = defaultdict(list)
         for sample in rollouts:
             prompt_rewards[sample.prompt].append(
@@ -899,6 +990,17 @@ class MAACTrainer:
         ).float()
         if values.numel() > 0 and torch.isfinite(values).all():
             metrics["value_pred_mean"].append(float(values.mean().item()))
+
+        targets = [sample.metadata.get("value_target") for sample in rollouts]
+        if any(t is not None for t in targets):
+            target_vals = torch.stack(
+                [
+                    (t if t is not None else sample.returns).view(-1)[0]
+                    for sample, t in zip(rollouts, targets)
+                ]
+            ).float()
+            if target_vals.numel() > 0 and torch.isfinite(target_vals).all():
+                metrics["value_target_mean"].append(float(target_vals.mean().item()))
 
         self._prepare_advantages(rollouts)
         random.shuffle(rollouts)
@@ -958,6 +1060,7 @@ class MAACTrainer:
                 _maybe_log("expected_return", "epoch_avg_return")
                 _maybe_log("value_variance", "epoch_value_variance")
                 _maybe_log("value_pred_mean", "epoch_value_pred_mean")
+                _maybe_log("value_target_mean", "epoch_value_target_mean")
                 _maybe_log("policy_loss", "epoch_policy_loss")
                 _maybe_log("value_loss", "epoch_value_loss")
 
@@ -993,7 +1096,6 @@ class MAACTrainer:
         if not buffer:
             return
 
-        # Group samples by turn (if available); default to turn 0.
         has_turn_idx = any(
             "turn_idx" in (getattr(s, "metadata", {}) or {}) for s in buffer
         )
@@ -1004,7 +1106,6 @@ class MAACTrainer:
 
         buffer.clear()
 
-        # Log all turns at the same wandb step so turn_1 and turn_2 align.
         combined_log: Dict[str, float] = {}
         for t_idx in sorted(turn_groups.keys()):
             samples = turn_groups[t_idx]
