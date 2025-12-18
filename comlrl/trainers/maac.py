@@ -62,6 +62,8 @@ class MAACConfig:
     critic_type: str = "v"  # "v" (V(s)) or "q" (Q(s,a))
     critic_target: str = "td0"  # "mc" (Monte Carlo) or "td0" (TD(0) on policy)
     early_termination_threshold: Optional[float] = None
+    eval_interval: int = 4
+    eval_num_samples: int = 4
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
@@ -95,6 +97,10 @@ class MAACConfig:
         critic_target = (self.critic_target or "mc").lower()
         if critic_target not in ("mc", "td0"):
             raise ValueError("critic_target must be one of: 'mc', 'td0'.")
+        if self.eval_interval < 0:
+            raise ValueError("eval_interval must be >= 0.")
+        if self.eval_num_samples < 1:
+            raise ValueError("eval_num_samples must be >= 1.")
 
 
 class MAACTrainer:
@@ -297,6 +303,16 @@ class MAACTrainer:
         return DataLoader(
             self.train_dataset,
             batch_size=self.args.per_device_train_batch_size,
+            shuffle=False,
+            collate_fn=lambda batch: batch,
+        )
+
+    def get_eval_dataloader(self) -> DataLoader:
+        if self.eval_dataset is None:
+            raise ValueError("Evaluation requires a dataset.")
+        return DataLoader(
+            self.eval_dataset,
+            batch_size=1,
             shuffle=False,
             collate_fn=lambda batch: batch,
         )
@@ -964,8 +980,32 @@ class MAACTrainer:
     ) -> Dict[str, float]:
         if not rollouts:
             return {}
-        metrics = defaultdict(list)
+        metrics = self._summarize_rollout_metrics(rollouts)
 
+        self._prepare_advantages(rollouts)
+        random.shuffle(rollouts)
+
+        loss_metrics = defaultdict(list)
+        for start in range(0, len(rollouts), self.args.mini_batch_size):
+            batch = rollouts[start : start + self.args.mini_batch_size]
+            step_metrics = self._ac_step(agent_idx, batch)
+            for key, value in step_metrics.items():
+                loss_metrics[key].append(value)
+        averaged_losses = {
+            key: float(sum(values) / len(values))
+            for key, values in loss_metrics.items()
+            if values
+        }
+        metrics.update(averaged_losses)
+        return metrics
+
+    def _summarize_rollout_metrics(
+        self, rollouts: List[RolloutSample]
+    ) -> Dict[str, float]:
+        if not rollouts:
+            return {}
+
+        metrics: Dict[str, float] = {}
         prompt_rewards: Dict[str, List[float]] = defaultdict(list)
         for sample in rollouts:
             prompt_rewards[sample.prompt].append(
@@ -977,26 +1017,25 @@ class MAACTrainer:
                 t = torch.tensor(vals, dtype=torch.float32)
                 prompt_vars.append(float(torch.var(t, unbiased=False).item()))
         if prompt_vars:
-            metrics["value_variance"].append(float(sum(prompt_vars) / len(prompt_vars)))
+            metrics["value_variance"] = float(sum(prompt_vars) / len(prompt_vars))
 
         rewards = torch.stack(
             [sample.reward.view(-1)[0] for sample in rollouts]
         ).float()
         if rewards.numel() > 0 and torch.isfinite(rewards).all():
-            mean_reward = float(rewards.mean().item())
-            metrics["reward_mean"].append(mean_reward)
+            metrics["reward_mean"] = float(rewards.mean().item())
 
         returns = torch.stack(
             [sample.returns.view(-1)[0] for sample in rollouts]
         ).float()
         if returns.numel() > 0 and torch.isfinite(returns).all():
-            metrics["expected_return"].append(float(returns.mean().item()))
+            metrics["expected_return"] = float(returns.mean().item())
 
         values = torch.stack(
             [sample.old_value.view(-1)[0] for sample in rollouts]
         ).float()
         if values.numel() > 0 and torch.isfinite(values).all():
-            metrics["value_pred_mean"].append(float(values.mean().item()))
+            metrics["value_pred_mean"] = float(values.mean().item())
 
         targets = [sample.metadata.get("value_target") for sample in rollouts]
         if any(t is not None for t in targets):
@@ -1007,22 +1046,41 @@ class MAACTrainer:
                 ]
             ).float()
             if target_vals.numel() > 0 and torch.isfinite(target_vals).all():
-                metrics["value_target_mean"].append(float(target_vals.mean().item()))
+                metrics["value_target_mean"] = float(target_vals.mean().item())
 
-        self._prepare_advantages(rollouts)
-        random.shuffle(rollouts)
+        return metrics
 
-        for start in range(0, len(rollouts), self.args.mini_batch_size):
-            batch = rollouts[start : start + self.args.mini_batch_size]
-            step_metrics = self._ac_step(agent_idx, batch)
-            for key, value in step_metrics.items():
-                metrics[key].append(value)
-        averaged = {
-            key: float(sum(values) / len(values))
-            for key, values in metrics.items()
-            if values
-        }
-        return averaged
+    def evaluate(self) -> Dict[str, float]:
+        if self.eval_dataset is None:
+            return {}
+
+        dataloader = self.get_eval_dataloader()
+        num_samples = int(self.args.eval_num_samples)
+        turn_groups: Dict[int, List[RolloutSample]] = {}
+        seen = 0
+
+        with torch.no_grad():
+            for batch in dataloader:
+                for item in batch:
+                    rollouts = self._collect_rollouts(item)
+                    for sample in rollouts:
+                        t_idx = int(sample.metadata.get("turn_idx", 0))
+                        turn_groups.setdefault(t_idx, []).append(sample)
+                    seen += 1
+                    if seen >= num_samples:
+                        break
+                if seen >= num_samples:
+                    break
+
+        eval_log: Dict[str, float] = {}
+        for turn_idx, samples in sorted(turn_groups.items()):
+            metrics = self._summarize_rollout_metrics(samples)
+            for key, value in metrics.items():
+                eval_log[f"eval/turn_{turn_idx + 1}/{key}"] = value
+
+        if eval_log:
+            self._log_metrics(eval_log)
+        return eval_log
 
     # ------------------------------------------------------------------ #
     # Training loop
@@ -1033,7 +1091,13 @@ class MAACTrainer:
 
         for epoch in range(total_epochs):
             epoch_metrics = defaultdict(list)
-            for batch in dataloader:
+            for batch_idx, batch in enumerate(dataloader):
+                if (
+                    self.eval_dataset is not None
+                    and self.args.eval_interval > 0
+                    and batch_idx % int(self.args.eval_interval) == 0
+                ):
+                    self.evaluate()
                 for item in batch:
                     rollouts = self._collect_rollouts(item)
                     for sample in rollouts:
