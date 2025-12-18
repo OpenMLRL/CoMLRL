@@ -61,6 +61,7 @@ class MAACConfig:
     discount: float = 0.9
     critic_type: str = "v"  # "v" (V(s)) or "q" (Q(s,a))
     critic_target: str = "td0"  # "mc" (Monte Carlo) or "td0" (TD(0) on policy)
+    early_termination_threshold: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
@@ -698,6 +699,12 @@ class MAACTrainer:
                 per_agent_samples[agent_idx].append(sample)
                 response_history[agent_idx].append(completion_text)
                 previous_completions[agent_idx] = completion_text
+
+            term_threshold = getattr(self.args, "early_termination_threshold", None)
+            if term_threshold is not None:
+                mean_reward = float(sum(rewards) / len(rewards)) if rewards else 0.0
+                if mean_reward > float(term_threshold):
+                    break
 
         use_td_target = (self.args.critic_target or "mc").lower() == "td0"
         for agent_idx in range(self.args.num_agents):
