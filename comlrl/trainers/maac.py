@@ -42,7 +42,6 @@ class MAACConfig:
     rollout_buffer_size: int = 8
     mini_batch_size: int = 4
     value_loss_coef: float = 0.5
-    entropy_coef: float = 0.0
     advantage_normalization: bool = True
     max_new_tokens: int = 128
     temperature: float = 0.7
