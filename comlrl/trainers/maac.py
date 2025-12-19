@@ -192,6 +192,7 @@ class MAACTrainer:
 
         self.wandb_config = wandb_config
         self.wandb_initialized = False
+        self.data_step = 0
         if wandb_config is not None:
             self._init_wandb()
 
@@ -1079,6 +1080,7 @@ class MAACTrainer:
                         buffer.append(sample)
                         if len(buffer) >= self.args.rollout_buffer_size:
                             self._process_buffer(agent_idx, buffer, epoch_metrics)
+                    self.data_step += 1
 
             for agent_idx, buffer in enumerate(self.rollout_buffers):
                 if not buffer:
@@ -1109,7 +1111,6 @@ class MAACTrainer:
 
             if epoch_log:
                 self._log_metrics(epoch_log)
-                self.global_step += 1
 
             if summary:
                 to_print = epoch_log if epoch_log else summary
@@ -1128,7 +1129,7 @@ class MAACTrainer:
         if not metrics:
             return
         if self.wandb_initialized and wandb is not None:
-            wandb.log(metrics, step=self.global_step)
+            wandb.log(metrics, step=self.data_step)
 
     def _process_buffer(
         self,
@@ -1159,7 +1160,6 @@ class MAACTrainer:
                 epoch_metrics[key].append(value)
 
         self._log_metrics(combined_log)
-        self.global_step += 1
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
