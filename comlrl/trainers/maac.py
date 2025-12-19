@@ -41,7 +41,6 @@ class MAACConfig:
     max_grad_norm: float = 0.5
     rollout_buffer_size: int = 8
     mini_batch_size: int = 4
-    ac_epochs: int = 1
     value_loss_coef: float = 0.5
     entropy_coef: float = 0.0
     advantage_normalization: bool = True
