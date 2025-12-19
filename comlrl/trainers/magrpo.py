@@ -74,7 +74,7 @@ class MAGRPOConfig(TrainingArguments):
 
     # Evaluation
     eval_interval: int = field(
-        default=4,
+        default=8,
         metadata={"help": "Run evaluation every N training batches."},
     )
     eval_num_samples: int = field(
