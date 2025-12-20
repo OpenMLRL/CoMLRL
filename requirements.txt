@@ -1,3 +1,4 @@
+accelerate>=0.26.0
 black>=24.10.0
 datasets>=2.0.0
 numpy>=1.21.0
