@@ -1,5 +1,6 @@
 import inspect
 import os
+import random
 from dataclasses import dataclass, field
 import itertools
 from typing import Any, Callable, Dict, List, Optional, Union, Tuple
@@ -81,6 +82,22 @@ class MAGRPOConfig(TrainingArguments):
         default=4,
         metadata={"help": "Number of samples to evaluate per evaluation run."},
     )
+    rollout_buffer_size: int = field(
+        default=1,
+        metadata={"help": "Number of node samples to buffer before an update."},
+    )
+    mini_batch_size: int = field(
+        default=1,
+        metadata={"help": "Mini-batch size when updating from the rollout buffer."},
+    )
+
+
+@dataclass
+class NodeSample:
+    agent_idx: int
+    turn_idx: int
+    completions_data: Dict[str, Any]
+    returns: List[float]
 
 
 class MAGRPOTrainer:
@@ -206,6 +223,28 @@ class MAGRPOTrainer:
             )
         if self.args.per_device_train_batch_size != 1:
             raise ValueError("MAGRPO requires per_device_train_batch_size to be 1. ")
+        if self.args.rollout_buffer_size < 1:
+            raise ValueError("rollout_buffer_size must be >= 1.")
+        if self.args.mini_batch_size < 1:
+            raise ValueError("mini_batch_size must be >= 1.")
+        if self.args.mini_batch_size > self.args.rollout_buffer_size:
+            self.args.mini_batch_size = self.args.rollout_buffer_size
+        if self.args.rollout_buffer_size % self.args.mini_batch_size != 0:
+            raise ValueError(
+                "rollout_buffer_size must be a multiple of mini_batch_size."
+            )
+        if (
+            self.args.num_turns > 1
+            and self.args.rollout_buffer_size % int(self.args.num_turns) != 0
+        ):
+            raise ValueError(
+                "For multi-turn MAGRPO, rollout_buffer_size must be a multiple of num_turns "
+                "so per-turn updates align (e.g., num_turns=2 => buffer_size even)."
+            )
+
+        self.rollout_buffers: List[List[NodeSample]] = [
+            [] for _ in range(self.num_agents)
+        ]
 
         # Check for external_transition requirement in multi-turn training
         if self.args.num_turns > 1 and external_transition is None:
@@ -764,6 +803,10 @@ class MAGRPOTrainer:
                     if self.wandb_initialized and batch_log:
                         wandb.log(batch_log, step=self.data_step)
 
+            for agent_idx, buffer in enumerate(self.rollout_buffers):
+                if buffer:
+                    self._process_buffer(agent_idx, buffer)
+
             # Log per-turn epoch averages inline (avoid custom system/* metrics)
             if self.wandb_initialized:
                 epoch_log: Dict[str, Any] = {}
@@ -1038,15 +1081,15 @@ class MAGRPOTrainer:
                     list(map(float, returns_vec)) for _ in range(self.num_agents)
                 ]
             for agent_idx in range(self.num_agents):
-                # Zero only the current agent's optimizer
-                self.optimizers[agent_idx].zero_grad()
-                agent_loss = self._compute_loss_with_gradients(
-                    self.agents[agent_idx],
-                    comps_per_agent[agent_idx],
-                    per_agent_joint_sums[agent_idx],
+                sample = NodeSample(
+                    agent_idx=agent_idx,
+                    turn_idx=int(node.get("turn", 0)),
+                    completions_data=self._pack_completions_for_buffer(
+                        comps_per_agent[agent_idx]
+                    ),
+                    returns=[float(r) for r in per_agent_joint_sums[agent_idx]],
                 )
-                agent_loss.backward()
-                self.optimizers[agent_idx].step()
+                self._append_to_buffer(agent_idx, sample)
 
         post_order_update(root)
 
@@ -1347,6 +1390,61 @@ class MAGRPOTrainer:
 
         return all_rewards
 
+    def _pack_completions_for_buffer(
+        self, completions_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        prompt_ids = completions_data["prompt_input_ids"].detach().cpu()
+        completion_ids = completions_data["completion_input_ids"]
+        if completion_ids and isinstance(completion_ids[0], list):
+            packed_completion_ids = [[t.detach().cpu() for t in completion_ids[0]]]
+        else:
+            packed_completion_ids = [[t.detach().cpu() for t in completion_ids]]
+        return {
+            "prompt_input_ids": prompt_ids,
+            "completion_input_ids": packed_completion_ids,
+        }
+
+    def _append_to_buffer(self, agent_idx: int, sample: NodeSample) -> None:
+        buffer = self.rollout_buffers[agent_idx]
+        buffer.append(sample)
+        if len(buffer) >= int(self.args.rollout_buffer_size):
+            self._process_buffer(agent_idx, buffer)
+
+    def _process_buffer(self, agent_idx: int, buffer: List[NodeSample]) -> None:
+        if not buffer:
+            return
+        turn_groups: Dict[int, List[NodeSample]] = {}
+        for sample in buffer:
+            t_idx = int(sample.turn_idx)
+            turn_groups.setdefault(t_idx, []).append(sample)
+        buffer.clear()
+        for t_idx in sorted(turn_groups.keys()):
+            self._update_from_samples(agent_idx, turn_groups[t_idx])
+
+    def _update_from_samples(self, agent_idx: int, samples: List[NodeSample]) -> None:
+        if not samples:
+            return
+        random.shuffle(samples)
+        mini_batch_size = int(self.args.mini_batch_size)
+        for start in range(0, len(samples), mini_batch_size):
+            batch = samples[start : start + mini_batch_size]
+            if not batch:
+                continue
+            self.optimizers[agent_idx].zero_grad()
+            batch_loss = None
+            for sample in batch:
+                loss = self._compute_loss_with_gradients(
+                    self.agents[agent_idx],
+                    sample.completions_data,
+                    sample.returns,
+                )
+                batch_loss = loss if batch_loss is None else batch_loss + loss
+            if batch_loss is None:
+                continue
+            batch_loss = batch_loss / len(batch)
+            batch_loss.backward()
+            self.optimizers[agent_idx].step()
+
     def _compute_loss_with_gradients(self, agent, completions_data, returns):
         """
         Compute loss with proper gradient tracking by performing a new forward pass.
@@ -1375,8 +1473,12 @@ class MAGRPOTrainer:
         # Set agent to train mode to ensure gradients are tracked
         agent.train()
 
-        prompt_input_ids = completions_data["prompt_input_ids"]
+        prompt_input_ids = completions_data["prompt_input_ids"].to(device)
         completion_input_ids = completions_data["completion_input_ids"]
+        if completion_input_ids and isinstance(completion_input_ids[0], list):
+            completion_input_ids = [[t.to(device) for t in completion_input_ids[0]]]
+        else:
+            completion_input_ids = [[t.to(device) for t in completion_input_ids]]
 
         total_loss = torch.tensor(0.0, device=device, requires_grad=True)
         num_samples = 0
