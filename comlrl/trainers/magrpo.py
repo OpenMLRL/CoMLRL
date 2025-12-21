@@ -116,6 +116,7 @@ class NodeSample:
     returns: List[float]
     node_mean_reward: float
     node_mean_return: float
+    node_env_step: int
 
 
 class MAGRPOTrainer:
@@ -776,13 +777,12 @@ class MAGRPOTrainer:
                 # Process single batch item (batch_size=1 enforced)
                 batch_item = batch[0]
                 # Unified training step (returns-based, backward updates)
-                batch_loss, _batch_stats, env_steps = self._train_step_returns(
+                batch_loss, _batch_stats = self._train_step_returns(
                     batch_item,
                     epoch_turn_rewards,
                     epoch_turn_returns,
                     **kwargs,
                 )
-                self.env_step += int(env_steps)
 
             for agent_idx, buffer in enumerate(self.rollout_buffers):
                 if buffer:
@@ -823,9 +823,6 @@ class MAGRPOTrainer:
         num_gens = int(self.args.num_generations)
         gamma = float(getattr(self.args, "discount", 0.9))
 
-        # Internal per-turn node data not returned to caller
-        env_steps = 0
-
         # Per-turn accumulators for batch-level summaries
         turn_reward_node_means: List[List[float]] = [[] for _ in range(num_turns)]
         turn_return_node_means: List[List[float]] = [[] for _ in range(num_turns)]
@@ -838,7 +835,6 @@ class MAGRPOTrainer:
             prompt_history_per_agent: Optional[List[List[str]]] = None,
             response_history_per_agent: Optional[List[List[str]]] = None,
         ):
-            nonlocal env_steps
             comps_per_agent = []
             for agent_idx in range(self.num_agents):
                 comps = self._generate_completions_with_external_prompts(
@@ -935,7 +931,8 @@ class MAGRPOTrainer:
                 )
 
             # Per-node means for batch-level summaries
-            env_steps += len(rewards_vec)
+            self.env_step += len(rewards_vec)
+            node_env_step = int(self.env_step)
             node_mean_reward = float(np.mean(rewards_vec)) if rewards_vec else 0.0
             turn_reward_node_means[turn_idx].append(node_mean_reward)
 
@@ -957,6 +954,7 @@ class MAGRPOTrainer:
                 "children": [],
                 "returns": None,
                 "combo_indices": combo_indices,
+                "env_step": node_env_step,
             }
 
             if turn_idx < num_turns - 1 and not terminate_here:
@@ -1034,6 +1032,8 @@ class MAGRPOTrainer:
 
         record_turn_returns(root)
 
+        pending_samples: List[List[NodeSample]] = [[] for _ in range(self.num_agents)]
+
         def post_order_update(node):
             for child in node["children"]:
                 post_order_update(child)
@@ -1064,6 +1064,7 @@ class MAGRPOTrainer:
                 per_agent_joint_sums = [
                     list(map(float, returns_vec)) for _ in range(self.num_agents)
                 ]
+            node_env_step = int(node.get("env_step", self.env_step))
             for agent_idx in range(self.num_agents):
                 node_rewards = node.get("rewards") or []
                 node_mean_reward = float(np.mean(node_rewards)) if node_rewards else 0.0
@@ -1077,10 +1078,16 @@ class MAGRPOTrainer:
                     returns=[float(r) for r in per_agent_joint_sums[agent_idx]],
                     node_mean_reward=node_mean_reward,
                     node_mean_return=node_mean_return,
+                    node_env_step=node_env_step,
                 )
-                self._append_to_buffer(agent_idx, sample)
+                pending_samples[agent_idx].append(sample)
 
         post_order_update(root)
+
+        for agent_idx, samples in enumerate(pending_samples):
+            samples.sort(key=lambda s: s.node_env_step)
+            for sample in samples:
+                self._append_to_buffer(agent_idx, sample)
 
         # Build per-turn batch summary
         batch_loss = float(np.mean(np.abs(root.get("returns") or [0.0])))
@@ -1096,7 +1103,7 @@ class MAGRPOTrainer:
             # No per-reward-function means; use a single reward function
             batch_stats[t] = stats
 
-        return batch_loss, batch_stats, env_steps
+        return batch_loss, batch_stats
 
     def _generate_completions(
         self,
@@ -1419,7 +1426,8 @@ class MAGRPOTrainer:
                 batch_log[prefix + "expected_return"] = float(
                     np.mean([s.node_mean_return for s in samples])
                 )
-                wandb.log(batch_log, step=self.env_step)
+                step = max(s.node_env_step for s in samples)
+                wandb.log(batch_log, step=step)
 
     def _update_from_samples(self, agent_idx: int, samples: List[NodeSample]) -> None:
         if not samples:
