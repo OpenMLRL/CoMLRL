@@ -1417,7 +1417,7 @@ class MAGRPOTrainer:
         for t_idx in sorted(turn_groups.keys()):
             samples = turn_groups[t_idx]
             self._update_from_samples(agent_idx, samples)
-            if self.wandb_initialized and samples and agent_idx == 0:
+            if self.wandb_initialized and samples:
                 batch_log: Dict[str, Any] = {}
                 prefix = f"turn_{t_idx + 1}/"
                 batch_log[prefix + "reward_mean"] = float(
