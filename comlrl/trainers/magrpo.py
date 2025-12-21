@@ -22,6 +22,26 @@ class MAGRPOConfig(TrainingArguments):
     """
 
     # Core setup
+    num_train_epochs: float = field(
+        default=20,
+        metadata={"help": "Number of training epochs."},
+    )
+    per_device_train_batch_size: int = field(
+        default=1,
+        metadata={"help": "Per-device batch size (must be 1 for MAGRPO)."},
+    )
+    learning_rate: float = field(
+        default=5.0e-6,
+        metadata={"help": "Learning rate for optimizer."},
+    )
+    logging_steps: int = field(
+        default=50,
+        metadata={"help": "Log every N steps."},
+    )
+    save_steps: int = field(
+        default=200,
+        metadata={"help": "Save every N steps."},
+    )
     num_agents: int = field(
         default=2,
         metadata={"help": "Number of agents; set to 1 for single-agent GRPO."},
@@ -37,13 +57,13 @@ class MAGRPOConfig(TrainingArguments):
         metadata={"help": "Maximum number of new tokens to generate after the prompt."},
     )
     temperature: float = field(
-        default=0.7,
+        default=0.6,
         metadata={
             "help": "Temperature for sampling (present for completeness; generation uses model_config if provided)."
         },
     )
     top_p: float = field(
-        default=0.9,
+        default=0.6,
         metadata={
             "help": "Top-p for sampling (present for completeness; generation uses model_config if provided)."
         },
@@ -51,7 +71,7 @@ class MAGRPOConfig(TrainingArguments):
 
     # Multi-turn / tree rollout
     num_turns: Optional[int] = field(
-        default=1,
+        default=2,
         metadata={
             "help": "Number of turns per episode (set >1 for multi-turn with external transitions)."
         },
@@ -67,7 +87,7 @@ class MAGRPOConfig(TrainingArguments):
         },
     )
     termination_threshold: Optional[float] = field(
-        default=None,
+        default=-0.2,
         metadata={
             "help": "Early stop a branch if mean reward at a node exceeds this threshold."
         },
@@ -75,7 +95,7 @@ class MAGRPOConfig(TrainingArguments):
 
     # Evaluation
     eval_interval: int = field(
-        default=8,
+        default=16,
         metadata={"help": "Run evaluation every N training batches."},
     )
     eval_num_samples: int = field(
@@ -83,7 +103,7 @@ class MAGRPOConfig(TrainingArguments):
         metadata={"help": "Number of samples to evaluate per evaluation run."},
     )
     rollout_buffer_size: int = field(
-        default=5,
+        default=2,
         metadata={"help": "Number of node samples to buffer before an update."},
     )
 
@@ -94,6 +114,8 @@ class NodeSample:
     turn_idx: int
     completions_data: Dict[str, Any]
     returns: List[float]
+    node_mean_reward: float
+    node_mean_return: float
 
 
 class MAGRPOTrainer:
@@ -754,34 +776,13 @@ class MAGRPOTrainer:
                 # Process single batch item (batch_size=1 enforced)
                 batch_item = batch[0]
                 # Unified training step (returns-based, backward updates)
-                batch_loss, batch_stats, env_steps = self._train_step_returns(
+                batch_loss, _batch_stats, env_steps = self._train_step_returns(
                     batch_item,
                     epoch_turn_rewards,
                     epoch_turn_returns,
                     **kwargs,
                 )
                 self.env_step += int(env_steps)
-
-                # Log per-batch metrics once (aggregate across turns)
-                if isinstance(batch_stats, dict):
-                    batch_log: Dict[str, Any] = {}
-                    n_turns = max(1, int(self.args.num_turns))
-                    for t in range(n_turns):
-                        stats = batch_stats.get(t) or {}
-                        if self.wandb_initialized:
-                            prefix = f"turn_{t + 1}/"
-                            if "batch_mean_reward" in stats:
-                                batch_log[prefix + "reward_mean"] = stats[
-                                    "batch_mean_reward"
-                                ]
-                            if "batch_expected_return" in stats:
-                                batch_log[prefix + "expected_return"] = stats[
-                                    "batch_expected_return"
-                                ]
-                            # No per-function reward splitting in single reward mode
-
-                    if self.wandb_initialized and batch_log:
-                        wandb.log(batch_log, step=self.env_step)
 
             for agent_idx, buffer in enumerate(self.rollout_buffers):
                 if buffer:
@@ -1064,6 +1065,9 @@ class MAGRPOTrainer:
                     list(map(float, returns_vec)) for _ in range(self.num_agents)
                 ]
             for agent_idx in range(self.num_agents):
+                node_rewards = node.get("rewards") or []
+                node_mean_reward = float(np.mean(node_rewards)) if node_rewards else 0.0
+                node_mean_return = float(np.mean(returns_vec)) if returns_vec else 0.0
                 sample = NodeSample(
                     agent_idx=agent_idx,
                     turn_idx=int(node.get("turn", 0)),
@@ -1071,6 +1075,8 @@ class MAGRPOTrainer:
                         comps_per_agent[agent_idx]
                     ),
                     returns=[float(r) for r in per_agent_joint_sums[agent_idx]],
+                    node_mean_reward=node_mean_reward,
+                    node_mean_return=node_mean_return,
                 )
                 self._append_to_buffer(agent_idx, sample)
 
@@ -1402,7 +1408,18 @@ class MAGRPOTrainer:
             turn_groups.setdefault(t_idx, []).append(sample)
         buffer.clear()
         for t_idx in sorted(turn_groups.keys()):
-            self._update_from_samples(agent_idx, turn_groups[t_idx])
+            samples = turn_groups[t_idx]
+            self._update_from_samples(agent_idx, samples)
+            if self.wandb_initialized and samples:
+                batch_log: Dict[str, Any] = {}
+                prefix = f"turn_{t_idx + 1}/"
+                batch_log[prefix + "reward_mean"] = float(
+                    np.mean([s.node_mean_reward for s in samples])
+                )
+                batch_log[prefix + "expected_return"] = float(
+                    np.mean([s.node_mean_return for s in samples])
+                )
+                wandb.log(batch_log, step=self.env_step)
 
     def _update_from_samples(self, agent_idx: int, samples: List[NodeSample]) -> None:
         if not samples:

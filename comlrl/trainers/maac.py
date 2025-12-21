@@ -33,34 +33,34 @@ class MAACConfig:
     """Configuration container for Multi-Agent Actor-Critic with shared critic."""
 
     output_dir: str = "./maac_output"
-    actor_learning_rate: float = 1e-6
-    critic_learning_rate: float = 1e-6
+    actor_learning_rate: float = 5e-6
+    critic_learning_rate: float = 5e-6
     weight_decay: float = 0.0
     adam_beta1: float = 0.9
     adam_beta2: float = 0.999
     adam_epsilon: float = 1e-8
     max_grad_norm: float = 0.5
-    rollout_buffer_size: int = 20
-    mini_batch_size: int = 20
-    value_loss_coef: float = 0.5
+    rollout_buffer_size: int = 8
+    mini_batch_size: int = 8
+    value_loss_coef: float = 0.6
     advantage_normalization: bool = True
-    max_new_tokens: int = 128
-    temperature: float = 0.7
-    top_p: float = 0.9
+    max_new_tokens: int = 256
+    temperature: float = 0.6
+    top_p: float = 0.6
     top_k: Optional[int] = None
     do_sample: bool = True
-    num_train_epochs: int = 8
+    num_train_epochs: int = 40
     per_device_train_batch_size: int = 1
     pad_token_id: Optional[int] = None
     num_agents: int = 2
     reward_norm_eps: float = 1e-3
     num_return_sequences: int = 1
     critic_model_name_or_path: Optional[Union[str, PreTrainedModel]] = None
-    num_turns: int = 1
+    num_turns: int = 2
     discount: float = 0.9
     critic_type: str = "v"  # "v" (V(s)) or "q" (Q(s,a))
-    early_termination_threshold: Optional[float] = None
-    eval_interval: int = 4
+    early_termination_threshold: Optional[float] = -0.2
+    eval_interval: int = 16
     eval_num_samples: int = 4
 
     def __post_init__(self) -> None:
