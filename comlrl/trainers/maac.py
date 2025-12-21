@@ -17,6 +17,7 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerBase,
 )
+from tqdm import tqdm  # type: ignore
 
 import wandb
 from comlrl.models.actor_critic import CausalLMWithValueHead
@@ -192,6 +193,18 @@ class MAACTrainer:
         self.env_step = 0
         if wandb_config is not None:
             self._init_wandb()
+
+        # Verbosity from config (default True)
+        self.verbose = True
+        try:
+            if isinstance(self.wandb_config, dict):
+                sections = self.wandb_config.get("config_sections", {})
+                if isinstance(sections, dict):
+                    out = sections.get("output", {})
+                    if isinstance(out, dict) and "verbose" in out:
+                        self.verbose = bool(out.get("verbose"))
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     # Initialisation helpers
@@ -1057,12 +1070,22 @@ class MAACTrainer:
     # Training loop
     # ------------------------------------------------------------------ #
     def train(self) -> None:
-        dataloader = self.get_train_dataloader()
         total_epochs = self.args.num_train_epochs
 
         for epoch in range(total_epochs):
             epoch_metrics = defaultdict(list)
-            for batch_idx, batch in enumerate(dataloader):
+            dataloader = self.get_train_dataloader()
+            if not getattr(self, "verbose", True):
+                it = enumerate(
+                    tqdm(
+                        dataloader,
+                        total=len(dataloader),
+                        desc=f"Epoch {epoch + 1}/{total_epochs}",
+                    )
+                )
+            else:
+                it = enumerate(dataloader)
+            for batch_idx, batch in it:
                 if (
                     self.eval_dataset is not None
                     and self.args.eval_interval > 0
@@ -1110,7 +1133,7 @@ class MAACTrainer:
             if epoch_log:
                 self._log_metrics(epoch_log)
 
-            if summary:
+            if summary and getattr(self, "verbose", True):
                 to_print = epoch_log if epoch_log else summary
                 print(f"Epoch {epoch + 1}/{total_epochs} metrics: {to_print}")
 
