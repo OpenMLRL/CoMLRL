@@ -39,8 +39,8 @@ class MAACConfig:
     adam_beta2: float = 0.999
     adam_epsilon: float = 1e-8
     max_grad_norm: float = 0.5
-    rollout_buffer_size: int = 8
-    mini_batch_size: int = 4
+    rollout_buffer_size: int = 20
+    mini_batch_size: int = 20
     value_loss_coef: float = 0.5
     advantage_normalization: bool = True
     max_new_tokens: int = 128
@@ -65,10 +65,7 @@ class MAACConfig:
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
             raise ValueError("rollout_buffer_size must be >= 1.")
-        if self.mini_batch_size < 1:
-            raise ValueError("mini_batch_size must be >= 1.")
-        if self.mini_batch_size > self.rollout_buffer_size:
-            self.mini_batch_size = self.rollout_buffer_size
+        self.mini_batch_size = self.rollout_buffer_size
         if self.per_device_train_batch_size != 1:
             raise ValueError("per_device_train_batch_size must be 1 for MAAC.")
         if self.num_agents < 1:
@@ -192,7 +189,7 @@ class MAACTrainer:
 
         self.wandb_config = wandb_config
         self.wandb_initialized = False
-        self.data_step = 0
+        self.env_step = 0
         if wandb_config is not None:
             self._init_wandb()
 
@@ -1080,7 +1077,8 @@ class MAACTrainer:
                         buffer.append(sample)
                         if len(buffer) >= self.args.rollout_buffer_size:
                             self._process_buffer(agent_idx, buffer, epoch_metrics)
-                    self.data_step += 1
+                    if self.args.num_agents > 0:
+                        self.env_step += len(rollouts) // self.args.num_agents
 
             for agent_idx, buffer in enumerate(self.rollout_buffers):
                 if not buffer:
@@ -1129,7 +1127,7 @@ class MAACTrainer:
         if not metrics:
             return
         if self.wandb_initialized and wandb is not None:
-            wandb.log(metrics, step=self.data_step)
+            wandb.log(metrics, step=self.env_step)
 
     def _process_buffer(
         self,
