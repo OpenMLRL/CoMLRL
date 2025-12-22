@@ -81,11 +81,6 @@ class MAACConfig:
             raise ValueError(
                 "Multi-turn MAAC currently supports num_return_sequences == 1."
             )
-        if self.num_turns > 1 and self.rollout_buffer_size % self.num_turns != 0:
-            raise ValueError(
-                "For multi-turn MAAC, rollout_buffer_size must be a multiple of num_turns "
-                "so per-turn metrics align (e.g., num_turns=2 => buffer_size even)."
-            )
         critic_type = (self.critic_type or "v").lower()
         if critic_type not in ("v", "q"):
             raise ValueError("critic_type must be one of: 'v', 'q'.")
