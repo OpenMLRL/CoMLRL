@@ -632,7 +632,7 @@ class MAGRPOTrainer:
                         num_agents=self.num_agents,
                         prompt_history_per_agent=eval_prompt_history,
                         response_history_per_agent=[
-                            list(eval_response_history[i]) + [selected_prev[i]]
+                            list(eval_response_history[i])
                             for i in range(self.num_agents)
                         ],
                     )
@@ -658,6 +658,7 @@ class MAGRPOTrainer:
                     num_return_sequences=1,
                     max_new_tokens=self.args.max_new_tokens,
                     external_prompts=agent_external_prompts[agent_idx],
+                    do_sample=True,
                 )
                 # Extract the completion directly
                 completion = agent_completions["completions"][0][0]
@@ -1112,6 +1113,7 @@ class MAGRPOTrainer:
         agent_idx=0,
         num_return_sequences=1,
         max_new_tokens=128,
+        do_sample: Optional[bool] = None,
         **kwargs,
     ):
         """
@@ -1173,7 +1175,7 @@ class MAGRPOTrainer:
             }
 
             # If requesting multiple sequences, use sampling for diversity
-            if num_return_sequences > 1:
+            if do_sample is None and num_return_sequences > 1:
                 # Use generation parameters from config
                 generation_update = {
                     "do_sample": True,  # Enable sampling for randomness
@@ -1184,6 +1186,22 @@ class MAGRPOTrainer:
                     "num_return_sequences": num_return_sequences,
                 }
                 generation_kwargs.update(generation_update)
+            elif do_sample is not None:
+                generation_kwargs.update(
+                    {
+                        "do_sample": bool(do_sample),
+                        "num_beams": 1,
+                        "num_return_sequences": num_return_sequences,
+                    }
+                )
+                if do_sample:
+                    generation_kwargs.update(
+                        {
+                            "temperature": self.args.temperature,
+                            "top_p": self.args.top_p,
+                            "top_k": 50,
+                        }
+                    )
 
             # Set pad_token_id from tokenizer if not set
             if (
@@ -1277,6 +1295,7 @@ class MAGRPOTrainer:
         num_return_sequences=1,
         max_new_tokens=128,
         external_prompts=None,
+        do_sample: Optional[bool] = None,
         **kwargs,
     ):
         """
@@ -1293,6 +1312,7 @@ class MAGRPOTrainer:
                 agent_idx=agent_idx,
                 num_return_sequences=num_return_sequences,
                 max_new_tokens=max_new_tokens,
+                do_sample=do_sample,
                 **kwargs,
             )
 
@@ -1315,6 +1335,7 @@ class MAGRPOTrainer:
             agent_idx=agent_idx,
             num_return_sequences=num_return_sequences,
             max_new_tokens=max_new_tokens,
+            do_sample=do_sample,
             **kwargs,
         )
 
