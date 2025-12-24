@@ -295,6 +295,8 @@ class MAGRPOTrainer:
         except ValueError:
             self._wandb_primary = True
         self._wandb_last_step = -1
+        self._wandb_update_table = None
+        self._wandb_update_table_flushed = False
 
         # Dataset type: prefer explicit parameter, fallback to config sections
         self.dataset_type = dataset_type or None
@@ -512,6 +514,50 @@ class MAGRPOTrainer:
         wandb.log(metrics, step=step)
         if step > self._wandb_last_step:
             self._wandb_last_step = step
+
+    def _ensure_update_table(self) -> None:
+        if not self.wandb_initialized or not self._wandb_primary:
+            return
+        if self._wandb_update_table is None:
+            self._wandb_update_table = wandb.Table(
+                columns=[
+                    "env_step",
+                    "turn_idx",
+                    "reward_mean",
+                    "expected_return",
+                    "node_count",
+                ]
+            )
+
+    def _record_update_row(
+        self,
+        env_step: int,
+        turn_idx: int,
+        reward_mean: float,
+        expected_return: float,
+        node_count: int,
+    ) -> None:
+        if not self.wandb_initialized or not self._wandb_primary:
+            return
+        self._ensure_update_table()
+        if self._wandb_update_table is None:
+            return
+        self._wandb_update_table.add_data(
+            int(env_step),
+            int(turn_idx),
+            float(reward_mean),
+            float(expected_return),
+            int(node_count),
+        )
+        self._log_wandb_metrics({"update_table": self._wandb_update_table}, step=None)
+
+    def _flush_update_table(self) -> None:
+        if not self.wandb_initialized or not self._wandb_primary:
+            return
+        if self._wandb_update_table is None or self._wandb_update_table_flushed:
+            return
+        wandb.log({"update_table": self._wandb_update_table})
+        self._wandb_update_table_flushed = True
 
     def get_train_dataloader(self) -> DataLoader:
         """Returns the training DataLoader."""
@@ -833,6 +879,8 @@ class MAGRPOTrainer:
                         np.mean(epoch_turn_returns[turn_idx])
                     )
             self._log_wandb_metrics(epoch_log, step=self.env_step)
+
+        self._flush_update_table()
 
     def _train_step_returns(
         self,
@@ -1500,14 +1548,19 @@ class MAGRPOTrainer:
             if samples and agent_idx == 0:
                 batch_log: Dict[str, Any] = {}
                 prefix = f"turn_{t_idx + 1}/"
-                batch_log[prefix + "reward_mean"] = float(
-                    np.mean([s.node_mean_reward for s in samples])
-                )
-                batch_log[prefix + "expected_return"] = float(
-                    np.mean([s.node_mean_return for s in samples])
-                )
+                reward_mean = float(np.mean([s.node_mean_reward for s in samples]))
+                expected_return = float(np.mean([s.node_mean_return for s in samples]))
+                batch_log[prefix + "reward_mean"] = reward_mean
+                batch_log[prefix + "expected_return"] = expected_return
                 step = turn_max_step.get(t_idx, max(s.node_env_step for s in samples))
                 self._log_wandb_metrics(batch_log, step=step)
+                self._record_update_row(
+                    env_step=step,
+                    turn_idx=t_idx + 1,
+                    reward_mean=reward_mean,
+                    expected_return=expected_return,
+                    node_count=len(samples),
+                )
 
     def _update_from_samples(self, agent_idx: int, samples: List[NodeSample]) -> None:
         if not samples:
@@ -1642,5 +1695,6 @@ class MAGRPOTrainer:
 
         # Log final model saving to wandb
         self._log_wandb_metrics({"final_model_saved": output_dir}, step=self.env_step)
+        self._flush_update_table()
         if self.wandb_initialized and self._wandb_primary:
             wandb.finish()
