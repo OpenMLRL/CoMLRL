@@ -68,6 +68,10 @@ class MAGRPOConfig(TrainingArguments):
             "help": "Top-p for sampling (present for completeness; generation uses model_config if provided)."
         },
     )
+    top_k: Optional[int] = field(
+        default=50,
+        metadata={"help": "Top-k for sampling (set to None to disable)."},
+    )
 
     # Multi-turn / tree rollout
     num_turns: Optional[int] = field(
@@ -90,6 +94,12 @@ class MAGRPOConfig(TrainingArguments):
         default=-0.2,
         metadata={
             "help": "Early stop a branch if mean reward at a node exceeds this threshold."
+        },
+    )
+    external_prompt_passthrough: bool = field(
+        default=False,
+        metadata={
+            "help": "Use external prompts directly in multi-turn (skip formatter wrapping)."
         },
     )
 
@@ -1113,6 +1123,7 @@ class MAGRPOTrainer:
         agent_idx=0,
         num_return_sequences=1,
         max_new_tokens=128,
+        prompts_override: Optional[List[str]] = None,
         do_sample: Optional[bool] = None,
         **kwargs,
     ):
@@ -1133,8 +1144,15 @@ class MAGRPOTrainer:
         device = agent.device
 
         # Apply the appropriate formatter to create prompts from batch items
-        format_func = self.formatters[agent_idx]
-        prompts = [format_func(item) for item in batch_items]
+        if prompts_override is not None:
+            if len(prompts_override) != len(batch_items):
+                raise ValueError(
+                    "prompts_override must have the same length as batch_items"
+                )
+            prompts = prompts_override
+        else:
+            format_func = self.formatters[agent_idx]
+            prompts = [format_func(item) for item in batch_items]
         # batch_size is always 1 due to enforced constraint
 
         # Ensure tokenizer exists
@@ -1175,16 +1193,18 @@ class MAGRPOTrainer:
             }
 
             # If requesting multiple sequences, use sampling for diversity
+            top_k = getattr(self.args, "top_k", None)
             if do_sample is None and num_return_sequences > 1:
                 # Use generation parameters from config
                 generation_update = {
                     "do_sample": True,  # Enable sampling for randomness
                     "temperature": self.args.temperature,
                     "top_p": self.args.top_p,
-                    "top_k": 50,  # Default top_k value
                     "num_beams": 1,  # Disable beam search when sampling
                     "num_return_sequences": num_return_sequences,
                 }
+                if top_k is not None:
+                    generation_update["top_k"] = top_k
                 generation_kwargs.update(generation_update)
             elif do_sample is not None:
                 generation_kwargs.update(
@@ -1199,9 +1219,10 @@ class MAGRPOTrainer:
                         {
                             "temperature": self.args.temperature,
                             "top_p": self.args.top_p,
-                            "top_k": 50,
                         }
                     )
+                    if top_k is not None:
+                        generation_kwargs["top_k"] = top_k
 
             # Set pad_token_id from tokenizer if not set
             if (
@@ -1319,6 +1340,17 @@ class MAGRPOTrainer:
         # Multi-turn with external prompts: external modes return next-turn prompts.
 
         prompts = [external_prompts for _ in batch_items]
+        if getattr(self.args, "external_prompt_passthrough", False):
+            return self._generate_completions(
+                agent,
+                batch_items,
+                agent_idx=agent_idx,
+                num_return_sequences=num_return_sequences,
+                max_new_tokens=max_new_tokens,
+                prompts_override=prompts,
+                do_sample=do_sample,
+                **kwargs,
+            )
 
         # Temporarily replace prompts in batch_items
         modified_items = []
