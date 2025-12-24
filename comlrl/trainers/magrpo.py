@@ -287,6 +287,13 @@ class MAGRPOTrainer:
         self.wandb_initialized = False
         if self.wandb_config is not None:
             self._init_wandb()
+        self._wandb_primary = True
+        try:
+            rank = int(os.environ.get("RANK", "0"))
+            local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+            self._wandb_primary = rank == 0 and local_rank == 0
+        except ValueError:
+            self._wandb_primary = True
 
         # Dataset type: prefer explicit parameter, fallback to config sections
         self.dataset_type = dataset_type or None
@@ -738,7 +745,7 @@ class MAGRPOTrainer:
             eval_metrics.update(extra_metrics)
 
         # Log evaluation metrics
-        if self.wandb_initialized:
+        if self.wandb_initialized and self._wandb_primary:
             wandb.log(eval_metrics, step=self.env_step)
 
         return eval_metrics
@@ -800,7 +807,7 @@ class MAGRPOTrainer:
                     self._process_buffer(agent_idx, buffer)
 
             # Log per-turn epoch averages inline (avoid custom system/* metrics)
-            if self.wandb_initialized:
+            if self.wandb_initialized and self._wandb_primary:
                 epoch_log: Dict[str, Any] = {}
                 n_turns = max(1, int(self.args.num_turns))
                 for turn_idx in range(n_turns):
@@ -1470,7 +1477,12 @@ class MAGRPOTrainer:
         for t_idx in sorted(turn_groups.keys()):
             samples = turn_groups[t_idx]
             self._update_from_samples(agent_idx, samples)
-            if self.wandb_initialized and samples:
+            if (
+                self.wandb_initialized
+                and self._wandb_primary
+                and samples
+                and agent_idx == 0
+            ):
                 batch_log: Dict[str, Any] = {}
                 prefix = f"turn_{t_idx + 1}/"
                 batch_log[prefix + "reward_mean"] = float(
@@ -1614,6 +1626,6 @@ class MAGRPOTrainer:
                 self.tokenizer.save_pretrained(agent_dir)
 
         # Log final model saving to wandb
-        if self.wandb_initialized:
+        if self.wandb_initialized and self._wandb_primary:
             wandb.log({"final_model_saved": output_dir})
             wandb.finish()
