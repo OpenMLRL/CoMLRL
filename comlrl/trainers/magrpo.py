@@ -294,7 +294,6 @@ class MAGRPOTrainer:
             self._wandb_primary = rank == 0 and local_rank == 0
         except ValueError:
             self._wandb_primary = True
-        self._wandb_last_step = -1
 
         # Dataset type: prefer explicit parameter, fallback to config sections
         self.dataset_type = dataset_type or None
@@ -498,20 +497,6 @@ class MAGRPOTrainer:
 
             wandb.init(**init_kwargs)
             self.wandb_initialized = True
-
-    def _log_wandb_metrics(self, metrics: Dict[str, Any], step: Optional[int]) -> None:
-        if not metrics:
-            return
-        if not self.wandb_initialized or not self._wandb_primary:
-            return
-        if step is None:
-            wandb.log(metrics)
-            return
-        if step < self._wandb_last_step:
-            return
-        wandb.log(metrics, step=step)
-        if step > self._wandb_last_step:
-            self._wandb_last_step = step
 
     def get_train_dataloader(self) -> DataLoader:
         """Returns the training DataLoader."""
@@ -760,7 +745,8 @@ class MAGRPOTrainer:
             eval_metrics.update(extra_metrics)
 
         # Log evaluation metrics
-        self._log_wandb_metrics(eval_metrics, step=self.env_step)
+        if self.wandb_initialized and self._wandb_primary:
+            wandb.log(eval_metrics, step=self.env_step)
 
         return eval_metrics
 
@@ -821,18 +807,20 @@ class MAGRPOTrainer:
                     self._process_buffer(agent_idx, buffer)
 
             # Log per-turn epoch averages inline (avoid custom system/* metrics)
-            epoch_log: Dict[str, Any] = {}
-            n_turns = max(1, int(self.args.num_turns))
-            for turn_idx in range(n_turns):
-                if epoch_turn_rewards and epoch_turn_rewards[turn_idx]:
-                    epoch_log[f"turn_{turn_idx + 1}/epoch_reward_mean"] = float(
-                        np.mean(epoch_turn_rewards[turn_idx])
-                    )
-                if epoch_turn_returns and epoch_turn_returns[turn_idx]:
-                    epoch_log[f"turn_{turn_idx + 1}/epoch_avg_return"] = float(
-                        np.mean(epoch_turn_returns[turn_idx])
-                    )
-            self._log_wandb_metrics(epoch_log, step=self.env_step)
+            if self.wandb_initialized and self._wandb_primary:
+                epoch_log: Dict[str, Any] = {}
+                n_turns = max(1, int(self.args.num_turns))
+                for turn_idx in range(n_turns):
+                    if epoch_turn_rewards and epoch_turn_rewards[turn_idx]:
+                        epoch_log[f"turn_{turn_idx + 1}/epoch_reward_mean"] = float(
+                            np.mean(epoch_turn_rewards[turn_idx])
+                        )
+                    if epoch_turn_returns and epoch_turn_returns[turn_idx]:
+                        epoch_log[f"turn_{turn_idx + 1}/epoch_avg_return"] = float(
+                            np.mean(epoch_turn_returns[turn_idx])
+                        )
+                if epoch_log:
+                    wandb.log(epoch_log, step=self.env_step)
 
     def _train_step_returns(
         self,
@@ -1482,22 +1470,19 @@ class MAGRPOTrainer:
         if not buffer:
             return
         turn_groups: Dict[int, List[NodeSample]] = {}
-        turn_max_step: Dict[int, int] = {}
         for sample in buffer:
             t_idx = int(sample.turn_idx)
             turn_groups.setdefault(t_idx, []).append(sample)
-            step = int(getattr(sample, "node_env_step", self.env_step))
-            prev = turn_max_step.get(t_idx)
-            if prev is None or step > prev:
-                turn_max_step[t_idx] = step
         buffer.clear()
-        turn_order = sorted(
-            turn_groups.keys(), key=lambda t: (turn_max_step.get(t, -1), t)
-        )
-        for t_idx in turn_order:
+        for t_idx in sorted(turn_groups.keys()):
             samples = turn_groups[t_idx]
             self._update_from_samples(agent_idx, samples)
-            if samples and agent_idx == 0:
+            if (
+                self.wandb_initialized
+                and self._wandb_primary
+                and samples
+                and agent_idx == 0
+            ):
                 batch_log: Dict[str, Any] = {}
                 prefix = f"turn_{t_idx + 1}/"
                 batch_log[prefix + "reward_mean"] = float(
@@ -1506,8 +1491,8 @@ class MAGRPOTrainer:
                 batch_log[prefix + "expected_return"] = float(
                     np.mean([s.node_mean_return for s in samples])
                 )
-                step = turn_max_step.get(t_idx, max(s.node_env_step for s in samples))
-                self._log_wandb_metrics(batch_log, step=step)
+                step = max(s.node_env_step for s in samples)
+                wandb.log(batch_log, step=step)
 
     def _update_from_samples(self, agent_idx: int, samples: List[NodeSample]) -> None:
         if not samples:
@@ -1641,6 +1626,6 @@ class MAGRPOTrainer:
                 self.tokenizer.save_pretrained(agent_dir)
 
         # Log final model saving to wandb
-        self._log_wandb_metrics({"final_model_saved": output_dir}, step=self.env_step)
         if self.wandb_initialized and self._wandb_primary:
+            wandb.log({"final_model_saved": output_dir})
             wandb.finish()
