@@ -33,7 +33,6 @@ CoMLRL supports two IAC architectures for critic implementation:
 - `max_grad_norm`: Maximum gradient norm for clipping
 - `rollout_buffer_size`: Number of samples to collect before update
 - `mini_batch_size`: Mini-batch size for policy updates
-- `ac_epochs`: Number of optimization epochs per rollout
 - `value_clip_range`: Clipping range for value function
 - `value_loss_coef`: Coefficient for value loss
 - `entropy_coef`: Coefficient for entropy bonus
@@ -51,7 +50,6 @@ CoMLRL supports two IAC architectures for critic implementation:
 - `value_head_hidden_dim`: Hidden dimension for actor value head
 - `num_agents`: Number of agents
 - `num_turns`: Number of turns, currently only supports 1
-- `reward_norm_eps`: Epsilon for reward normalization
 {{% /hint %}}
 
 {{% hint info %}}
@@ -99,7 +97,6 @@ where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf
 - `max_grad_norm`: Gradient clipping norm
 - `rollout_buffer_size`: Number of samples to collect per agent before an update
 - `mini_batch_size`: Mini-batch size within each update
-- `ac_epochs`: Optimization epochs per rollout
 - `value_loss_coef`: Weight on critic loss
 - `entropy_coef`: Entropy bonus coefficient
 - `advantage_normalization`: Whether to normalize advantages before updates
@@ -109,7 +106,6 @@ where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf
 - `per_device_train_batch_size`: Must be 1
 - `pad_token_id`: Padding token id
 - `num_agents`: Number of actors
-- `reward_norm_eps`: Epsilon when normalizing returns
 - `num_return_sequences`: Number of generations per prompt per agent
 - `critic_model_name_or_path`: Required identifier for the shared critic
 {{% /hint %}}

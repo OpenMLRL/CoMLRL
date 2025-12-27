@@ -53,7 +53,6 @@ class MAACConfig:
     per_device_train_batch_size: int = 1
     pad_token_id: Optional[int] = None
     num_agents: int = 2
-    reward_norm_eps: float = 1e-3
     num_return_sequences: int = 1
     critic_model_name_or_path: Optional[Union[str, PreTrainedModel]] = None
     num_turns: int = 2
@@ -770,30 +769,6 @@ class MAACTrainer:
     # ------------------------------------------------------------------ #
     # Advantage prep
     # ------------------------------------------------------------------ #
-    def _normalize_returns(self, rollouts: List[RolloutSample]) -> None:
-        returns = torch.stack([sample.returns for sample in rollouts]).float()
-        returns = returns.view(len(rollouts), -1)
-        flat = returns.view(-1)
-        if flat.numel() < 2:
-            return
-
-        mean = flat.mean()
-        std = flat.std(unbiased=False)
-        if std < self.args.reward_norm_eps:
-            return
-        normalized = (returns - mean) / std
-
-        for sample, norm_value in zip(rollouts, normalized):
-            norm_tensor = (
-                norm_value.view_as(sample.returns)
-                .to(sample.returns.dtype)
-                .detach()
-                .clone()
-            )
-            sample.returns = norm_tensor
-            sample.advantage = norm_tensor - sample.old_value.to(norm_tensor.dtype)
-            sample.normalized_advantage = None
-
     def _prepare_advantages(self, rollouts: List[RolloutSample]) -> None:
         if not rollouts:
             return

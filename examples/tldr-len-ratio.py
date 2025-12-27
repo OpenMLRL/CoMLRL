@@ -105,8 +105,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--critic-learning-rate", type=float, default=1e-6)
     parser.add_argument("--value-loss-coef", type=float, default=0.5)
     parser.add_argument("--rollout-buffer-size", type=int, default=8)
-    parser.add_argument("--mini-batch-size", type=int, default=4)
-    parser.add_argument("--ac-epochs", type=int, default=1)
     parser.add_argument("--max-new-tokens", type=int, default=256)
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--top-p", type=float, default=0.6)
@@ -146,8 +144,6 @@ def main() -> None:
         critic_learning_rate=args.critic_learning_rate,
         value_loss_coef=args.value_loss_coef,
         rollout_buffer_size=args.rollout_buffer_size,
-        mini_batch_size=args.mini_batch_size,
-        ac_epochs=args.ac_epochs,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_p=args.top_p,

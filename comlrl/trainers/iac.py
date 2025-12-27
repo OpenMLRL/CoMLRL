@@ -41,7 +41,6 @@ class IACConfig:
     max_grad_norm: float = 0.5
     rollout_buffer_size: int = 8
     mini_batch_size: int = 4
-    ac_epochs: int = 1
     value_clip_range: Optional[float] = 0.2
     value_loss_coef: float = 0.5
     entropy_coef: float = 0.0
@@ -60,16 +59,12 @@ class IACConfig:
     pad_token_id: Optional[int] = None
     num_agents: int = 1
     num_turns: int = 1
-    reward_norm_eps: float = 1e-3
     num_return_sequences: int = 1
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
             raise ValueError("rollout_buffer_size must be >= 1.")
-        if self.mini_batch_size < 1:
-            raise ValueError("mini_batch_size must be >= 1.")
-        if self.mini_batch_size > self.rollout_buffer_size:
-            self.mini_batch_size = self.rollout_buffer_size
+        self.mini_batch_size = self.rollout_buffer_size
         if self.per_device_train_batch_size != 1:
             raise ValueError("per_device_train_batch_size must be 1 for IAC.")
         if self.num_agents < 1:
@@ -355,7 +350,6 @@ class IACTrainer:
                 "critic_learning_rate": self.args.critic_learning_rate,
                 "rollout_buffer_size": self.args.rollout_buffer_size,
                 "mini_batch_size": self.args.mini_batch_size,
-                "ac_epochs": self.args.ac_epochs,
                 "entropy_coef": self.args.entropy_coef,
                 "value_loss_coef": self.args.value_loss_coef,
                 "max_new_tokens": self.args.max_new_tokens,
@@ -721,8 +715,6 @@ class IACTrainer:
         if not rollouts:
             return
 
-        self._normalize_returns(rollouts)
-
         advantages = torch.stack(
             [sample.advantage.to(torch.float32).view(-1)[0] for sample in rollouts]
         )
@@ -735,30 +727,6 @@ class IACTrainer:
         else:
             for sample in rollouts:
                 sample.normalized_advantage = sample.advantage.clone()
-
-    def _normalize_returns(self, rollouts: List[RolloutSample]) -> None:
-        returns = torch.stack([sample.returns for sample in rollouts]).float()
-        returns = returns.view(len(rollouts), -1)
-        flat = returns.view(-1)
-        if flat.numel() < 2:
-            return
-
-        mean = flat.mean()
-        std = flat.std(unbiased=False)
-        if std < self.args.reward_norm_eps:
-            return
-        normalized = (returns - mean) / std
-
-        for sample, norm_value in zip(rollouts, normalized):
-            norm_tensor = (
-                norm_value.view_as(sample.returns)
-                .to(sample.returns.dtype)
-                .detach()
-                .clone()
-            )
-            sample.returns = norm_tensor
-            sample.advantage = norm_tensor - sample.old_value.to(norm_tensor.dtype)
-            sample.normalized_advantage = None
 
     def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> Dict[str, float]:
         actor_model = self.actor_models[agent_idx]
@@ -959,9 +927,10 @@ class IACTrainer:
     # Logging and persistence
     # --------------------------------------------------------------------- #
     def _tag_metrics(
-        self, metrics: Dict[str, float], agent_idx: int
+        self, metrics: Dict[str, float], agent_idx: int, turn_idx: int = 0
     ) -> Dict[str, float]:
-        return {f"turn_1/{key}": value for key, value in metrics.items()}
+        prefix = f"turn_{turn_idx + 1}/"
+        return {prefix + key: value for key, value in metrics.items()}
 
     def _log_metrics(self, metrics: Dict[str, float]) -> None:
         if not metrics:
@@ -975,13 +944,30 @@ class IACTrainer:
         buffer: List[RolloutSample],
         epoch_metrics: Dict[str, List[float]],
     ) -> None:
-        metrics = self._update(agent_idx, buffer)
+        if not buffer:
+            return
+
+        has_turn_idx = any(
+            "turn_idx" in (getattr(s, "metadata", {}) or {}) for s in buffer
+        )
+        turn_groups: Dict[int, List[RolloutSample]] = {}
+        for sample in buffer:
+            t_idx = int(sample.metadata.get("turn_idx", 0)) if has_turn_idx else 0
+            turn_groups.setdefault(t_idx, []).append(sample)
+
         buffer.clear()
-        tagged = self._tag_metrics(metrics, agent_idx)
-        self._log_metrics(tagged)
+
+        combined_log: Dict[str, float] = {}
+        for t_idx in sorted(turn_groups.keys()):
+            samples = turn_groups[t_idx]
+            metrics = self._update(agent_idx, samples)
+            tagged = self._tag_metrics(metrics, agent_idx, turn_idx=t_idx)
+            combined_log.update(tagged)
+            for key, value in tagged.items():
+                epoch_metrics[key].append(value)
+
+        self._log_metrics(combined_log)
         self.global_step += 1
-        for key, value in tagged.items():
-            epoch_metrics[key].append(value)
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
