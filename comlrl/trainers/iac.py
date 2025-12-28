@@ -546,7 +546,7 @@ class IACTrainer:
                     actor_model, sequences, full_attention_mask, prompt_len
                 )
 
-        if value is not None and value.numel() > 1:
+        if value is not None and value.numel() > 1 and agent_idx == 0:
             var = torch.var(value.detach().float(), unbiased=False).item()
             self._log_metrics({f"turn_1/agent_{agent_idx}/value_variance": float(var)})
 
@@ -1196,17 +1196,21 @@ class IACTrainer:
 
         buffer.clear()
 
+        log_enabled = agent_idx == 0
         combined_log: Dict[str, float] = {}
         for t_idx in sorted(turn_groups.keys()):
             samples = turn_groups[t_idx]
             metrics = self._update(agent_idx, samples)
+            if not log_enabled:
+                continue
             tagged = self._tag_metrics(metrics, agent_idx, turn_idx=t_idx)
             combined_log.update(tagged)
             for key, value in tagged.items():
                 epoch_metrics[key].append(value)
 
-        self._log_metrics(combined_log)
-        self.global_step += 1
+        if log_enabled:
+            self._log_metrics(combined_log)
+            self.global_step += 1
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
