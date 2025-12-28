@@ -60,6 +60,8 @@ class IACConfig:
     num_agents: int = 1
     num_turns: int = 1
     num_return_sequences: int = 1
+    eval_interval: int = 16
+    eval_num_samples: int = 4
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
@@ -77,6 +79,10 @@ class IACConfig:
             self.critic_learning_rate = self.actor_learning_rate
         if self.num_return_sequences < 1:
             raise ValueError("num_return_sequences must be >= 1.")
+        if self.eval_interval < 0:
+            raise ValueError("eval_interval must be >= 0.")
+        if self.eval_num_samples < 1:
+            raise ValueError("eval_num_samples must be >= 1.")
 
 
 @dataclass
@@ -384,6 +390,16 @@ class IACTrainer:
         return DataLoader(
             self.train_dataset,
             batch_size=self.args.per_device_train_batch_size,
+            shuffle=False,
+            collate_fn=lambda batch: batch,
+        )
+
+    def get_eval_dataloader(self) -> DataLoader:
+        if self.eval_dataset is None:
+            raise ValueError("Evaluation requires a dataset.")
+        return DataLoader(
+            self.eval_dataset,
+            batch_size=1,
             shuffle=False,
             collate_fn=lambda batch: batch,
         )
@@ -891,16 +907,82 @@ class IACTrainer:
         }
         return averaged
 
+    def _summarize_rollout_metrics(
+        self, rollouts: List[RolloutSample]
+    ) -> Dict[str, float]:
+        if not rollouts:
+            return {}
+
+        metrics: Dict[str, float] = {}
+        rewards = torch.stack(
+            [sample.reward.view(-1)[0] for sample in rollouts]
+        ).float()
+        if rewards.numel() > 0 and torch.isfinite(rewards).all():
+            metrics["reward_mean"] = float(rewards.mean().item())
+
+        returns = torch.stack(
+            [sample.returns.view(-1)[0] for sample in rollouts]
+        ).float()
+        if returns.numel() > 0 and torch.isfinite(returns).all():
+            metrics["expected_return"] = float(returns.mean().item())
+            metrics["value_target_mean"] = float(returns.mean().item())
+
+        values = torch.stack(
+            [sample.old_value.view(-1)[0] for sample in rollouts]
+        ).float()
+        if values.numel() > 0 and torch.isfinite(values).all():
+            metrics["value_pred_mean"] = float(values.mean().item())
+
+        return metrics
+
     # --------------------------------------------------------------------- #
     # Training loop
     # --------------------------------------------------------------------- #
+    def evaluate(self) -> Dict[str, float]:
+        if self.eval_dataset is None:
+            return {}
+
+        dataloader = self.get_eval_dataloader()
+        num_samples = int(self.args.eval_num_samples)
+        turn_groups: Dict[int, List[RolloutSample]] = {}
+        seen = 0
+
+        with torch.no_grad():
+            for batch in dataloader:
+                for item in batch:
+                    rollouts = self._collect_rollouts(item)
+                    for sample in rollouts:
+                        t_idx = int(sample.metadata.get("turn_idx", 0))
+                        turn_groups.setdefault(t_idx, []).append(sample)
+                    seen += 1
+                    if seen >= num_samples:
+                        break
+                if seen >= num_samples:
+                    break
+
+        eval_log: Dict[str, float] = {}
+        for turn_idx, samples in sorted(turn_groups.items()):
+            metrics = self._summarize_rollout_metrics(samples)
+            for key, value in metrics.items():
+                eval_log[f"eval/turn_{turn_idx + 1}/{key}"] = value
+
+        if eval_log:
+            self._log_metrics(eval_log)
+        return eval_log
+
     def train(self) -> None:
         dataloader = self.get_train_dataloader()
         total_epochs = self.args.num_train_epochs
 
         for epoch in range(total_epochs):
             epoch_metrics = defaultdict(list)
-            for batch in dataloader:
+            for batch_idx, batch in enumerate(dataloader):
+                if (
+                    self.eval_dataset is not None
+                    and self.args.eval_interval > 0
+                    and batch_idx % int(self.args.eval_interval) == 0
+                ):
+                    self.evaluate()
                 for item in batch:
                     rollouts = self._collect_rollouts(item)
                     for sample in rollouts:
