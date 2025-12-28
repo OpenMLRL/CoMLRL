@@ -151,6 +151,7 @@ def main() -> None:
         use_separate_critic=args.separate_critic,
         critic_model_name_or_path=args.critic_model,
         num_agents=2,
+        num_turns=1,
     )
 
     wandb_config = {

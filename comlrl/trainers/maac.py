@@ -177,7 +177,6 @@ class MAACTrainer:
             weight_decay=self.args.weight_decay,
         )
 
-        self.global_step = 0
         self.rollout_buffers: List[List[RolloutSample]] = [
             [] for _ in range(self.args.num_agents)
         ]

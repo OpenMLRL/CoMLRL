@@ -32,33 +32,33 @@ class IACConfig:
     """Configuration container for Independent Actor-Critic fine-tuning."""
 
     output_dir: str = "./iac_output"
-    actor_learning_rate: float = 1e-6
-    critic_learning_rate: Optional[float] = 1e-6
+    actor_learning_rate: float = 5e-6
+    critic_learning_rate: Optional[float] = 5e-6
     weight_decay: float = 0.0
     adam_beta1: float = 0.9
     adam_beta2: float = 0.999
     adam_epsilon: float = 1e-8
     max_grad_norm: float = 0.5
     rollout_buffer_size: int = 8
-    mini_batch_size: int = 4
+    mini_batch_size: int = 8
     value_clip_range: Optional[float] = 0.2
-    value_loss_coef: float = 0.5
+    value_loss_coef: float = 0.6
     entropy_coef: float = 0.0
     advantage_normalization: bool = True
-    max_new_tokens: int = 128
+    max_new_tokens: int = 256
     temperature: float = 0.6
     top_p: float = 0.6
     top_k: Optional[int] = None
     do_sample: bool = True
-    num_train_epochs: int = 8
+    num_train_epochs: int = 40
     per_device_train_batch_size: int = 1
-    use_separate_critic: bool = False
+    use_separate_critic: bool = True
     critic_model_name_or_path: Optional[str] = None
     critic_value_head_hidden_dim: Optional[int] = None
     value_head_hidden_dim: Optional[int] = None
     pad_token_id: Optional[int] = None
-    num_agents: int = 1
-    num_turns: int = 1
+    num_agents: int = 2
+    num_turns: int = 2
     discount: float = 0.9
     num_return_sequences: int = 1
     eval_interval: int = 16
@@ -220,7 +220,7 @@ class IACTrainer:
                 )
                 self.critic_optimizers.append(optimizer)
 
-        self.global_step = 0
+        self.env_step = 0
         self.rollout_buffers: List[List[RolloutSample]] = [
             [] for _ in range(self.args.num_agents)
         ]
@@ -545,10 +545,6 @@ class IACTrainer:
                 value = self._value_on_prompt_only(
                     actor_model, sequences, full_attention_mask, prompt_len
                 )
-
-        if value is not None and value.numel() > 1 and agent_idx == 0:
-            var = torch.var(value.detach().float(), unbiased=False).item()
-            self._log_metrics({f"turn_1/agent_{agent_idx}/value_variance": float(var)})
 
         logprobs = []
         for seq, attn, resp_len in zip(sequences, full_attention_mask, response_lens):
@@ -1148,6 +1144,8 @@ class IACTrainer:
                         buffer.append(sample)
                         if len(buffer) >= self.args.rollout_buffer_size:
                             self._process_buffer(agent_idx, buffer, epoch_metrics)
+                    if self.args.num_agents > 0:
+                        self.env_step += len(rollouts) // self.args.num_agents
 
             for agent_idx, buffer in enumerate(self.rollout_buffers):
                 if not buffer:
@@ -1175,7 +1173,7 @@ class IACTrainer:
         if not metrics:
             return
         if self.wandb_initialized and wandb is not None:
-            wandb.log(metrics, step=self.global_step)
+            wandb.log(metrics, step=self.env_step)
 
     def _process_buffer(
         self,
@@ -1196,21 +1194,16 @@ class IACTrainer:
 
         buffer.clear()
 
-        log_enabled = agent_idx == 0
         combined_log: Dict[str, float] = {}
         for t_idx in sorted(turn_groups.keys()):
             samples = turn_groups[t_idx]
             metrics = self._update(agent_idx, samples)
-            if not log_enabled:
-                continue
             tagged = self._tag_metrics(metrics, agent_idx, turn_idx=t_idx)
             combined_log.update(tagged)
             for key, value in tagged.items():
                 epoch_metrics[key].append(value)
 
-        if log_enabled:
-            self._log_metrics(combined_log)
-            self.global_step += 1
+        self._log_metrics(combined_log)
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
