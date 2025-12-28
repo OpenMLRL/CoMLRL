@@ -49,7 +49,11 @@ CoMLRL supports two IAC architectures for critic implementation:
 - `critic_value_head_hidden_dim`: Hidden dimension for critic value head
 - `value_head_hidden_dim`: Hidden dimension for actor value head
 - `num_agents`: Number of agents
-- `num_turns`: Number of turns, currently only supports 1
+- `num_turns`: Number of turns
+- `discount`: Discount factor for multi-turn returns
+- `early_termination_threshold`: Optional early-stop threshold for multi-turn
+- `eval_interval`: Evaluation interval (in training batches)
+- `eval_num_samples`: Number of evaluation samples per interval
 {{% /hint %}}
 
 {{% hint info %}}
@@ -66,6 +70,7 @@ CoMLRL supports two IAC architectures for critic implementation:
 - `model_config`: Model configuration dict (optional)
 - `wandb_config`: Configuration for Weights & Biases logging (optional)
 - `metrics_callback`: Optional callback for custom metrics
+- `external_transition`: Optional transition function required for multi-turn training
 {{% /hint %}}
 
 {{% hint warning %}}
@@ -73,7 +78,7 @@ For simplicity, IAC computes the policy gradient using the current policy's samp
 {{% /hint %}}
 
 {{% hint warning %}}
-The trainer enforces `per_device_train_batch_size=1` and currently only supports single-turn training (`num_turns=1`).
+The trainer enforces `per_device_train_batch_size=1`. For `num_turns > 1`, provide an `external_transition` and set `num_return_sequences=1`.
 {{% /hint %}}
 
 ## MAAC
