@@ -17,6 +17,7 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerBase,
 )
+from tqdm import tqdm  # type: ignore
 
 from comlrl.models.actor_critic import CausalLMWithValueHead
 import wandb
@@ -248,8 +249,18 @@ class IACTrainer:
 
         self.wandb_config = wandb_config
         self.wandb_initialized = False
+        self.verbose = True
         if wandb_config is not None:
             self._init_wandb()
+        try:
+            if isinstance(self.wandb_config, dict):
+                sections = self.wandb_config.get("config_sections", {})
+                if isinstance(sections, dict):
+                    out = sections.get("output", {})
+                    if isinstance(out, dict) and "verbose" in out:
+                        self.verbose = bool(out.get("verbose"))
+        except Exception:
+            pass
 
     # --------------------------------------------------------------------- #
     # Initialisation helpers
@@ -1124,12 +1135,22 @@ class IACTrainer:
         return eval_log
 
     def train(self) -> None:
-        dataloader = self.get_train_dataloader()
         total_epochs = self.args.num_train_epochs
 
         for epoch in range(total_epochs):
             epoch_metrics = defaultdict(list)
-            for batch_idx, batch in enumerate(dataloader):
+            dataloader = self.get_train_dataloader()
+            if not getattr(self, "verbose", True):
+                it = enumerate(
+                    tqdm(
+                        dataloader,
+                        total=len(dataloader),
+                        desc=f"Epoch {epoch + 1}/{total_epochs}",
+                    )
+                )
+            else:
+                it = enumerate(dataloader)
+            for batch_idx, batch in it:
                 if (
                     self.eval_dataset is not None
                     and self.args.eval_interval > 0
@@ -1157,7 +1178,7 @@ class IACTrainer:
                 for key, values in epoch_metrics.items()
                 if values
             }
-            if summary:
+            if summary and getattr(self, "verbose", True):
                 print(f"Epoch {epoch + 1}/{total_epochs} metrics: {summary}")
 
     # --------------------------------------------------------------------- #
