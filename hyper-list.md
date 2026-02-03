@@ -11,7 +11,7 @@
 - `adam_epsilon`
 - `max_grad_norm`
 - `rollout_buffer_size`
-- `train_batch_size` (derived from `rollout_buffer_size`)
+- `train_batch_size` (defaults to `rollout_buffer_size`)
 - `value_clip_range`
 - `value_loss_coef`
 - `advantage_normalization`
@@ -47,7 +47,7 @@
 - `adam_epsilon`
 - `max_grad_norm`
 - `rollout_buffer_size`
-- `train_batch_size` (derived from `rollout_buffer_size`)
+- `train_batch_size` (defaults to `rollout_buffer_size`)
 - `value_loss_coef`
 - `advantage_normalization`
 - `max_new_tokens`

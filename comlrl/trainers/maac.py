@@ -39,7 +39,7 @@ class MAACConfig:
     adam_epsilon: float = 1e-8
     max_grad_norm: float = 0.5
     rollout_buffer_size: int = 8
-    train_batch_size: int = 8
+    train_batch_size: Optional[int] = None
     value_loss_coef: float = 0.6
     advantage_normalization: bool = True
     max_new_tokens: int = 256
@@ -65,7 +65,10 @@ class MAACConfig:
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
             raise ValueError("rollout_buffer_size must be >= 1.")
-        self.train_batch_size = self.rollout_buffer_size
+        if self.train_batch_size is None:
+            self.train_batch_size = self.rollout_buffer_size
+        if self.train_batch_size < 1:
+            raise ValueError("train_batch_size must be >= 1.")
         if self.num_agents < 1:
             raise ValueError("num_agents must be >= 1.")
         if self.num_generations < 1:
@@ -341,9 +344,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         wandb.init(**init_kwargs)
         self.wandb_initialized = True
 
-    # ------------------------------------------------------------------ #
     # Data utilities
-    # ------------------------------------------------------------------ #
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
             raise ValueError("Training requires a dataset.")
@@ -406,9 +407,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         except (TypeError, ValueError):
             return inspect.Signature()
 
-    # ------------------------------------------------------------------ #
     # Rollout collection
-    # ------------------------------------------------------------------ #
     def _call_reward_func(
         self, prompts: Sequence[str], agent_completions: Sequence[Sequence[str]]
     ) -> List[float]:
@@ -792,12 +791,8 @@ class MAACTrainer(ActorCriticTrainerBase):
             "Reward function must return 1 value, num_generations values, or num_agents values."
         )
 
-    # ------------------------------------------------------------------ #
     # Advantage prep
-    # ------------------------------------------------------------------ #
-    # ------------------------------------------------------------------ #
     # Losses
-    # ------------------------------------------------------------------ #
     def _policy_eval(
         self,
         actor_model: CausalLMWithValueHead,

@@ -39,7 +39,7 @@ class IACConfig:
     adam_epsilon: float = 1e-8
     max_grad_norm: float = 0.5
     rollout_buffer_size: int = 8
-    train_batch_size: int = 8
+    train_batch_size: Optional[int] = None
     value_clip_range: Optional[float] = 0.2
     value_loss_coef: float = 0.6
     advantage_normalization: bool = True
@@ -69,7 +69,10 @@ class IACConfig:
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
             raise ValueError("rollout_buffer_size must be >= 1.")
-        self.train_batch_size = self.rollout_buffer_size
+        if self.train_batch_size is None:
+            self.train_batch_size = self.rollout_buffer_size
+        if self.train_batch_size < 1:
+            raise ValueError("train_batch_size must be >= 1.")
         if self.num_agents < 1:
             raise ValueError("num_agents must be >= 1.")
         if self.num_turns < 1:
@@ -437,9 +440,7 @@ class IACTrainer(ActorCriticTrainerBase):
         wandb.init(**init_kwargs)
         self.wandb_initialized = True
 
-    # --------------------------------------------------------------------- #
     # Data utilities
-    # --------------------------------------------------------------------- #
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
             raise ValueError("Training requires a dataset.")
@@ -509,9 +510,7 @@ class IACTrainer(ActorCriticTrainerBase):
             f"Reward function must return either 1 or {num_agents} values per prompt for multi-agent IAC."
         )
 
-    # --------------------------------------------------------------------- #
     # Rollout collection
-    # --------------------------------------------------------------------- #
     def _generate_rollout(
         self,
         actor_model: CausalLMWithValueHead,
@@ -948,9 +947,7 @@ class IACTrainer(ActorCriticTrainerBase):
 
         return logprob_sum
 
-    # --------------------------------------------------------------------- #
     # Actor-Critic update logic
-    # --------------------------------------------------------------------- #
     def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> Dict[str, float]:
         actor_model = self.actor_models[agent_idx]
         critic_model = (
