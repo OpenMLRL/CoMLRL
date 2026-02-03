@@ -91,7 +91,6 @@ trainer = MAGRPOTrainer(
     reward_func=lambda a, b: [abs(max(len(b[0]), 1) / max(len(a[0]), 1) - 3.0)],
     formatters=[lambda example: example["prompt"]] * 2,
     args=MAGRPOConfig(
-        per_device_train_batch_size=1,
     ),
 )
 trainer.train()

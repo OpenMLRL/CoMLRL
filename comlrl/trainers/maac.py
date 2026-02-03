@@ -17,10 +17,9 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerBase,
 )
-from tqdm import tqdm  # type: ignore
-
 import wandb
 from comlrl.models.actor_critic import CausalLMWithValueHead
+from comlrl.trainers.ac_base import ActorCriticTrainerBase
 from comlrl.trainers.iac import RolloutSample
 
 RewardFunc = Callable[..., Sequence[float]]
@@ -41,7 +40,7 @@ class MAACConfig:
     adam_epsilon: float = 1e-8
     max_grad_norm: float = 0.5
     rollout_buffer_size: int = 8
-    mini_batch_size: int = 8
+    train_batch_size: int = 8
     value_loss_coef: float = 0.6
     advantage_normalization: bool = True
     max_new_tokens: int = 256
@@ -50,37 +49,34 @@ class MAACConfig:
     top_k: Optional[int] = None
     do_sample: bool = True
     num_train_epochs: int = 40
-    per_device_train_batch_size: int = 1
     pad_token_id: Optional[int] = None
     num_agents: int = 2
-    num_return_sequences: int = 1
+    num_generations: int = 1
     critic_model_name_or_path: Optional[Union[str, PreTrainedModel]] = None
     num_turns: int = 2
+    external_prompt_passthrough: bool = False
     discount: float = 0.9
     critic_type: str = "v"  # "v" (V(s)) or "q" (Q(s,a))
     early_termination_threshold: Optional[float] = -0.2
     eval_interval: int = 16
     eval_num_samples: int = 4
+    eval_batch_size: int = 1
     logging_steps: int = 1
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
             raise ValueError("rollout_buffer_size must be >= 1.")
-        self.mini_batch_size = self.rollout_buffer_size
-        if self.per_device_train_batch_size != 1:
-            raise ValueError("per_device_train_batch_size must be 1 for MAAC.")
+        self.train_batch_size = self.rollout_buffer_size
         if self.num_agents < 1:
             raise ValueError("num_agents must be >= 1.")
-        if self.num_return_sequences < 1:
-            raise ValueError("num_return_sequences must be >= 1.")
+        if self.num_generations < 1:
+            raise ValueError("num_generations must be >= 1.")
         if self.critic_model_name_or_path is None:
             raise ValueError("critic_model_name_or_path must be provided for MAAC.")
         if self.num_turns < 1:
             raise ValueError("num_turns must be >= 1.")
-        if self.num_turns > 1 and self.num_return_sequences != 1:
-            raise ValueError(
-                "Multi-turn MAAC currently supports num_return_sequences == 1."
-            )
+        if self.num_turns > 1 and self.num_generations != 1:
+            raise ValueError("Multi-turn MAAC currently supports num_generations == 1.")
         critic_type = (self.critic_type or "v").lower()
         if critic_type not in ("v", "q"):
             raise ValueError("critic_type must be one of: 'v', 'q'.")
@@ -88,12 +84,16 @@ class MAACConfig:
             raise ValueError("eval_interval must be >= 0.")
         if self.eval_num_samples < 1:
             raise ValueError("eval_num_samples must be >= 1.")
+        if self.eval_batch_size < 1:
+            raise ValueError("eval_batch_size must be >= 1.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
 
 
-class MAACTrainer:
+class MAACTrainer(ActorCriticTrainerBase):
     """Multi-Agent Actor-Critic with a shared critic conditioned on joint prompts."""
+
+    algorithm_name: str = "MAAC"
 
     def __init__(
         self,
@@ -158,7 +158,7 @@ class MAACTrainer:
         self.critic_model.to(self.device)
 
         self._configure_tokenizer_specials()
-        self.formatters = self._setup_formatter(formatters)
+        self.formatters = self._setup_formatters(formatters)
         self._reward_signature = self._infer_reward_signature(reward_func)
 
         self.actor_optimizers: List[torch.optim.Optimizer] = []
@@ -193,19 +193,13 @@ class MAACTrainer:
 
         # Verbosity from config (default True)
         self.verbose = True
-        try:
-            if isinstance(self.wandb_config, dict):
-                sections = self.wandb_config.get("config_sections", {})
-                if isinstance(sections, dict):
-                    out = sections.get("output", {})
-                    if isinstance(out, dict) and "verbose" in out:
-                        self.verbose = bool(out.get("verbose"))
-        except Exception:
-            pass
+        if isinstance(self.wandb_config, dict):
+            sections = self.wandb_config.get("config_sections", {})
+            if isinstance(sections, dict):
+                out = sections.get("output", {})
+                if isinstance(out, dict) and "verbose" in out:
+                    self.verbose = bool(out.get("verbose"))
 
-    # ------------------------------------------------------------------ #
-    # Initialisation helpers
-    # ------------------------------------------------------------------ #
     def _ensure_tokenizer(
         self,
         model: Optional[Union[str, PreTrainedModel]],
@@ -256,36 +250,84 @@ class MAACTrainer:
         if self.tokenizer.pad_token_id is None:
             raise ValueError("Tokenizer must expose pad_token_id.")
 
-    def _setup_formatter(
-        self, formatters: Optional[Union[Formatter, Sequence[Formatter]]]
-    ) -> List[Formatter]:
-        if formatters is None:
-            raise ValueError("Formatters are required for MAAC.")
-        if callable(formatters):
-            return [formatters for _ in range(self.args.num_agents)]
-        if isinstance(formatters, Sequence):
-            if len(formatters) != self.args.num_agents:
-                raise ValueError("Number of formatters must match num_agents.")
-            return list(formatters)
-        raise ValueError("formatters must be a callable or sequence of callables.")
-
     def _init_wandb(self) -> None:
-        wandb_project = self.wandb_config.get("project", "maac")
+        if self.wandb_config is None:
+            self.wandb_config = {}
+        wandb_project = self.wandb_config.get("project", "comlrl")
         wandb_entity = self.wandb_config.get("entity")
-        wandb_run_name = self.wandb_config.get("name")
+        algo_tag = str(self.algorithm_name or "maac").lower()
+        wandb_run_name = self.wandb_config.get("name", f"test-{algo_tag}")
         wandb_dir = self.wandb_config.get("dir")
+
+        config_dict: Dict[str, Any] = {
+            "algorithm": self.algorithm_name,
+            "num_agents": self.args.num_agents,
+            "num_turns": self.args.num_turns,
+            "actor_learning_rate": self.args.actor_learning_rate,
+            "critic_learning_rate": self.args.critic_learning_rate,
+            "max_new_tokens": self.args.max_new_tokens,
+            "num_generations": self.args.num_generations,
+            "critic_type": self.args.critic_type,
+        }
+
+        sections = (
+            self.wandb_config.get("config_sections")
+            if isinstance(self.wandb_config, dict)
+            else None
+        )
+        if isinstance(sections, dict):
+            dataset_section = sections.get("dataset") or {}
+            model_section = sections.get("model") or {}
+            output_section = sections.get("output") or {}
+            external_section = sections.get("external") or {}
+            trainer_section = sections.get("trainer") or {}
+
+            config_dict.update(
+                {
+                    "dataset": dataset_section,
+                    "model": model_section,
+                    "output": output_section,
+                    "external": external_section,
+                    "trainer": trainer_section,
+                }
+            )
+
+            dataset_name = (
+                dataset_section.get("name")
+                if isinstance(dataset_section, dict)
+                else None
+            )
+            dataset_type = (
+                dataset_section.get("type")
+                if isinstance(dataset_section, dict)
+                else None
+            )
+            if dataset_name:
+                config_dict["dataset_name"] = dataset_name
+            if dataset_type:
+                config_dict["dataset_type"] = dataset_type
+
+            ext_mode = (
+                external_section.get("mode")
+                if isinstance(external_section, dict)
+                else None
+            )
+            if ext_mode:
+                config_dict["external_mode"] = ext_mode
+                if "original_prompt" in external_section:
+                    config_dict["original_prompt"] = external_section.get(
+                        "original_prompt"
+                    )
+                if "previous_response" in external_section:
+                    config_dict["previous_response"] = external_section.get(
+                        "previous_response"
+                    )
 
         init_kwargs = {
             "project": wandb_project,
             "name": wandb_run_name,
             "entity": wandb_entity,
-            "config": {
-                "num_agents": self.args.num_agents,
-                "actor_learning_rate": self.args.actor_learning_rate,
-                "critic_learning_rate": self.args.critic_learning_rate,
-                "max_new_tokens": self.args.max_new_tokens,
-                "num_return_sequences": self.args.num_return_sequences,
-            },
+            "config": config_dict,
         }
         if wandb_dir is not None:
             os.makedirs(wandb_dir, exist_ok=True)
@@ -304,38 +346,20 @@ class MAACTrainer:
             raise ValueError("Training requires a dataset.")
         return DataLoader(
             self.train_dataset,
-            batch_size=self.args.per_device_train_batch_size,
-            shuffle=False,
-            collate_fn=lambda batch: batch,
-        )
-
-    def get_eval_dataloader(self) -> DataLoader:
-        if self.eval_dataset is None:
-            raise ValueError("Evaluation requires a dataset.")
-        return DataLoader(
-            self.eval_dataset,
             batch_size=1,
             shuffle=False,
             collate_fn=lambda batch: batch,
         )
 
-    def _format_prompt(self, item: Dict[str, Any], agent_idx: int) -> str:
-        formatter = self.formatters[agent_idx]
-        prompt = formatter(item)
-        if not isinstance(prompt, str):
-            raise ValueError("Formatter must return a string prompt.")
-        return prompt
-
-    def _encode_prompt(self, prompt: str) -> Dict[str, torch.Tensor]:
-        encoded = self.tokenizer(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
+    def get_eval_dataloader(self) -> Optional[DataLoader]:
+        if self.eval_dataset is None:
+            return None
+        return DataLoader(
+            self.eval_dataset,
+            batch_size=self.args.eval_batch_size,
+            shuffle=False,
+            collate_fn=lambda batch: batch,
         )
-        return {
-            "input_ids": encoded["input_ids"].to(self.device),
-            "attention_mask": encoded["attention_mask"].to(self.device),
-        }
 
     def _build_joint_prompt(self, prompts: Sequence[str]) -> str:
         pieces = [f"[Agent {idx}] {p}" for idx, p in enumerate(prompts)]
@@ -424,7 +448,7 @@ class MAACTrainer:
         prompt_attention_mask = encoded_prompt["attention_mask"]
         prompt_len = prompt_input_ids.size(1)
 
-        num_ret = int(self.args.num_return_sequences)
+        num_ret = int(self.args.num_generations)
         generation_kwargs: Dict[str, Any] = {
             "input_ids": prompt_input_ids,
             "attention_mask": prompt_attention_mask,
@@ -479,10 +503,10 @@ class MAACTrainer:
         prompts: List[str] = []
         completions_per_agent: List[List[str]] = []
         rollout_data: List[Dict[str, Any]] = []
-        num_ret = int(self.args.num_return_sequences)
+        num_ret = int(self.args.num_generations)
 
         for agent_idx, actor_model in enumerate(self.actor_models):
-            prompt = self._format_prompt(item, agent_idx)
+            prompt = self._resolve_turn_prompt(item, agent_idx)
             gen = self._generate(actor_model, prompt)
             prompts.append(prompt)
             completions_per_agent.append(gen["completions"])
@@ -507,7 +531,7 @@ class MAACTrainer:
             rewards_matrix = [[rewards[a]] * num_ret for a in range(num_agents)]
         else:
             raise ValueError(
-                "Reward function must return 1 value, num_return_sequences values, "
+                "Reward function must return 1 value, num_generations values, "
                 "or num_agents values."
             )
 
@@ -589,22 +613,16 @@ class MAACTrainer:
             sample.metadata["value_target"] = torch.tensor([r]).detach().cpu()
 
         if self.metrics_callback is not None:
-            try:
-                extra = self.metrics_callback(rollouts)
-                if isinstance(extra, dict):
-                    self._log_metrics(extra)
-            except Exception:
-                pass
-
+            extra = self.metrics_callback(rollouts)
+            if isinstance(extra, dict):
+                self._log_metrics(extra)
         return rollouts
 
     def _collect_rollouts_multi_turn(
         self, item: Dict[str, Any], num_turns: int
     ) -> List[RolloutSample]:
-        if self.args.num_return_sequences != 1:
-            raise ValueError(
-                "Multi-turn MAAC currently supports num_return_sequences == 1."
-            )
+        if self.args.num_generations != 1:
+            raise ValueError("Multi-turn MAAC currently supports num_generations == 1.")
 
         prompt_history = [[] for _ in range(self.args.num_agents)]
         response_history = [[] for _ in range(self.args.num_agents)]
@@ -618,7 +636,7 @@ class MAACTrainer:
         for turn_idx in range(num_turns):
             if turn_idx == 0:
                 turn_prompts = [
-                    self._format_prompt(item, agent_idx)
+                    self._resolve_turn_prompt(item, agent_idx)
                     for agent_idx in range(self.args.num_agents)
                 ]
             else:
@@ -638,7 +656,13 @@ class MAACTrainer:
                     raise ValueError(
                         "External transition must return per-agent prompts"
                     )
-                turn_prompts = list(transition_result)
+                external_prompts = list(transition_result)
+                turn_prompts = [
+                    self._resolve_turn_prompt(
+                        item, agent_idx, external_prompt=external_prompts[agent_idx]
+                    )
+                    for agent_idx in range(self.args.num_agents)
+                ]
 
             completions_per_agent: List[List[str]] = []
             rollout_data: List[Dict[str, Any]] = []
@@ -747,13 +771,9 @@ class MAACTrainer:
                 sample.normalized_advantage = None
 
         if self.metrics_callback is not None:
-            try:
-                extra = self.metrics_callback(rollouts)
-                if isinstance(extra, dict):
-                    self._log_metrics(extra)
-            except Exception:
-                pass
-
+            extra = self.metrics_callback(rollouts)
+            if isinstance(extra, dict):
+                self._log_metrics(extra)
         return rollouts
 
     def _expand_rewards(self, rewards: List[float], num_ret: int) -> List[List[float]]:
@@ -766,38 +786,12 @@ class MAACTrainer:
         if len(rewards) == num_agents:
             return [[rewards[a]] * num_ret for a in range(num_agents)]
         raise ValueError(
-            "Reward function must return 1 value, num_return_sequences values, or num_agents values."
+            "Reward function must return 1 value, num_generations values, or num_agents values."
         )
 
     # ------------------------------------------------------------------ #
     # Advantage prep
     # ------------------------------------------------------------------ #
-    def _prepare_advantages(self, rollouts: List[RolloutSample]) -> None:
-        if not rollouts:
-            return
-        advantages = []
-        for sample in rollouts:
-            target = sample.metadata.get("adv_target") or sample.metadata.get(
-                "value_target"
-            )
-            if target is None:
-                target = sample.returns
-            adv = target.to(torch.float32) - sample.old_value.to(torch.float32)
-            sample.advantage = adv.to(sample.returns.dtype)
-            advantages.append(adv.view(-1)[0])
-        advantages = torch.stack(advantages)
-
-        if self.args.advantage_normalization and advantages.numel() > 1:
-            mean = advantages.mean()
-            std = advantages.std(unbiased=False).clamp(min=1e-6)
-            for sample in rollouts:
-                sample.normalized_advantage = (
-                    sample.advantage.to(torch.float32) - mean
-                ) / std
-        else:
-            for sample in rollouts:
-                sample.normalized_advantage = sample.advantage.clone()
-
     # ------------------------------------------------------------------ #
     # Losses
     # ------------------------------------------------------------------ #
@@ -901,9 +895,8 @@ class MAACTrainer:
             advantage = sample.normalized_advantage.to(self.device, dtype=value.dtype)
             value_target = sample.metadata.get("value_target")
             if value_target is None:
-                returns = sample.returns.to(self.device, dtype=value.dtype)
-            else:
-                returns = value_target.to(self.device, dtype=value.dtype)
+                raise RuntimeError("value_target missing for critic update.")
+            returns = value_target.to(self.device, dtype=value.dtype)
 
             if not torch.isfinite(logprob).all():
                 raise FloatingPointError(
@@ -956,8 +949,8 @@ class MAACTrainer:
         random.shuffle(rollouts)
 
         loss_metrics = defaultdict(list)
-        for start in range(0, len(rollouts), self.args.mini_batch_size):
-            batch = rollouts[start : start + self.args.mini_batch_size]
+        for start in range(0, len(rollouts), self.args.train_batch_size):
+            batch = rollouts[start : start + self.args.train_batch_size]
             step_metrics = self._ac_step(agent_idx, batch)
             for key, value in step_metrics.items():
                 loss_metrics[key].append(value)
@@ -969,205 +962,39 @@ class MAACTrainer:
         metrics.update(averaged_losses)
         return metrics
 
-    def _summarize_rollout_metrics(
-        self, rollouts: List[RolloutSample]
-    ) -> Dict[str, float]:
-        if not rollouts:
-            return {}
-
-        metrics: Dict[str, float] = {}
-        rewards = torch.stack(
-            [sample.reward.view(-1)[0] for sample in rollouts]
-        ).float()
-        if rewards.numel() > 0 and torch.isfinite(rewards).all():
-            metrics["reward_mean"] = float(rewards.mean().item())
-
-        returns = torch.stack(
-            [sample.returns.view(-1)[0] for sample in rollouts]
-        ).float()
-        if returns.numel() > 0 and torch.isfinite(returns).all():
-            metrics["expected_return"] = float(returns.mean().item())
-
-        values = torch.stack(
-            [sample.old_value.view(-1)[0] for sample in rollouts]
-        ).float()
-        if values.numel() > 0 and torch.isfinite(values).all():
-            metrics["value_pred_mean"] = float(values.mean().item())
-
-        targets = [sample.metadata.get("value_target") for sample in rollouts]
-        if any(t is not None for t in targets):
-            target_vals = torch.stack(
-                [
-                    (t if t is not None else sample.returns).view(-1)[0]
-                    for sample, t in zip(rollouts, targets)
-                ]
-            ).float()
-            if target_vals.numel() > 0 and torch.isfinite(target_vals).all():
-                metrics["value_target_mean"] = float(target_vals.mean().item())
-
-        return metrics
-
-    def evaluate(self) -> Dict[str, float]:
-        if self.eval_dataset is None:
-            return {}
-
-        dataloader = self.get_eval_dataloader()
-        num_samples = int(self.args.eval_num_samples)
-        turn_groups: Dict[int, List[RolloutSample]] = {}
-        seen = 0
-
-        with torch.no_grad():
-            for batch in dataloader:
-                for item in batch:
-                    rollouts = self._collect_rollouts(item)
-                    for sample in rollouts:
-                        t_idx = int(sample.metadata.get("turn_idx", 0))
-                        turn_groups.setdefault(t_idx, []).append(sample)
-                    seen += 1
-                    if seen >= num_samples:
-                        break
-                if seen >= num_samples:
-                    break
-
-        eval_log: Dict[str, float] = {}
-        for turn_idx, samples in sorted(turn_groups.items()):
-            metrics = self._summarize_rollout_metrics(samples)
-            for key, value in metrics.items():
-                eval_log[f"eval/turn_{turn_idx + 1}/{key}"] = value
-
-        if eval_log:
-            self._log_metrics(eval_log)
-        return eval_log
-
-    # ------------------------------------------------------------------ #
-    # Training loop
-    # ------------------------------------------------------------------ #
-    def train(self) -> None:
-        total_epochs = self.args.num_train_epochs
-
-        for epoch in range(total_epochs):
-            epoch_metrics = defaultdict(list)
-            dataloader = self.get_train_dataloader()
-            if not getattr(self, "verbose", True):
-                it = enumerate(
-                    tqdm(
-                        dataloader,
-                        total=len(dataloader),
-                        desc=f"Epoch {epoch + 1}/{total_epochs}",
-                    )
-                )
-            else:
-                it = enumerate(dataloader)
-            for batch_idx, batch in it:
-                if (
-                    self.eval_dataset is not None
-                    and self.args.eval_interval > 0
-                    and batch_idx % int(self.args.eval_interval) == 0
-                ):
-                    self.evaluate()
-                for item in batch:
-                    rollouts = self._collect_rollouts(item)
-                    for sample in rollouts:
-                        agent_idx = sample.agent_idx
-                        buffer = self.rollout_buffers[agent_idx]
-                        buffer.append(sample)
-                        if len(buffer) >= self.args.rollout_buffer_size:
-                            self._process_buffer(agent_idx, buffer, epoch_metrics)
-                    if self.args.num_agents > 0:
-                        self.env_step += len(rollouts) // self.args.num_agents
-
-            for agent_idx, buffer in enumerate(self.rollout_buffers):
-                if not buffer:
-                    continue
-                self._process_buffer(agent_idx, buffer, epoch_metrics)
-
-            summary = {
-                key: float(sum(values) / len(values))
-                for key, values in epoch_metrics.items()
-                if values
-            }
-            num_turns = max(1, int(getattr(self.args, "num_turns", 1)))
-            epoch_log: Dict[str, float] = {}
-            for turn_idx in range(num_turns):
-                prefix = f"turn_{turn_idx + 1}/"
-
-                def _maybe_log(metric_key: str, epoch_key: str) -> None:
-                    values = epoch_metrics.get(prefix + metric_key)
-                    if values:
-                        epoch_log[prefix + epoch_key] = float(sum(values) / len(values))
-
-                _maybe_log("reward_mean", "epoch_reward_mean")
-                _maybe_log("expected_return", "epoch_avg_return")
-                _maybe_log("value_pred_mean", "epoch_value_pred_mean")
-                _maybe_log("value_target_mean", "epoch_value_target_mean")
-                _maybe_log("policy_loss", "epoch_policy_loss")
-                _maybe_log("value_loss", "epoch_value_loss")
-
-            if epoch_log:
-                self._log_metrics(epoch_log)
-
-            if summary and getattr(self, "verbose", True):
-                to_print = epoch_log if epoch_log else summary
-                print(f"Epoch {epoch + 1}/{total_epochs} metrics: {to_print}")
-
-    # ------------------------------------------------------------------ #
-    # Logging and persistence
-    # ------------------------------------------------------------------ #
-    def _tag_metrics(
-        self, metrics: Dict[str, float], agent_idx: int, turn_idx: int = 0
-    ) -> Dict[str, float]:
-        prefix = f"turn_{turn_idx + 1}/"
-        return {prefix + key: value for key, value in metrics.items()}
-
-    def _log_metrics(self, metrics: Dict[str, float]) -> None:
-        if not metrics:
-            return
-        if self.wandb_initialized and wandb is not None:
-            wandb.log(metrics, step=self.env_step)
-
-    def _should_log_train(self) -> bool:
-        interval = int(getattr(self.args, "logging_steps", 1))
-        if interval <= 1:
-            self._last_train_log_step = self.env_step
-            return True
-        if (
-            self._last_train_log_step < 0
-            or (self.env_step - self._last_train_log_step) >= interval
-        ):
-            self._last_train_log_step = self.env_step
-            return True
-        return False
-
-    def _process_buffer(
+    def _on_epoch_end(
         self,
-        agent_idx: int,
-        buffer: List[RolloutSample],
+        epoch: int,
+        total_epochs: int,
         epoch_metrics: Dict[str, List[float]],
     ) -> None:
-        if not buffer:
-            return
+        num_turns = max(1, int(getattr(self.args, "num_turns", 1)))
+        epoch_log: Dict[str, float] = {}
+        for turn_idx in range(num_turns):
+            prefix = f"turn_{turn_idx + 1}/"
 
-        has_turn_idx = any(
-            "turn_idx" in (getattr(s, "metadata", {}) or {}) for s in buffer
-        )
-        turn_groups: Dict[int, List[RolloutSample]] = {}
-        for sample in buffer:
-            t_idx = int(sample.metadata.get("turn_idx", 0)) if has_turn_idx else 0
-            turn_groups.setdefault(t_idx, []).append(sample)
+            def _maybe_log(metric_key: str, epoch_key: str) -> None:
+                values = epoch_metrics.get(prefix + metric_key)
+                if values:
+                    epoch_log[prefix + epoch_key] = float(sum(values) / len(values))
 
-        buffer.clear()
+            _maybe_log("reward_mean", "epoch_reward_mean")
+            _maybe_log("expected_return", "epoch_avg_return")
+            _maybe_log("value_pred_mean", "epoch_value_pred_mean")
+            _maybe_log("value_target_mean", "epoch_value_target_mean")
+            _maybe_log("policy_loss", "epoch_policy_loss")
+            _maybe_log("value_loss", "epoch_value_loss")
 
-        combined_log: Dict[str, float] = {}
-        for t_idx in sorted(turn_groups.keys()):
-            samples = turn_groups[t_idx]
-            metrics = self._update(agent_idx, samples)
-            tagged = self._tag_metrics(metrics, agent_idx, turn_idx=t_idx)
-            combined_log.update(tagged)
-            for key, value in tagged.items():
-                epoch_metrics[key].append(value)
+        if epoch_log:
+            self._log_metrics(epoch_log)
 
-        if combined_log and self._should_log_train():
-            self._log_metrics(combined_log)
+        summary = self._summarize_epoch_metrics(epoch_metrics)
+        if summary and getattr(self, "verbose", True):
+            to_print = epoch_log if epoch_log else summary
+            print(f"Epoch {epoch + 1}/{total_epochs} metrics: {to_print}")
+
+    def _include_value_target_fallback(self) -> bool:
+        return False
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)

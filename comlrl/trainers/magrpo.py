@@ -3,7 +3,7 @@ import os
 import random
 from dataclasses import dataclass, field
 import itertools
-from typing import Any, Callable, Dict, List, Optional, Union, Tuple
+from typing import Any, Callable, Dict, List, Optional, Union, Tuple, Type
 
 import numpy as np
 import torch
@@ -28,7 +28,7 @@ class MAGRPOConfig(TrainingArguments):
     )
     per_device_train_batch_size: int = field(
         default=1,
-        metadata={"help": "Per-device batch size (must be 1 for MAGRPO)."},
+        metadata={"help": "Per-device batch size."},
     )
     learning_rate: float = field(
         default=5.0e-6,
@@ -112,9 +112,19 @@ class MAGRPOConfig(TrainingArguments):
         default=4,
         metadata={"help": "Number of samples to evaluate per evaluation run."},
     )
+    eval_batch_size: int = field(
+        default=1,
+        metadata={"help": "Batch size for evaluation DataLoader."},
+    )
     rollout_buffer_size: int = field(
         default=2,
         metadata={"help": "Number of node samples to buffer before an update."},
+    )
+    advantage_mode: str = field(
+        default="mean",
+        metadata={
+            "help": "Advantage baseline mode: mean, rloo, max, raw (no baseline)."
+        },
     )
 
 
@@ -156,6 +166,9 @@ class MAGRPOTrainer:
         dataset_type: Optional explicit dataset type (e.g., "humaneval")
     """
 
+    default_config_cls: Type[MAGRPOConfig] = MAGRPOConfig
+    algorithm_name: str = "MAGRPO"
+
     def __init__(
         self,
         # Model/tokenizer setup
@@ -193,9 +206,12 @@ class MAGRPOTrainer:
             raise ValueError("Cannot provide both model and agents parameters")
 
         # Training arguments
-        self.args = args if args is not None else MAGRPOConfig()
+        self.args = args if args is not None else self.default_config_cls()
         self.env_step = 0
         self._last_train_log_step = -1
+        self.advantage_mode = getattr(self.args, "advantage_mode", "mean")
+        if str(self.advantage_mode).lower() not in {"mean", "raw", "max", "rloo"}:
+            raise ValueError("advantage_mode must be one of: mean, raw, max, rloo.")
 
         # Reward and formatting
         self._setup_formatters(formatters, num_agents)
@@ -251,8 +267,8 @@ class MAGRPOTrainer:
             raise ValueError(
                 "num_generations must be >= 2 (group baseline requires multiple samples)."
             )
-        if self.args.per_device_train_batch_size != 1:
-            raise ValueError("MAGRPO requires per_device_train_batch_size to be 1. ")
+        if getattr(self.args, "eval_batch_size", 1) < 1:
+            raise ValueError("eval_batch_size must be >= 1.")
         if self.args.rollout_buffer_size < 1:
             raise ValueError("rollout_buffer_size must be >= 1.")
 
@@ -304,20 +320,19 @@ class MAGRPOTrainer:
 
         # Verbosity from config (default True)
         self.verbose = True
-        try:
-            if isinstance(self.wandb_config, dict):
-                sections = self.wandb_config.get("config_sections", {})
-                if isinstance(sections, dict):
-                    out = sections.get("output", {})
-                    if isinstance(out, dict) and "verbose" in out:
-                        self.verbose = bool(out.get("verbose"))
-        except Exception:
-            pass
+        if isinstance(self.wandb_config, dict):
+            sections = self.wandb_config.get("config_sections", {})
+            if isinstance(sections, dict):
+                out = sections.get("output", {})
+                if isinstance(out, dict) and "verbose" in out:
+                    self.verbose = bool(out.get("verbose"))
 
     def _setup_formatters(self, formatters, num_agents):
         """Set up format functions for each agent that can handle external transitions."""
         # Use multi-turn compatible default formatter that accepts external prompts
-        default_format_func = lambda x, external_prompts=None: x.get("prompt", "")
+        default_format_func = lambda x, external_prompts=None: (
+            external_prompts if external_prompts is not None else x.get("prompt", "")
+        )
 
         if formatters is None:
             # Just use the default formatter for all agents
@@ -386,14 +401,12 @@ class MAGRPOTrainer:
             if self.wandb_config is None:
                 self.wandb_config = {}
 
-            wandb_project = self.wandb_config.get("project", "mlrl")
-            wandb_entity = self.wandb_config.get("entity", "OpenMLRL")
+            wandb_project = self.wandb_config.get("project", "comlrl")
+            wandb_entity = self.wandb_config.get("entity")
 
-            # Use different default names based on num_turns
-            if self.args.num_turns == 1:
-                wandb_name = self.wandb_config.get("name", "test-magrpo")
-            else:
-                wandb_name = self.wandb_config.get("name", "test-mt-magrpo")
+            # Use different default names based on num_turns and algorithm
+            algo_tag = str(self.algorithm_name or "magrpo").lower()
+            wandb_name = self.wandb_config.get("name", f"test-{algo_tag}")
 
             wandb_dir = self.wandb_config.get("dir", None)
 
@@ -401,11 +414,12 @@ class MAGRPOTrainer:
                 "model_name": self.model_name,
                 "num_agents": self.num_agents,
                 "num_turns": self.args.num_turns,
+                "algorithm": self.algorithm_name,
+                "advantage_mode": self.advantage_mode,
                 # single reward function; keep legacy fields out
                 "learning_rate": self.args.learning_rate,
                 "weight_decay": self.args.weight_decay,
                 "num_train_epochs": self.args.num_train_epochs,
-                "per_device_train_batch_size": self.args.per_device_train_batch_size,
                 "num_generations": self.args.num_generations,
                 "max_new_tokens": self.args.max_new_tokens,
             }
@@ -499,7 +513,7 @@ class MAGRPOTrainer:
 
         return DataLoader(
             self.train_dataset,
-            batch_size=self.args.per_device_train_batch_size,
+            batch_size=1,
             collate_fn=lambda examples: examples,
             shuffle=False,
             drop_last=self.args.dataloader_drop_last,
@@ -513,7 +527,7 @@ class MAGRPOTrainer:
 
         return DataLoader(
             self.eval_dataset,
-            batch_size=self.args.per_device_train_batch_size,
+            batch_size=self.args.eval_batch_size,
             collate_fn=lambda examples: examples,
             shuffle=False,
             drop_last=False,
@@ -546,12 +560,9 @@ class MAGRPOTrainer:
         eval_dataloader = self.get_eval_dataloader()
 
         # Evaluate on specified number of samples
+        seen = 0
         with torch.no_grad():
-            for eval_idx, batch in enumerate(eval_dataloader):
-                if eval_idx >= num_eval_samples:
-                    break
-
-                # Process each batch item
+            for batch in eval_dataloader:
                 for batch_item in batch:
                     self._evaluate_sample(
                         batch_item,
@@ -561,6 +572,11 @@ class MAGRPOTrainer:
                         all_prompts,
                         eval_turn_rewards,
                     )
+                    seen += 1
+                    if seen >= num_eval_samples:
+                        break
+                if seen >= num_eval_samples:
+                    break
 
         # Prepare extra metrics to pass into logging after computing returns/components
         extra_eval_metrics: Dict[str, Any] = {}
@@ -768,7 +784,7 @@ class MAGRPOTrainer:
             ]  # immediate rewards
             epoch_turn_returns = [[] for _ in range(self.args.num_turns)]  # returns
             dl = self.get_train_dataloader()
-            if not getattr(self, "verbose", True):
+            if getattr(self, "verbose", True):
                 it = enumerate(
                     tqdm(
                         dl,
@@ -1125,6 +1141,7 @@ class MAGRPOTrainer:
         num_return_sequences=1,
         max_new_tokens=128,
         prompts_override: Optional[List[str]] = None,
+        external_prompts: Optional[Any] = None,
         do_sample: Optional[bool] = None,
         **kwargs,
     ):
@@ -1153,7 +1170,21 @@ class MAGRPOTrainer:
             prompts = prompts_override
         else:
             format_func = self.formatters[agent_idx]
-            prompts = [format_func(item) for item in batch_items]
+            if external_prompts is None:
+                prompts = [format_func(item) for item in batch_items]
+            else:
+                if isinstance(external_prompts, (list, tuple)):
+                    if len(external_prompts) != len(batch_items):
+                        raise ValueError(
+                            "external_prompts must have the same length as batch_items"
+                        )
+                    external_list = list(external_prompts)
+                else:
+                    external_list = [external_prompts for _ in batch_items]
+                prompts = [
+                    format_func(item, external_prompts=ext)
+                    for item, ext in zip(batch_items, external_list)
+                ]
         # batch_size is always 1 due to enforced constraint
 
         # Ensure tokenizer exists
@@ -1335,6 +1366,7 @@ class MAGRPOTrainer:
                 num_return_sequences=num_return_sequences,
                 max_new_tokens=max_new_tokens,
                 do_sample=do_sample,
+                external_prompts=external_prompts,
                 **kwargs,
             )
 
@@ -1350,6 +1382,7 @@ class MAGRPOTrainer:
                 max_new_tokens=max_new_tokens,
                 prompts_override=prompts,
                 do_sample=do_sample,
+                external_prompts=external_prompts,
                 **kwargs,
             )
 
@@ -1369,6 +1402,7 @@ class MAGRPOTrainer:
             num_return_sequences=num_return_sequences,
             max_new_tokens=max_new_tokens,
             do_sample=do_sample,
+            external_prompts=external_prompts,
             **kwargs,
         )
 
@@ -1512,6 +1546,22 @@ class MAGRPOTrainer:
             (loss * scale).backward()
         self.optimizers[agent_idx].step()
 
+    def _compute_advantages(self, returns_tensor: torch.Tensor) -> torch.Tensor:
+        mode = str(self.advantage_mode or "mean").lower()
+        if mode == "mean":
+            return returns_tensor - returns_tensor.mean()
+        if mode == "raw":
+            return returns_tensor
+        if mode == "max":
+            return returns_tensor - returns_tensor.max()
+        if mode == "rloo":
+            G = returns_tensor.numel()
+            if G <= 1:
+                return returns_tensor - returns_tensor.mean()
+            sum_ret = returns_tensor.sum()
+            return (returns_tensor * G - sum_ret) / (G - 1)
+        raise ValueError(f"Unknown advantage_mode: {self.advantage_mode}")
+
     def _compute_loss_with_gradients(self, agent, completions_data, returns):
         """
         Compute loss with proper gradient tracking by performing a new forward pass.
@@ -1533,9 +1583,7 @@ class MAGRPOTrainer:
         # Convert returns to tensor
         returns_tensor = torch.tensor(returns, dtype=torch.float, device=device)
 
-        # Group-relative advantage based on returns (mean baseline, no z-score normalization)
-        mean_ret = returns_tensor.mean()
-        advantages = returns_tensor - mean_ret
+        advantages = self._compute_advantages(returns_tensor)
 
         # Set agent to train mode to ensure gradients are tracked
         agent.train()

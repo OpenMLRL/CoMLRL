@@ -439,7 +439,6 @@ def main():
     config = MAGRPOConfig(
         output_dir=output_dir,
         num_train_epochs=100,
-        per_device_train_batch_size=1,
         learning_rate=1e-5,
         logging_steps=1,
         save_steps=5,

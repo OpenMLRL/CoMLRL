@@ -71,7 +71,7 @@ For simplicity, MAGRPO computes the policy gradient using the current policy's s
 {{% /hint %}}
 
 {{% hint warning %}}
-The trainer enforces `per_device_train_batch_size=1` and requires at least 2 generations for group baseline computation.
+The trainer uses a fixed training DataLoader batch size of 1 and requires at least 2 generations for group baseline computation.
 {{% /hint %}}
 
 ## Other Variants

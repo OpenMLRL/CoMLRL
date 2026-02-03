@@ -32,7 +32,7 @@ CoMLRL supports two IAC architectures for critic implementation:
 - `adam_beta1`, `adam_beta2`, `adam_epsilon`: Adam optimizer parameters
 - `max_grad_norm`: Maximum gradient norm for clipping
 - `rollout_buffer_size`: Number of samples to collect before update
-- `mini_batch_size`: Mini-batch size for policy updates
+- `train_batch_size`: Mini-batch size for policy updates
 - `value_clip_range`: Clipping range for value function
 - `value_loss_coef`: Coefficient for value loss
 - `entropy_coef`: Coefficient for entropy bonus
@@ -43,7 +43,6 @@ CoMLRL supports two IAC architectures for critic implementation:
 - `top_k`: Top-k for sampling
 - `do_sample`: Whether to use sampling
 - `num_train_epochs`: Number of training epochs
-- `per_device_train_batch_size`: Batch size per device, must be 1
 - `use_separate_critic`: Whether to use separate critic model
 - `critic_model_name_or_path`: Model identifier for separate critic
 - `critic_value_head_hidden_dim`: Hidden dimension for critic value head
@@ -78,7 +77,7 @@ For simplicity, IAC computes the policy gradient using the current policy's samp
 {{% /hint %}}
 
 {{% hint warning %}}
-The trainer enforces `per_device_train_batch_size=1`. For `num_turns > 1`, provide an `external_transition` and set `num_return_sequences=1`.
+The trainer uses a fixed training DataLoader batch size of 1. For `num_turns > 1`, provide an `external_transition` and set `num_generations=1`.
 {{% /hint %}}
 
 ## MAAC
@@ -101,17 +100,16 @@ where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf
 - `adam_beta1`, `adam_beta2`, `adam_epsilon`: Adam optimizer parameters
 - `max_grad_norm`: Gradient clipping norm
 - `rollout_buffer_size`: Number of samples to collect per agent before an update
-- `mini_batch_size`: Mini-batch size within each update
+- `train_batch_size`: Mini-batch size within each update
 - `value_loss_coef`: Weight on critic loss
 - `entropy_coef`: Entropy bonus coefficient
 - `advantage_normalization`: Whether to normalize advantages before updates
 - `max_new_tokens`: Maximum tokens to generate per completion
 - `temperature`, `top_p`, `top_k`, `do_sample`: Sampling parameters
 - `num_train_epochs`: Number of training epochs
-- `per_device_train_batch_size`: Must be 1
 - `pad_token_id`: Padding token id
 - `num_agents`: Number of actors
-- `num_return_sequences`: Number of generations per prompt per agent
+- `num_generations`: Number of generations per prompt per agent
 - `critic_model_name_or_path`: Required identifier for the shared critic
 {{% /hint %}}
 
