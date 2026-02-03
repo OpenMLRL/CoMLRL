@@ -425,9 +425,6 @@ def example_writer_formatter(
 
 def main():
     """Main function to run the experiment."""
-    output_dir = "../../../projects/bepg/sliu30/output"
-    os.makedirs(output_dir, exist_ok=True)
-
     train_dataset = create_code_dataset()
 
     model_name = "Qwen/Qwen2.5-1.5B"
@@ -437,11 +434,9 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
 
     config = MAGRPOConfig(
-        output_dir=output_dir,
         num_train_epochs=100,
         learning_rate=1e-5,
         logging_steps=1,
-        save_steps=5,
         num_generations=4,
         max_new_tokens=256,
         temperature=0.8,

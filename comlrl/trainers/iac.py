@@ -31,7 +31,6 @@ MetricsCallback = Callable[[List["RolloutSample"]], Dict[str, float]]
 class IACConfig:
     """Configuration container for Independent Actor-Critic fine-tuning."""
 
-    output_dir: str = "./iac_output"
     actor_learning_rate: float = 5e-6
     critic_learning_rate: Optional[float] = 5e-6
     weight_decay: float = 0.0
@@ -43,7 +42,6 @@ class IACConfig:
     train_batch_size: int = 8
     value_clip_range: Optional[float] = 0.2
     value_loss_coef: float = 0.6
-    entropy_coef: float = 0.0
     advantage_normalization: bool = True
     max_new_tokens: int = 256
     temperature: float = 0.6
@@ -87,8 +85,8 @@ class IACConfig:
             raise ValueError("num_generations must be >= 1.")
         if self.eval_interval < 0:
             raise ValueError("eval_interval must be >= 0.")
-        if self.eval_num_samples < 1:
-            raise ValueError("eval_num_samples must be >= 1.")
+        if self.eval_num_samples < 0:
+            raise ValueError("eval_num_samples must be >= 0.")
         if self.eval_batch_size < 1:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.logging_steps < 1:
@@ -347,7 +345,11 @@ class IACTrainer(ActorCriticTrainerBase):
         wandb_project = self.wandb_config.get("project", "comlrl")
         wandb_entity = self.wandb_config.get("entity")
         algo_tag = str(self.algorithm_name or "iac").lower()
-        wandb_name = self.wandb_config.get("name", f"test-{algo_tag}")
+        wandb_name = (
+            self.wandb_config.get("name")
+            or self.wandb_config.get("run_name")
+            or f"test-{algo_tag}"
+        )
         wandb_dir = self.wandb_config.get("dir")
 
         config_dict: Dict[str, Any] = {
@@ -358,7 +360,6 @@ class IACTrainer(ActorCriticTrainerBase):
             "critic_learning_rate": self.args.critic_learning_rate,
             "rollout_buffer_size": self.args.rollout_buffer_size,
             "train_batch_size": self.args.train_batch_size,
-            "entropy_coef": self.args.entropy_coef,
             "value_loss_coef": self.args.value_loss_coef,
             "max_new_tokens": self.args.max_new_tokens,
             "use_separate_critic": self.args.use_separate_critic,

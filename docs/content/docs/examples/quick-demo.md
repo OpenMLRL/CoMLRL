@@ -88,12 +88,11 @@ def proper_length_ratio_reward(
 We set up the training configuration with hyperparameters like learning rate, batch size, and the number of generations each agent produces per prompt.
 
 ```python
-    config = MAGRPOConfig(
-        output_dir="./magrpo_multi_reward_output",
-        num_train_epochs=3,
-        learning_rate=5e-5,
-        logging_steps=10,
-        save_steps=100,
+output_dir = "./magrpo_multi_reward_output"
+config = MAGRPOConfig(
+    num_train_epochs=3,
+    learning_rate=5e-5,
+    logging_steps=10,
     num_generations=8,
     max_new_tokens=128,
 )
@@ -131,5 +130,5 @@ Finally, we start the training process. The trainer will optimize both agents to
 
 ```python
 trainer.train()
-trainer.save_model(f"{config.output_dir}/models")
+trainer.save_model(f"{output_dir}/models")
 ```

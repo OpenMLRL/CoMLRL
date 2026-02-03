@@ -1,7 +1,7 @@
 import inspect
 import os
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import itertools
 from typing import Any, Callable, Dict, List, Optional, Union, Tuple, Type
 
@@ -11,121 +11,66 @@ import wandb
 from datasets import Dataset, IterableDataset
 from torch.utils.data import DataLoader
 from tqdm import tqdm  # type: ignore
-from transformers import PreTrainedModel, PreTrainedTokenizerBase, TrainingArguments
+from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 
 @dataclass
-class MAGRPOConfig(TrainingArguments):
-    """
-    Configuration for MAGRPO training, inheriting from TrainingArguments.
-    Supports both single-turn and multi-turn training modes.
-    """
+class MAGRPOConfig:
+    """Configuration for MAGRPO training."""
 
     # Core setup
-    num_train_epochs: float = field(
-        default=20,
-        metadata={"help": "Number of training epochs."},
-    )
-    per_device_train_batch_size: int = field(
-        default=1,
-        metadata={"help": "Per-device batch size."},
-    )
-    learning_rate: float = field(
-        default=5.0e-6,
-        metadata={"help": "Learning rate for optimizer."},
-    )
-    logging_steps: int = field(
-        default=50,
-        metadata={"help": "Log every N steps."},
-    )
-    save_steps: int = field(
-        default=200,
-        metadata={"help": "Save every N steps."},
-    )
-    num_agents: int = field(
-        default=2,
-        metadata={"help": "Number of agents; set to 1 for single-agent GRPO."},
-    )
+    num_train_epochs: int = 20
+    learning_rate: float = 5.0e-6
+    weight_decay: float = 0.0
+    logging_steps: int = 50
+    num_agents: int = 2
 
     # Sampling/generation
-    num_generations: int = field(
-        default=4,
-        metadata={"help": "Number of generations to sample per prompt for each agent."},
-    )
-    max_new_tokens: int = field(
-        default=256,
-        metadata={"help": "Maximum number of new tokens to generate after the prompt."},
-    )
-    temperature: float = field(
-        default=0.6,
-        metadata={
-            "help": "Temperature for sampling (present for completeness; generation uses model_config if provided)."
-        },
-    )
-    top_p: float = field(
-        default=0.6,
-        metadata={
-            "help": "Top-p for sampling (present for completeness; generation uses model_config if provided)."
-        },
-    )
-    top_k: Optional[int] = field(
-        default=50,
-        metadata={"help": "Top-k for sampling (set to None to disable)."},
-    )
+    num_generations: int = 4
+    max_new_tokens: int = 256
+    temperature: float = 0.6
+    top_p: float = 0.6
+    top_k: Optional[int] = 50
 
     # Multi-turn / tree rollout
-    num_turns: Optional[int] = field(
-        default=2,
-        metadata={
-            "help": "Number of turns per episode (set >1 for multi-turn with external transitions)."
-        },
-    )
-    discount: float = field(
-        default=0.9,
-        metadata={"help": "Discount factor (gamma) over turns for returns."},
-    )
-    joint_mode: str = field(
-        default="aligned",
-        metadata={
-            "help": "Joint action composition: 'cross' (Cartesian product) or 'aligned' (index-aligned)."
-        },
-    )
-    termination_threshold: Optional[float] = field(
-        default=-0.2,
-        metadata={
-            "help": "Early stop a branch if mean reward at a node exceeds this threshold."
-        },
-    )
-    external_prompt_passthrough: bool = field(
-        default=False,
-        metadata={
-            "help": "Use external prompts directly in multi-turn (skip formatter wrapping)."
-        },
-    )
+    num_turns: int = 2
+    discount: float = 0.9
+    joint_mode: str = "aligned"
+    termination_threshold: Optional[float] = -0.2
+    external_prompt_passthrough: bool = False
 
     # Evaluation
-    eval_interval: int = field(
-        default=16,
-        metadata={"help": "Run evaluation every N training batches."},
-    )
-    eval_num_samples: int = field(
-        default=4,
-        metadata={"help": "Number of samples to evaluate per evaluation run."},
-    )
-    eval_batch_size: int = field(
-        default=1,
-        metadata={"help": "Batch size for evaluation DataLoader."},
-    )
-    rollout_buffer_size: int = field(
-        default=2,
-        metadata={"help": "Number of node samples to buffer before an update."},
-    )
-    advantage_mode: str = field(
-        default="mean",
-        metadata={
-            "help": "Advantage baseline mode: mean, rloo, max, raw (no baseline)."
-        },
-    )
+    eval_interval: int = 16
+    eval_num_samples: int = 4
+    eval_batch_size: int = 1
+    rollout_buffer_size: int = 2
+    advantage_mode: str = "mean"
+
+    # DataLoader
+    dataloader_drop_last: bool = False
+    dataloader_num_workers: int = 0
+
+    def __post_init__(self) -> None:
+        if self.num_train_epochs < 1:
+            raise ValueError("num_train_epochs must be >= 1.")
+        if self.num_agents < 1:
+            raise ValueError("num_agents must be >= 1.")
+        if self.num_generations < 2:
+            raise ValueError(
+                "num_generations must be >= 2 (group baseline requires multiple samples)."
+            )
+        if self.rollout_buffer_size < 1:
+            raise ValueError("rollout_buffer_size must be >= 1.")
+        if self.eval_interval < 0:
+            raise ValueError("eval_interval must be >= 0.")
+        if self.eval_num_samples < 0:
+            raise ValueError("eval_num_samples must be >= 0.")
+        if self.eval_batch_size < 1:
+            raise ValueError("eval_batch_size must be >= 1.")
+        if self.num_turns < 1:
+            raise ValueError("num_turns must be >= 1.")
+        if self.logging_steps < 1:
+            raise ValueError("logging_steps must be >= 1.")
 
 
 @dataclass
@@ -406,7 +351,11 @@ class MAGRPOTrainer:
 
             # Use different default names based on num_turns and algorithm
             algo_tag = str(self.algorithm_name or "magrpo").lower()
-            wandb_name = self.wandb_config.get("name", f"test-{algo_tag}")
+            wandb_name = (
+                self.wandb_config.get("name")
+                or self.wandb_config.get("run_name")
+                or f"test-{algo_tag}"
+            )
 
             wandb_dir = self.wandb_config.get("dir", None)
 

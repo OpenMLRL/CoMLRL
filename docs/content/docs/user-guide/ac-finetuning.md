@@ -25,7 +25,6 @@ CoMLRL supports two IAC architectures for critic implementation:
 {{% hint info %}}
 **IACConfig** provides parameters for configuring Independent Actor-Critic training:
 
-- `output_dir`: Directory to save outputs
 - `actor_learning_rate`: Learning rate for actor
 - `critic_learning_rate`: Learning rate for critic
 - `weight_decay`: Weight decay for AdamW optimizer
@@ -35,7 +34,6 @@ CoMLRL supports two IAC architectures for critic implementation:
 - `train_batch_size`: Mini-batch size for policy updates
 - `value_clip_range`: Clipping range for value function
 - `value_loss_coef`: Coefficient for value loss
-- `entropy_coef`: Coefficient for entropy bonus
 - `advantage_normalization`: Whether to normalize advantages
 - `max_new_tokens`: Maximum new tokens to generate
 - `temperature`: Temperature for sampling
@@ -92,8 +90,6 @@ where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf
 
 {{% hint info %}}
 **MAACConfig** parameters:
-
-- `output_dir`: Directory to save outputs
 - `actor_learning_rate`: Learning rate for actors
 - `critic_learning_rate`: Learning rate for shared critic
 - `weight_decay`: Weight decay for AdamW
@@ -102,7 +98,6 @@ where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf
 - `rollout_buffer_size`: Number of samples to collect per agent before an update
 - `train_batch_size`: Mini-batch size within each update
 - `value_loss_coef`: Weight on critic loss
-- `entropy_coef`: Entropy bonus coefficient
 - `advantage_normalization`: Whether to normalize advantages before updates
 - `max_new_tokens`: Maximum tokens to generate per completion
 - `temperature`, `top_p`, `top_k`, `do_sample`: Sampling parameters

@@ -31,7 +31,6 @@ MetricsCallback = Callable[[List["RolloutSample"]], Dict[str, float]]
 class MAACConfig:
     """Configuration container for Multi-Agent Actor-Critic with shared critic."""
 
-    output_dir: str = "./maac_output"
     actor_learning_rate: float = 5e-6
     critic_learning_rate: float = 5e-6
     weight_decay: float = 0.0
@@ -82,8 +81,8 @@ class MAACConfig:
             raise ValueError("critic_type must be one of: 'v', 'q'.")
         if self.eval_interval < 0:
             raise ValueError("eval_interval must be >= 0.")
-        if self.eval_num_samples < 1:
-            raise ValueError("eval_num_samples must be >= 1.")
+        if self.eval_num_samples < 0:
+            raise ValueError("eval_num_samples must be >= 0.")
         if self.eval_batch_size < 1:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.logging_steps < 1:
@@ -256,7 +255,11 @@ class MAACTrainer(ActorCriticTrainerBase):
         wandb_project = self.wandb_config.get("project", "comlrl")
         wandb_entity = self.wandb_config.get("entity")
         algo_tag = str(self.algorithm_name or "maac").lower()
-        wandb_run_name = self.wandb_config.get("name", f"test-{algo_tag}")
+        wandb_run_name = (
+            self.wandb_config.get("name")
+            or self.wandb_config.get("run_name")
+            or f"test-{algo_tag}"
+        )
         wandb_dir = self.wandb_config.get("dir")
 
         config_dict: Dict[str, Any] = {

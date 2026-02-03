@@ -32,19 +32,30 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 {{< /katex >}}
 
 {{% hint info %}}
-**MAGRPOConfig** inherits from `TrainingArguments` and provides parameters for both single-turn and multi-turn training:
+**MAGRPOConfig** provides parameters for both single-turn and multi-turn training:
 
+- `num_train_epochs`: Number of training epochs (default: 20)
+- `learning_rate`: Learning rate (default: 5e-6)
+- `weight_decay`: Weight decay (default: 0.0)
+- `logging_steps`: Log every N steps (default: 50)
 - `num_agents`: Number of agents (default: 2)
 - `num_generations`: Number of generations to sample per prompt for each agent (default: 4)
 - `max_new_tokens`: Maximum number of new tokens to generate (default: 256)
-- `temperature`: Temperature for sampling (default: 0.7)
-- `top_p`: Top-p for sampling (default: 0.9)
-- `num_turns`: Number of turns per episode; set >1 for multi-turn (default: 1)
+- `temperature`: Temperature for sampling (default: 0.6)
+- `top_p`: Top-p for sampling (default: 0.6)
+- `top_k`: Top-k for sampling (default: 50)
+- `num_turns`: Number of turns per episode; set >1 for multi-turn (default: 2)
 - `discount`: Discount factor gamma over turns for returns (default: 0.9)
 - `joint_mode`: Joint action composition - `'aligned'` (index-aligned, default) or `'cross'` (Cartesian product)
-- `termination_threshold`: Early stop a branch if mean reward exceeds this threshold (default: None)
-- `eval_interval`: Run evaluation every N training batches (default: 4)
+- `termination_threshold`: Early stop a branch if mean reward exceeds this threshold (default: -0.2)
+- `external_prompt_passthrough`: Use external prompts directly in multi-turn (default: false)
+- `rollout_buffer_size`: Number of node samples to buffer before update (default: 2)
+- `eval_interval`: Run evaluation every N training batches (default: 16)
 - `eval_num_samples`: Number of samples to evaluate per evaluation run (default: 4)
+- `eval_batch_size`: Eval dataloader batch size (default: 1)
+- `advantage_mode`: Baseline mode (`mean`, `max`, `rloo`, `raw`) (default: mean)
+- `dataloader_drop_last`: Drop the last batch (default: false)
+- `dataloader_num_workers`: DataLoader worker count (default: 0)
 {{% /hint %}}
 
 {{% hint info %}}

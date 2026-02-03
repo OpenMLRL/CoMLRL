@@ -44,11 +44,9 @@ def example_usage():
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     config = MAGRPOConfig(
-        output_dir="./magrpo_multi_reward_output",
         num_train_epochs=3,
         learning_rate=5e-5,
         logging_steps=10,
-        save_steps=100,
         num_generations=8,
         max_new_tokens=128,
     )
