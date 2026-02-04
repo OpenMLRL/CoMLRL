@@ -409,31 +409,74 @@ class MAACTrainer(ActorCriticTrainerBase):
 
     # Rollout collection
     def _call_reward_func(
-        self, prompts: Sequence[str], agent_completions: Sequence[Sequence[str]]
+        self,
+        prompts: Sequence[str],
+        agent_completions: Sequence[Sequence[str]],
+        batch_items: Optional[Sequence[Dict[str, Any]]] = None,
     ) -> List[float]:
         signature = self._reward_signature or inspect.signature(self.reward_func)
         params = signature.parameters
         num_agents = self.args.num_agents
+        param_list = list(params.values())
+        positional_params = [
+            p
+            for p in param_list
+            if p.kind
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        ]
+        param_count = len(positional_params)
+        has_varargs = any(
+            p.kind == inspect.Parameter.VAR_POSITIONAL for p in param_list
+        )
+        has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in param_list)
+        has_batch_items = "batch_items" in params
+        has_prompts_kw = "prompts" in params
 
         def _call_with_args():
-            param_count = len(params)
-            if num_agents == 1:
-                if param_count == 1:
-                    return self.reward_func(agent_completions[0])  # type: ignore[arg-type]
-                return self.reward_func(prompts, agent_completions[0])  # type: ignore[arg-type]
+            kwargs: Dict[str, Any] = {}
+            if batch_items is not None and (has_batch_items or has_varkw):
+                kwargs["batch_items"] = batch_items
 
-            if param_count == num_agents:
-                return self.reward_func(*agent_completions)  # type: ignore[arg-type]
-            if param_count == num_agents + 1:
-                return self.reward_func(prompts, *agent_completions)  # type: ignore[arg-type]
-            if param_count == 1:
-                return self.reward_func(agent_completions)  # type: ignore[arg-type]
-            return self.reward_func(*agent_completions)  # type: ignore[arg-type]
+            if has_varargs:
+                args = list(agent_completions)
+                used_prompts = False
+            else:
+                if num_agents == 1:
+                    if param_count == 1:
+                        args = [agent_completions[0]]
+                        used_prompts = False
+                    else:
+                        args = [prompts, agent_completions[0]]
+                        used_prompts = True
+                else:
+                    if param_count == num_agents:
+                        args = list(agent_completions)
+                        used_prompts = False
+                    elif param_count == num_agents + 1:
+                        args = [prompts] + list(agent_completions)
+                        used_prompts = True
+                    elif param_count == 1:
+                        args = [agent_completions]
+                        used_prompts = False
+                    else:
+                        args = list(agent_completions)
+                        used_prompts = False
+
+            if not used_prompts and (has_prompts_kw or has_varkw):
+                kwargs["prompts"] = prompts
+
+            return self.reward_func(*args, **kwargs)  # type: ignore[arg-type]
 
         try:
             raw = _call_with_args()
-        except TypeError:
-            raw = self.reward_func(*agent_completions)  # type: ignore[arg-type]
+        except TypeError as exc:
+            try:
+                raw = self.reward_func(*agent_completions)  # type: ignore[arg-type]
+            except TypeError:
+                raise exc
 
         if isinstance(raw, torch.Tensor):
             rewards = raw.detach().cpu().tolist()
@@ -523,7 +566,9 @@ class MAACTrainer(ActorCriticTrainerBase):
                 }
             )
 
-        rewards = self._call_reward_func(prompts, completions_per_agent)
+        rewards = self._call_reward_func(
+            prompts, completions_per_agent, batch_items=[item]
+        )
         num_agents = self.args.num_agents
         if len(rewards) == 1:
             rewards_matrix = [[rewards[0]] * num_ret for _ in range(num_agents)]
@@ -685,7 +730,9 @@ class MAACTrainer(ActorCriticTrainerBase):
                 )
                 prompt_history[agent_idx].append(prompt)
 
-            rewards = self._call_reward_func(turn_prompts, completions_per_agent)
+            rewards = self._call_reward_func(
+                turn_prompts, completions_per_agent, batch_items=[item]
+            )
             rewards_matrix = self._expand_rewards(rewards, num_ret=1)
             critic_input = self._build_critic_input(
                 turn_prompts,
