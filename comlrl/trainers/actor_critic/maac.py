@@ -344,7 +344,6 @@ class MAACTrainer(ActorCriticTrainerBase):
         wandb.init(**init_kwargs)
         self.wandb_initialized = True
 
-    # Data utilities
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
             raise ValueError("Training requires a dataset.")

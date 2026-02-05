@@ -235,27 +235,6 @@ class IACTrainer(ActorCriticTrainerBase):
             [] for _ in range(self.args.num_agents)
         ]
 
-        if self.args.num_agents == 1:
-            self.actor_model = self.actor_models[0]
-            self.rollout_buffer = self.rollout_buffers[0]
-            self.actor_optimizer = self.actor_optimizers[0]
-            if self.args.use_separate_critic:
-                self.critic_model = self.critic_models[0]
-                self.critic_optimizer = self.critic_optimizers[0]
-            else:
-                self.critic_model = None
-                self.optimizer = self.actor_optimizer
-        else:
-            # Maintain legacy attributes (pointing to agent 0) for compatibility.
-            self.actor_model = self.actor_models[0]
-            self.rollout_buffer = self.rollout_buffers[0]
-            self.actor_optimizer = self.actor_optimizers[0]
-            self.critic_model = self.critic_models[0] if self.critic_models else None
-            self.optimizer = self.actor_optimizer
-            self.critic_optimizer = (
-                self.critic_optimizers[0] if self.critic_optimizers else None
-            )
-
         self.wandb_config = wandb_config
         self.wandb_initialized = False
         self.verbose = True
@@ -440,7 +419,6 @@ class IACTrainer(ActorCriticTrainerBase):
         wandb.init(**init_kwargs)
         self.wandb_initialized = True
 
-    # Data utilities
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
             raise ValueError("Training requires a dataset.")

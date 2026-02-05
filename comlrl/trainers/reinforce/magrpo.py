@@ -39,7 +39,6 @@ class MAGRPOConfig:
     termination_threshold: Optional[float] = -0.2
     external_prompt_passthrough: bool = False
 
-    # Evaluation
     eval_interval: int = 16
     eval_num_samples: int = 4
     eval_batch_size: int = 1
@@ -116,27 +115,22 @@ class MAGRPOTrainer:
 
     def __init__(
         self,
-        # Model/tokenizer setup
         model: Optional[Union[str, PreTrainedModel]] = None,
         agents: Optional[List[PreTrainedModel]] = None,
         num_agents: int = 2,
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
         model_config: Optional[Dict[str, Any]] = None,
-        # Data
         train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
         eval_dataset: Optional[Union[Dataset, IterableDataset]] = None,
         dataset_type: Optional[str] = None,
-        # Reward/formatting
         reward_func: Optional[Callable] = None,
         reward_processor: Optional[Callable[[float], float]] = None,
         formatters: Optional[Union[Callable, List[Callable]]] = None,
-        # External transitions (multi-turn)
         external_transition: Optional[Callable] = None,
         # Logging/eval
         wandb_config: Optional[Dict[str, Any]] = None,
         eval_logger: Optional[Callable] = None,
         eval_aggregator: Optional[Callable] = None,
-        # Training args
         args: Optional[MAGRPOConfig] = None,
     ):
         # Check for GPU availability
@@ -150,7 +144,6 @@ class MAGRPOTrainer:
         if model is not None and agents is not None:
             raise ValueError("Cannot provide both model and agents parameters")
 
-        # Training arguments
         self.args = args if args is not None else self.default_config_cls()
         self.env_step = 0
         self._last_train_log_step = -1
@@ -158,7 +151,6 @@ class MAGRPOTrainer:
         if str(self.advantage_mode).lower() not in {"mean", "raw", "max", "rloo"}:
             raise ValueError("advantage_mode must be one of: mean, raw, max, rloo.")
 
-        # Reward and formatting
         self._setup_formatters(formatters, num_agents)
         self._setup_reward_function(reward_func, reward_processor)
 
@@ -250,7 +242,6 @@ class MAGRPOTrainer:
         if self.wandb_config is not None:
             self._init_wandb()
 
-        # Dataset type: prefer explicit parameter, fallback to config sections
         self.dataset_type = dataset_type or None
         if self.dataset_type is None:
             try:
@@ -415,7 +406,6 @@ class MAGRPOTrainer:
                 if dataset_type:
                     config_dict["dataset_type"] = dataset_type
 
-                # External mode-specific fields
                 ext_mode = (
                     external_section.get("mode")
                     if isinstance(external_section, dict)
@@ -613,7 +603,6 @@ class MAGRPOTrainer:
                         ],
                     )
 
-                    # External transition should return prompts for each agent
                     if isinstance(transition_result, (list, tuple)):
                         if len(transition_result) != self.num_agents:
                             raise ValueError(
@@ -717,7 +706,6 @@ class MAGRPOTrainer:
         if self.wandb_config is not None and not self.wandb_initialized:
             self._init_wandb()
 
-        # Setup devices for training (GPU is required)
         device = torch.device("cuda")
         for agent in self.agents:
             agent.to(device)
