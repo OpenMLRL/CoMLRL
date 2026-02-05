@@ -62,10 +62,10 @@ Cooperative MARL methods are grounded in the theory of <a href="https://www.fran
 ## Features
 
 - **MARL trainers to optimize LLM collaboration:**
-  - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFORCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/maremax.py).
+  - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFORCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/maremax.py).
     - Aligned individual response joint with `joint_mode='align'`.
     - Memory-efficient cross joint with `joint_mode='cross'`.
-  - **_Multi-Agent Actor-Critic:_** Critic-based policy gradient methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/maac.py).
+  - **_Multi-Agent Actor-Critic:_** Critic-based policy gradient methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/maac.py).
     - Independent actor-critic (separate critic or value-head over LLM backbone).
     - Centralized critic over joint prompts with separate actors.
 - **Environments that simulate real-world tasks for training and evaluating LLM collaboration:**

@@ -14,7 +14,7 @@ Functions:
 
 import re
 
-from comlrl.trainers.magrpo import MAGRPOTrainer  # type: ignore
+from comlrl.trainers.reinforce import MAGRPOTrainer  # type: ignore
 
 
 def _coerce_int(value, default: int) -> int:
@@ -118,7 +118,7 @@ def patch_trainer_generation_for_memory(
 
 
 def patch_maac_generation_for_memory() -> None:
-    from comlrl.trainers.maac import MAACTrainer  # type: ignore
+    from comlrl.trainers.actor_critic import MAACTrainer  # type: ignore
 
     orig = getattr(MAACTrainer, "_generate", None)
     if not callable(orig):
@@ -140,7 +140,7 @@ def patch_maac_generation_for_memory() -> None:
 
 
 def patch_iac_generation_for_memory() -> None:
-    from comlrl.trainers.iac import IACTrainer  # type: ignore
+    from comlrl.trainers.actor_critic import IACTrainer  # type: ignore
 
     orig = getattr(IACTrainer, "_generate_rollout", None)
     if not callable(orig):

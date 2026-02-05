@@ -4,7 +4,7 @@ import inspect
 import os
 import random
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
@@ -17,10 +17,10 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerBase,
 )
-from comlrl.models.actor_critic import CausalLMWithValueHead
-from comlrl.trainers.ac_base import ActorCriticTrainerBase
 import wandb
-
+from comlrl.models.actor_critic import CausalLMWithValueHead
+from .ac_base import ActorCriticTrainerBase
+from .iac import RolloutSample
 
 RewardFunc = Callable[..., Sequence[float]]
 Formatter = Callable[[Dict[str, Any]], str]
@@ -28,11 +28,11 @@ MetricsCallback = Callable[[List["RolloutSample"]], Dict[str, float]]
 
 
 @dataclass
-class IACConfig:
-    """Configuration container for Independent Actor-Critic fine-tuning."""
+class MAACConfig:
+    """Configuration container for Multi-Agent Actor-Critic with shared critic."""
 
     actor_learning_rate: float = 5e-6
-    critic_learning_rate: Optional[float] = 5e-6
+    critic_learning_rate: float = 5e-6
     weight_decay: float = 0.0
     adam_beta1: float = 0.9
     adam_beta2: float = 0.999
@@ -40,7 +40,6 @@ class IACConfig:
     max_grad_norm: float = 0.5
     rollout_buffer_size: int = 8
     train_batch_size: Optional[int] = None
-    value_clip_range: Optional[float] = 0.2
     value_loss_coef: float = 0.6
     advantage_normalization: bool = True
     max_new_tokens: int = 256
@@ -49,21 +48,18 @@ class IACConfig:
     top_k: Optional[int] = None
     do_sample: bool = True
     num_train_epochs: int = 40
-    use_separate_critic: bool = True
-    critic_model_name_or_path: Optional[str] = None
-    critic_type: str = "v"  # "v" (V(h)) or "q" (Q(h,a))
-    critic_value_head_hidden_dim: Optional[int] = None
-    value_head_hidden_dim: Optional[int] = None
     pad_token_id: Optional[int] = None
     num_agents: int = 2
+    num_generations: int = 1
+    critic_model_name_or_path: Optional[Union[str, PreTrainedModel]] = None
     num_turns: int = 2
     external_prompt_passthrough: bool = False
     discount: float = 0.9
-    num_generations: int = 1
+    critic_type: str = "v"  # "v" (V(s)) or "q" (Q(s,a))
+    early_termination_threshold: Optional[float] = -0.2
     eval_interval: int = 16
     eval_num_samples: int = 4
     eval_batch_size: int = 1
-    early_termination_threshold: Optional[float] = -0.2
     logging_steps: int = 1
 
     def __post_init__(self) -> None:
@@ -75,17 +71,17 @@ class IACConfig:
             raise ValueError("train_batch_size must be >= 1.")
         if self.num_agents < 1:
             raise ValueError("num_agents must be >= 1.")
+        if self.num_generations < 1:
+            raise ValueError("num_generations must be >= 1.")
+        if self.critic_model_name_or_path is None:
+            raise ValueError("critic_model_name_or_path must be provided for MAAC.")
         if self.num_turns < 1:
             raise ValueError("num_turns must be >= 1.")
         if self.num_turns > 1 and self.num_generations != 1:
-            raise ValueError("Multi-turn IAC currently supports num_generations == 1.")
+            raise ValueError("Multi-turn MAAC currently supports num_generations == 1.")
         critic_type = (self.critic_type or "v").lower()
         if critic_type not in ("v", "q"):
             raise ValueError("critic_type must be one of: 'v', 'q'.")
-        if self.critic_learning_rate is None:
-            self.critic_learning_rate = self.actor_learning_rate
-        if self.num_generations < 1:
-            raise ValueError("num_generations must be >= 1.")
         if self.eval_interval < 0:
             raise ValueError("eval_interval must be >= 0.")
         if self.eval_num_samples < 0:
@@ -96,28 +92,10 @@ class IACConfig:
             raise ValueError("logging_steps must be >= 1.")
 
 
-@dataclass
-class RolloutSample:
-    agent_idx: int
-    prompt: str
-    completion: str
-    full_input_ids: torch.Tensor
-    attention_mask: torch.Tensor
-    prompt_len: int
-    response_len: int
-    old_logprob: torch.Tensor
-    old_value: torch.Tensor
-    reward: torch.Tensor
-    returns: torch.Tensor
-    advantage: torch.Tensor
-    normalized_advantage: Optional[torch.Tensor] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+class MAACTrainer(ActorCriticTrainerBase):
+    """Multi-Agent Actor-Critic with a shared critic conditioned on joint prompts."""
 
-
-class IACTrainer(ActorCriticTrainerBase):
-    """Independent Actor-Critic trainer with optional separate critic support."""
-
-    algorithm_name: str = "IAC"
+    algorithm_name: str = "MAAC"
 
     def __init__(
         self,
@@ -126,7 +104,7 @@ class IACTrainer(ActorCriticTrainerBase):
         reward_func: Optional[RewardFunc] = None,
         reward_processor: Optional[Callable[[float], float]] = None,
         formatters: Optional[Union[Formatter, Sequence[Formatter]]] = None,
-        args: Optional[IACConfig] = None,
+        args: Optional[MAACConfig] = None,
         train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
         eval_dataset: Optional[Union[Dataset, IterableDataset]] = None,
         model_config: Optional[Dict[str, Any]] = None,
@@ -136,29 +114,19 @@ class IACTrainer(ActorCriticTrainerBase):
     ) -> None:
         if reward_func is None or not callable(reward_func):
             raise ValueError("A callable reward_func must be provided.")
-
-        self.args = args if args is not None else IACConfig()
+        self.args = args if args is not None else MAACConfig()
         self.reward_func = reward_func
         self.reward_processor = reward_processor or (lambda x: x)
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
         self.metrics_callback = metrics_callback
         self.model_config = model_config or {}
-        self.critic_type = (self.args.critic_type or "v").lower()
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if not torch.cuda.is_available():
-            # CPU fallback is allowed for experimentation but will be slow.
             print("Warning: CUDA not available. Training will run on CPU.")
 
-        self.tokenizer = tokenizer
-        self.formatters = self._setup_formatters(formatters)
-        self._reward_signature = self._infer_reward_signature(reward_func)
-
-        self.actor_models: List[CausalLMWithValueHead] = []
-        self.critic_models: List[Optional[CausalLMWithValueHead]] = []
-
-        self.tokenizer = self._ensure_tokenizer(model, self.tokenizer)
+        self.tokenizer = self._ensure_tokenizer(model, tokenizer)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         if self.tokenizer.pad_token_id is None:
@@ -172,41 +140,30 @@ class IACTrainer(ActorCriticTrainerBase):
 
         if self.args.num_agents > 1 and isinstance(model, PreTrainedModel):
             raise ValueError(
-                "Multi-agent IAC requires `model` to be a pretrained identifier string."
+                "Multi-agent MAAC requires `model` to be a pretrained identifier string."
             )
+
         if self.args.num_turns > 1 and external_transition is None:
-            raise ValueError("Multi-turn IAC requires an external_transition.")
+            raise ValueError("Multi-turn MAAC requires an external_transition.")
         self.external_transition = external_transition
 
+        self.actor_models: List[CausalLMWithValueHead] = []
         for _ in range(self.args.num_agents):
             actor_model = self._load_actor_model(model)
             actor_model.to(self.device)
             self.actor_models.append(actor_model)
 
-        if self.args.use_separate_critic:
-            critic_identifier = self.args.critic_model_name_or_path or model
-            if critic_identifier is None:
-                raise ValueError(
-                    "critic_model_name_or_path must be provided when using a separate critic."
-                )
-            if self.args.num_agents > 1 and isinstance(
-                critic_identifier, PreTrainedModel
-            ):
-                raise ValueError(
-                    "Multi-agent IAC requires string identifiers for separate critics."
-                )
-            for _ in range(self.args.num_agents):
-                critic_model = self._load_critic_model(critic_identifier)
-                critic_model.to(self.device)
-                self.critic_models.append(critic_model)
-        else:
-            self.critic_models = [None] * self.args.num_agents
+        critic_identifier = self.args.critic_model_name_or_path
+        if critic_identifier is None:
+            raise ValueError("critic_model_name_or_path must be provided.")
+        self.critic_model = self._load_critic_model(critic_identifier)
+        self.critic_model.to(self.device)
 
         self._configure_tokenizer_specials()
+        self.formatters = self._setup_formatters(formatters)
+        self._reward_signature = self._infer_reward_signature(reward_func)
 
         self.actor_optimizers: List[torch.optim.Optimizer] = []
-        self.critic_optimizers: List[torch.optim.Optimizer] = []
-
         for actor_model in self.actor_models:
             optimizer = torch.optim.AdamW(
                 actor_model.parameters(),
@@ -217,51 +174,27 @@ class IACTrainer(ActorCriticTrainerBase):
             )
             self.actor_optimizers.append(optimizer)
 
-        if self.args.use_separate_critic:
-            for critic_model in self.critic_models:
-                if critic_model is None:
-                    raise RuntimeError("Critic model expected but missing.")
-                optimizer = torch.optim.AdamW(
-                    critic_model.parameters(),
-                    lr=self.args.critic_learning_rate,
-                    betas=(self.args.adam_beta1, self.args.adam_beta2),
-                    eps=self.args.adam_epsilon,
-                    weight_decay=self.args.weight_decay,
-                )
-                self.critic_optimizers.append(optimizer)
+        self.critic_optimizer = torch.optim.AdamW(
+            self.critic_model.parameters(),
+            lr=self.args.critic_learning_rate,
+            betas=(self.args.adam_beta1, self.args.adam_beta2),
+            eps=self.args.adam_epsilon,
+            weight_decay=self.args.weight_decay,
+        )
 
-        self.env_step = 0
         self.rollout_buffers: List[List[RolloutSample]] = [
             [] for _ in range(self.args.num_agents)
         ]
 
-        if self.args.num_agents == 1:
-            self.actor_model = self.actor_models[0]
-            self.rollout_buffer = self.rollout_buffers[0]
-            self.actor_optimizer = self.actor_optimizers[0]
-            if self.args.use_separate_critic:
-                self.critic_model = self.critic_models[0]
-                self.critic_optimizer = self.critic_optimizers[0]
-            else:
-                self.critic_model = None
-                self.optimizer = self.actor_optimizer
-        else:
-            # Maintain legacy attributes (pointing to agent 0) for compatibility.
-            self.actor_model = self.actor_models[0]
-            self.rollout_buffer = self.rollout_buffers[0]
-            self.actor_optimizer = self.actor_optimizers[0]
-            self.critic_model = self.critic_models[0] if self.critic_models else None
-            self.optimizer = self.actor_optimizer
-            self.critic_optimizer = (
-                self.critic_optimizers[0] if self.critic_optimizers else None
-            )
-
         self.wandb_config = wandb_config
         self.wandb_initialized = False
-        self.verbose = True
+        self.env_step = 0
         self._last_train_log_step = -1
         if wandb_config is not None:
             self._init_wandb()
+
+        # Verbosity from config (default True)
+        self.verbose = True
         if isinstance(self.wandb_config, dict):
             sections = self.wandb_config.get("config_sections", {})
             if isinstance(sections, dict):
@@ -283,72 +216,49 @@ class IACTrainer(ActorCriticTrainerBase):
         tokenizer_kwargs = self.model_config.get("tokenizer_kwargs", {})
         return AutoTokenizer.from_pretrained(model, **tokenizer_kwargs)
 
-    def _infer_reward_signature(self, fn: RewardFunc):
-        try:
-            return inspect.signature(fn)
-        except (TypeError, ValueError):
-            return None
-
     def _load_actor_model(
         self, model: Optional[Union[str, PreTrainedModel]]
     ) -> CausalLMWithValueHead:
         if model is None:
-            raise ValueError("A policy model identifier or instance is required.")
-
-        if isinstance(model, PreTrainedModel):
-            base_model = model
-        else:
-            model_kwargs = self.model_config.get("model_kwargs", {})
-            base_model = AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
-
-        attach_value = not self.args.use_separate_critic
+            raise ValueError("model must be provided for MAAC.")
+        model_kwargs = self.model_config.get("model_kwargs", {})
+        base = (
+            model
+            if isinstance(model, PreTrainedModel)
+            else AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
+        )
         return CausalLMWithValueHead(
-            base_model,
-            value_head_hidden_dim=self.args.value_head_hidden_dim,
-            attach_value_head=attach_value,
+            base_model=base, attach_value_head=False, value_head_hidden_dim=None
         )
 
     def _load_critic_model(
-        self, model_identifier: Union[str, PreTrainedModel]
+        self, model: Union[str, PreTrainedModel]
     ) -> CausalLMWithValueHead:
-        if isinstance(model_identifier, PreTrainedModel):
-            base_model = model_identifier
-        else:
-            model_kwargs = self.model_config.get("critic_model_kwargs", {})
-            base_model = AutoModelForCausalLM.from_pretrained(
-                model_identifier, **model_kwargs
-            )
-
+        model_kwargs = self.model_config.get("critic_model_kwargs", {})
+        base = (
+            model
+            if isinstance(model, PreTrainedModel)
+            else AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
+        )
         return CausalLMWithValueHead(
-            base_model,
-            value_head_hidden_dim=self.args.critic_value_head_hidden_dim,
+            base_model=base,
             attach_value_head=True,
+            value_head_hidden_dim=self.model_config.get("critic_value_head_hidden_dim"),
         )
 
     def _configure_tokenizer_specials(self) -> None:
-        pad_id = self.args.pad_token_id
-        eos_id = getattr(self.tokenizer, "eos_token_id", pad_id)
-        for actor_model in self.actor_models:
-            actor_model.model.config.pad_token_id = pad_id
-            actor_model.model.config.eos_token_id = eos_id
-        for critic_model in self.critic_models:
-            if critic_model is None:
-                continue
-            critic_model.model.config.pad_token_id = pad_id
-            critic_model.model.config.eos_token_id = eos_id
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        if self.tokenizer.pad_token_id is None:
+            raise ValueError("Tokenizer must expose pad_token_id.")
 
     def _init_wandb(self) -> None:
-        if self.wandb_initialized:
-            return
-        if wandb is None:
-            raise RuntimeError("wandb is not installed but wandb_config was provided.")
         if self.wandb_config is None:
             self.wandb_config = {}
-
         wandb_project = self.wandb_config.get("project", "comlrl")
         wandb_entity = self.wandb_config.get("entity")
-        algo_tag = str(self.algorithm_name or "iac").lower()
-        wandb_name = (
+        algo_tag = str(self.algorithm_name or "maac").lower()
+        wandb_run_name = (
             self.wandb_config.get("name")
             or self.wandb_config.get("run_name")
             or f"test-{algo_tag}"
@@ -361,11 +271,8 @@ class IACTrainer(ActorCriticTrainerBase):
             "num_turns": self.args.num_turns,
             "actor_learning_rate": self.args.actor_learning_rate,
             "critic_learning_rate": self.args.critic_learning_rate,
-            "rollout_buffer_size": self.args.rollout_buffer_size,
-            "train_batch_size": self.args.train_batch_size,
-            "value_loss_coef": self.args.value_loss_coef,
             "max_new_tokens": self.args.max_new_tokens,
-            "use_separate_critic": self.args.use_separate_critic,
+            "num_generations": self.args.num_generations,
             "critic_type": self.args.critic_type,
         }
 
@@ -422,21 +329,18 @@ class IACTrainer(ActorCriticTrainerBase):
                         "previous_response"
                     )
 
-        init_kwargs: Dict[str, Any] = {
+        init_kwargs = {
             "project": wandb_project,
+            "name": wandb_run_name,
             "entity": wandb_entity,
-            "name": wandb_name,
             "config": config_dict,
         }
-
         if wandb_dir is not None:
             os.makedirs(wandb_dir, exist_ok=True)
             init_kwargs["dir"] = wandb_dir
-
         tags = self.wandb_config.get("tags")
         if isinstance(tags, list):
             init_kwargs["tags"] = tags
-
         wandb.init(**init_kwargs)
         self.wandb_initialized = True
 
@@ -461,6 +365,49 @@ class IACTrainer(ActorCriticTrainerBase):
             collate_fn=lambda batch: batch,
         )
 
+    def _build_joint_prompt(self, prompts: Sequence[str]) -> str:
+        pieces = [f"[Agent {idx}] {p}" for idx, p in enumerate(prompts)]
+        return "\n\n".join(pieces)
+
+    def _build_critic_input(
+        self, prompts: Sequence[str], action_completions: Optional[Sequence[str]] = None
+    ) -> str:
+        """Build centralized critic conditioning input.
+
+        - critic_type='v': V(s) conditioned on joint prompt only.
+        - critic_type='q': Q(s,a) conditioned on joint prompt + joint action text.
+        """
+        base = self._build_joint_prompt(prompts)
+        if (self.args.critic_type or "v").lower() == "v":
+            return base
+
+        action_completions = list(action_completions or [])
+        action_lines: List[str] = ["[Joint Action]"]
+        for idx, comp in enumerate(action_completions):
+            action_lines.append(f"[Agent {idx} action]\n{comp}")
+        return base + "\n\n" + "\n\n".join(action_lines)
+
+    def _critic_value_from_text(self, critic_input: str) -> Dict[str, Any]:
+        encoded = self._encode_prompt(critic_input)
+        ids = encoded["input_ids"]
+        mask = encoded["attention_mask"]
+        prompt_len = ids.size(1)
+        value = self._value_on_prompt_only(self.critic_model, ids, mask, prompt_len)
+        return {
+            "critic_input": critic_input,
+            "input_ids": ids,
+            "attention_mask": mask,
+            "prompt_len": prompt_len,
+            "value": value,
+        }
+
+    def _infer_reward_signature(self, reward_func: Callable) -> inspect.Signature:
+        try:
+            return inspect.signature(reward_func)
+        except (TypeError, ValueError):
+            return inspect.Signature()
+
+    # Rollout collection
     def _call_reward_func(
         self,
         prompts: Sequence[str],
@@ -538,34 +485,15 @@ class IACTrainer(ActorCriticTrainerBase):
         else:
             rewards = [float(raw)]
 
-        processed = [float(self.reward_processor(r)) for r in rewards]
-        if num_agents == 1:
-            return processed
+        return [float(self.reward_processor(r)) for r in rewards]
 
-        if len(processed) == 1:
-            return processed * num_agents
-        if len(processed) == num_agents:
-            return processed
-        num_ret = int(getattr(self.args, "num_generations", 1))
-        if len(processed) == num_ret:
-            return processed
-        raise ValueError(
-            f"Reward function must return either 1 or {num_agents} values per prompt for multi-agent IAC."
-        )
-
-    # Rollout collection
-    def _generate_rollout(
-        self,
-        actor_model: CausalLMWithValueHead,
-        prompt: str,
-        agent_idx: int,
-        num_ret: int,
-    ) -> Dict[str, Any]:
+    def _generate(self, actor_model, prompt: str) -> Dict[str, Any]:
         encoded_prompt = self._encode_prompt(prompt)
         prompt_input_ids = encoded_prompt["input_ids"]
         prompt_attention_mask = encoded_prompt["attention_mask"]
         prompt_len = prompt_input_ids.size(1)
 
+        num_ret = int(self.args.num_generations)
         generation_kwargs: Dict[str, Any] = {
             "input_ids": prompt_input_ids,
             "attention_mask": prompt_attention_mask,
@@ -603,64 +531,14 @@ class IACTrainer(ActorCriticTrainerBase):
                 self.tokenizer.decode(seq[:resp_len], skip_special_tokens=True)
             )
 
-        full_attention_mask = torch.ones_like(sequences, device=self.device)
-
-        with torch.no_grad():
-            if self.args.use_separate_critic:
-                critic_model = self.critic_models[agent_idx]
-                if critic_model is None:
-                    raise RuntimeError("Critic model missing for agent.")
-                value = self._value_for_critic_type(
-                    critic_model,
-                    sequences,
-                    full_attention_mask,
-                    prompt_len,
-                    response_lens,
-                )
-            else:
-                value = self._value_for_critic_type(
-                    actor_model,
-                    sequences,
-                    full_attention_mask,
-                    prompt_len,
-                    response_lens,
-                )
-
-        logprobs = []
-        for seq, attn, resp_len in zip(sequences, full_attention_mask, response_lens):
-            lp, _ = self._policy_eval(
-                actor_model,
-                seq.unsqueeze(0),
-                attn.unsqueeze(0),
-                prompt_len,
-                resp_len,
-                output_values=False,
-            )
-            logprobs.append(lp.squeeze(0))
-
         return {
             "prompt": prompt,
             "prompt_len": prompt_len,
             "sequences": sequences,
-            "attention_mask": full_attention_mask,
+            "attention_mask": torch.ones_like(sequences, device=self.device),
             "response_lens": response_lens,
-            "logprobs": logprobs,
-            "values": value,
             "completions": completion_texts,
-            "char_lengths": [len(txt) for txt in completion_texts],
         }
-
-    def _expand_rewards(self, rewards: List[float], num_ret: int) -> List[List[float]]:
-        num_agents = self.args.num_agents
-        if len(rewards) == 1:
-            return [[rewards[0]] * num_ret for _ in range(num_agents)]
-        if len(rewards) == num_ret:
-            return [list(rewards) for _ in range(num_agents)]
-        if len(rewards) == num_agents:
-            return [[rewards[a]] * num_ret for a in range(num_agents)]
-        raise ValueError(
-            "Reward function must return 1 value, num_generations values, or num_agents values."
-        )
 
     def _collect_rollouts(self, item: Dict[str, Any]) -> List[RolloutSample]:
         num_turns = max(1, int(getattr(self.args, "num_turns", 1)))
@@ -670,36 +548,85 @@ class IACTrainer(ActorCriticTrainerBase):
         prompts: List[str] = []
         completions_per_agent: List[List[str]] = []
         rollout_data: List[Dict[str, Any]] = []
-        num_ret = int(getattr(self.args, "num_generations", 1))
+        num_ret = int(self.args.num_generations)
 
         for agent_idx, actor_model in enumerate(self.actor_models):
             prompt = self._resolve_turn_prompt(item, agent_idx)
-            gen = self._generate_rollout(actor_model, prompt, agent_idx, num_ret)
-            completions_per_agent.append(gen["completions"])
-            rollout_data.append({"agent_idx": agent_idx, **gen})
+            gen = self._generate(actor_model, prompt)
             prompts.append(prompt)
+            completions_per_agent.append(gen["completions"])
+            rollout_data.append(
+                {
+                    "agent_idx": agent_idx,
+                    "prompt": prompt,
+                    "prompt_len": gen["prompt_len"],
+                    "sequences": gen["sequences"],
+                    "attention_mask": gen["attention_mask"],
+                    "response_lens": gen["response_lens"],
+                }
+            )
 
         rewards = self._call_reward_func(
             prompts, completions_per_agent, batch_items=[item]
         )
-        rewards_matrix = self._expand_rewards(rewards, num_ret=num_ret)
+        num_agents = self.args.num_agents
+        if len(rewards) == 1:
+            rewards_matrix = [[rewards[0]] * num_ret for _ in range(num_agents)]
+        elif len(rewards) == num_ret:
+            rewards_matrix = [list(rewards) for _ in range(num_agents)]
+        elif len(rewards) == num_agents:
+            rewards_matrix = [[rewards[a]] * num_ret for a in range(num_agents)]
+        else:
+            raise ValueError(
+                "Reward function must return 1 value, num_generations values, "
+                "or num_agents values."
+            )
 
         rollouts: List[RolloutSample] = []
+        critic_type = (self.args.critic_type or "v").lower()
+        critic_values_by_i: List[Dict[str, Any]] = []
+        if critic_type == "v":
+            critic_input = self._build_critic_input(prompts)
+            with torch.no_grad():
+                critic_values_by_i = [self._critic_value_from_text(critic_input)]
+        else:
+            for i in range(num_ret):
+                joint_action = [
+                    completions_per_agent[a][i] for a in range(self.args.num_agents)
+                ]
+                critic_input = self._build_critic_input(prompts, joint_action)
+                with torch.no_grad():
+                    critic_values_by_i.append(
+                        self._critic_value_from_text(critic_input)
+                    )
+
         for data in rollout_data:
             agent_idx = data["agent_idx"]
             for i in range(num_ret):
                 seq = data["sequences"][i]
                 attn = data["attention_mask"][i]
                 resp_len = data["response_lens"][i]
-                logprob = data["logprobs"][i]
-                value = data["values"][i]
                 reward = float(rewards_matrix[agent_idx][i])
-                reward_tensor = torch.tensor(
-                    [reward], device=self.device, dtype=torch.float32
-                )
-                returns = reward_tensor.clone()
-                advantage = returns - value
+                reward_tensor = torch.tensor([reward], device=self.device)
 
+                logprob, _ = self._policy_eval(
+                    self.actor_models[agent_idx],
+                    seq.unsqueeze(0),
+                    attn.unsqueeze(0),
+                    data["prompt_len"],
+                    resp_len,
+                    output_values=False,
+                )
+
+                critic_pack = (
+                    critic_values_by_i[0]
+                    if critic_type == "v"
+                    else critic_values_by_i[i]
+                )
+                joint_ids = critic_pack["input_ids"]
+                joint_mask = critic_pack["attention_mask"]
+                joint_len = int(critic_pack["prompt_len"])
+                value = critic_pack["value"].detach().cpu()
                 rollouts.append(
                     RolloutSample(
                         agent_idx=agent_idx,
@@ -715,24 +642,34 @@ class IACTrainer(ActorCriticTrainerBase):
                         old_logprob=logprob.detach().cpu(),
                         old_value=value.detach().cpu(),
                         reward=reward_tensor.detach().cpu(),
-                        returns=returns.detach().cpu(),
-                        advantage=advantage.detach().cpu(),
+                        returns=reward_tensor.detach().cpu(),
+                        advantage=torch.zeros_like(reward_tensor).detach().cpu(),
+                        normalized_advantage=None,
                         metadata={
-                            "char_length": data["char_lengths"][i],
-                            "value_target": returns.detach().cpu(),
+                            "joint_input_ids": joint_ids.detach().cpu(),
+                            "joint_attention_mask": joint_mask.detach().cpu(),
+                            "joint_prompt_len": joint_len,
+                            "turn_idx": 0,
+                            "adv_target": reward_tensor.detach().cpu(),
                         },
                     )
                 )
 
+        for sample in rollouts:
+            r = float(sample.reward.view(-1)[0].item())
+            sample.metadata["value_target"] = torch.tensor([r]).detach().cpu()
+
+        if self.metrics_callback is not None:
+            extra = self.metrics_callback(rollouts)
+            if isinstance(extra, dict):
+                self._log_metrics(extra)
         return rollouts
 
     def _collect_rollouts_multi_turn(
         self, item: Dict[str, Any], num_turns: int
     ) -> List[RolloutSample]:
         if self.args.num_generations != 1:
-            raise ValueError("Multi-turn IAC currently supports num_generations == 1.")
-        if self.external_transition is None:
-            raise ValueError("external_transition is required for multi-turn IAC.")
+            raise ValueError("Multi-turn MAAC currently supports num_generations == 1.")
 
         prompt_history = [[] for _ in range(self.args.num_agents)]
         response_history = [[] for _ in range(self.args.num_agents)]
@@ -750,6 +687,8 @@ class IACTrainer(ActorCriticTrainerBase):
                     for agent_idx in range(self.args.num_agents)
                 ]
             else:
+                if self.external_transition is None:
+                    raise ValueError("external_transition is required for multi-turn.")
                 transition_result = self.external_transition(
                     prompt=item.get("prompt", ""),
                     agent_completions=previous_completions,
@@ -776,29 +715,55 @@ class IACTrainer(ActorCriticTrainerBase):
             rollout_data: List[Dict[str, Any]] = []
             for agent_idx, actor_model in enumerate(self.actor_models):
                 prompt = turn_prompts[agent_idx]
-                gen = self._generate_rollout(actor_model, prompt, agent_idx, num_ret=1)
+                gen = self._generate(actor_model, prompt)
                 completions_per_agent.append(gen["completions"])
-                rollout_data.append({"agent_idx": agent_idx, **gen})
+                rollout_data.append(
+                    {
+                        "agent_idx": agent_idx,
+                        "prompt": prompt,
+                        "prompt_len": gen["prompt_len"],
+                        "sequences": gen["sequences"],
+                        "attention_mask": gen["attention_mask"],
+                        "response_lens": gen["response_lens"],
+                        "completion_texts": gen["completions"],
+                    }
+                )
                 prompt_history[agent_idx].append(prompt)
 
             rewards = self._call_reward_func(
                 turn_prompts, completions_per_agent, batch_items=[item]
             )
             rewards_matrix = self._expand_rewards(rewards, num_ret=1)
+            critic_input = self._build_critic_input(
+                turn_prompts,
+                action_completions=[c[0] for c in completions_per_agent],
+            )
+            with torch.no_grad():
+                critic_pack = self._critic_value_from_text(critic_input)
+            joint_ids = critic_pack["input_ids"]
+            joint_mask = critic_pack["attention_mask"]
+            joint_len = int(critic_pack["prompt_len"])
+            joint_value = critic_pack["value"]
 
             for data in rollout_data:
                 agent_idx = data["agent_idx"]
                 seq = data["sequences"][0]
                 attn = data["attention_mask"][0]
                 resp_len = data["response_lens"][0]
-                logprob = data["logprobs"][0]
-                value = data["values"][0]
                 reward_val = float(rewards_matrix[agent_idx][0])
-                reward_tensor = torch.tensor(
-                    [reward_val], device=self.device, dtype=torch.float32
+                reward_tensor = torch.tensor([reward_val], device=self.device)
+
+                logprob, _ = self._policy_eval(
+                    self.actor_models[agent_idx],
+                    seq.unsqueeze(0),
+                    attn.unsqueeze(0),
+                    data["prompt_len"],
+                    resp_len,
+                    output_values=False,
                 )
 
-                completion_text = data["completions"][0]
+                value = joint_value.detach().cpu()
+                completion_text = data["completion_texts"][0]
                 sample = RolloutSample(
                     agent_idx=agent_idx,
                     prompt=data["prompt"],
@@ -814,7 +779,9 @@ class IACTrainer(ActorCriticTrainerBase):
                     advantage=torch.zeros_like(reward_tensor).detach().cpu(),
                     normalized_advantage=None,
                     metadata={
-                        "char_length": data["char_lengths"][0],
+                        "joint_input_ids": joint_ids.detach().cpu(),
+                        "joint_attention_mask": joint_mask.detach().cpu(),
+                        "joint_prompt_len": joint_len,
                         "turn_idx": turn_idx,
                     },
                 )
@@ -852,8 +819,27 @@ class IACTrainer(ActorCriticTrainerBase):
                 sample.advantage = torch.zeros_like(sample.returns)
                 sample.normalized_advantage = None
 
+        if self.metrics_callback is not None:
+            extra = self.metrics_callback(rollouts)
+            if isinstance(extra, dict):
+                self._log_metrics(extra)
         return rollouts
 
+    def _expand_rewards(self, rewards: List[float], num_ret: int) -> List[List[float]]:
+        """Map reward list to [num_agents x num_ret] matrix."""
+        num_agents = self.args.num_agents
+        if len(rewards) == 1:
+            return [[rewards[0]] * num_ret for _ in range(num_agents)]
+        if len(rewards) == num_ret:
+            return [list(rewards) for _ in range(num_agents)]
+        if len(rewards) == num_agents:
+            return [[rewards[a]] * num_ret for a in range(num_agents)]
+        raise ValueError(
+            "Reward function must return 1 value, num_generations values, or num_agents values."
+        )
+
+    # Advantage prep
+    # Losses
     def _policy_eval(
         self,
         actor_model: CausalLMWithValueHead,
@@ -861,12 +847,8 @@ class IACTrainer(ActorCriticTrainerBase):
         attention_mask: torch.Tensor,
         prompt_len: int,
         response_len: int,
-        output_values: bool = True,
+        output_values: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Evaluate the actor to retrieve log-probabilities and (optional) value prediction.
-        """
-
         outputs = actor_model(
             input_ids=sequences,
             attention_mask=attention_mask,
@@ -879,13 +861,8 @@ class IACTrainer(ActorCriticTrainerBase):
 
         value = None
         if output_values:
-            # Use prompt-only values for V(h); use full sequence for Q(h,a).
-            value = self._value_for_critic_type(
-                actor_model,
-                sequences,
-                attention_mask,
-                prompt_len,
-                [response_len],
+            value = self._value_on_prompt_only(
+                actor_model, sequences, attention_mask, prompt_len
             )
 
         return logprob, value
@@ -897,9 +874,6 @@ class IACTrainer(ActorCriticTrainerBase):
         attention_mask: torch.Tensor,
         prompt_len: int,
     ) -> torch.Tensor:
-        """
-        Compute V(h) using only the prompt/history tokens, excluding actions.
-        """
         prompt_ids = sequences[:, :prompt_len]
         prompt_mask = (
             attention_mask[:, :prompt_len] if attention_mask is not None else None
@@ -913,63 +887,6 @@ class IACTrainer(ActorCriticTrainerBase):
             raise RuntimeError("Value head is missing for value computation.")
         last_index = prompt_len - 1
         return outputs.values[:, last_index]
-
-    def _value_on_full_sequence(
-        self,
-        model: CausalLMWithValueHead,
-        sequences: torch.Tensor,
-        attention_mask: torch.Tensor,
-        prompt_len: int,
-        response_lens: Sequence[int],
-    ) -> torch.Tensor:
-        """Compute Q(h,a) using the prompt+response sequence."""
-        values: List[torch.Tensor] = []
-        for seq, attn, resp_len in zip(sequences, attention_mask, response_lens):
-            seq_len = int(prompt_len) + int(resp_len)
-            seq_ids = seq[:seq_len].unsqueeze(0)
-            seq_mask = attn[:seq_len].unsqueeze(0) if attn is not None else None
-            outputs = model(
-                input_ids=seq_ids,
-                attention_mask=seq_mask,
-                output_values=True,
-            )
-            if outputs.values is None:
-                raise RuntimeError("Value head is missing for value computation.")
-            values.append(outputs.values[:, -1])
-        return torch.cat(values, dim=0)
-
-    def _value_for_critic_type(
-        self,
-        model: CausalLMWithValueHead,
-        sequences: torch.Tensor,
-        attention_mask: torch.Tensor,
-        prompt_len: int,
-        response_lens: Optional[Sequence[int]],
-    ) -> torch.Tensor:
-        if self.critic_type == "q":
-            if response_lens is None:
-                seq_len = sequences.size(1)
-                response_lens = [seq_len - int(prompt_len)] * sequences.size(0)
-            return self._value_on_full_sequence(
-                model, sequences, attention_mask, prompt_len, response_lens
-            )
-        return self._value_on_prompt_only(model, sequences, attention_mask, prompt_len)
-
-    def _critic_eval(
-        self,
-        critic_model: CausalLMWithValueHead,
-        sequences: torch.Tensor,
-        attention_mask: torch.Tensor,
-        prompt_len: int,
-        response_len: int,
-    ) -> torch.Tensor:
-        return self._value_for_critic_type(
-            critic_model,
-            sequences,
-            attention_mask,
-            prompt_len,
-            [response_len],
-        )
 
     def _compute_sequence_stats(
         self,
@@ -990,20 +907,11 @@ class IACTrainer(ActorCriticTrainerBase):
         end_index = start_index + response_len
         response_log_probs = token_log_probs[:, start_index:end_index]
 
-        logprob_sum = response_log_probs.sum(dim=-1)
+        return response_log_probs.sum(dim=-1)
 
-        return logprob_sum
-
-    # Actor-Critic update logic
     def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> Dict[str, float]:
         actor_model = self.actor_models[agent_idx]
-        critic_model = (
-            self.critic_models[agent_idx] if self.args.use_separate_critic else None
-        )
         actor_optimizer = self.actor_optimizers[agent_idx]
-        critic_optimizer = (
-            self.critic_optimizers[agent_idx] if self.args.use_separate_critic else None
-        )
 
         actor_losses: List[torch.Tensor] = []
         value_losses: List[torch.Tensor] = []
@@ -1012,7 +920,6 @@ class IACTrainer(ActorCriticTrainerBase):
             sequences = sample.full_input_ids.to(self.device).unsqueeze(0)
             attention_mask = sample.attention_mask.to(self.device).unsqueeze(0)
 
-            # Policy log-prob uses full sequence; value uses prompt-only baseline.
             logprob, _ = self._policy_eval(
                 actor_model,
                 sequences,
@@ -1021,34 +928,22 @@ class IACTrainer(ActorCriticTrainerBase):
                 sample.response_len,
                 output_values=False,
             )
-            if self.args.use_separate_critic:
-                if critic_model is None:
-                    raise RuntimeError("Critic model not initialised.")
-                value = self._critic_eval(
-                    critic_model,
-                    sequences,
-                    attention_mask,
-                    sample.prompt_len,
-                    sample.response_len,
-                )
-            else:
-                value = self._value_for_critic_type(
-                    actor_model,
-                    sequences,
-                    attention_mask,
-                    sample.prompt_len,
-                    [sample.response_len],
-                )
+
+            joint_ids = sample.metadata["joint_input_ids"].to(self.device)
+            joint_mask = sample.metadata["joint_attention_mask"].to(self.device)
+            joint_len = int(sample.metadata["joint_prompt_len"])
+            value = self._value_on_prompt_only(
+                self.critic_model, joint_ids, joint_mask, joint_len
+            )
 
             old_value = sample.old_value.to(self.device, dtype=value.dtype)
-            old_logprob = sample.old_logprob.to(self.device)
             advantage = sample.normalized_advantage.to(self.device, dtype=value.dtype)
-            returns = sample.returns.to(self.device, dtype=value.dtype)
+            value_target = sample.metadata.get("value_target")
+            if value_target is None:
+                raise RuntimeError("value_target missing for critic update.")
+            returns = value_target.to(self.device, dtype=value.dtype)
 
-            if (
-                not torch.isfinite(logprob).all()
-                or not torch.isfinite(old_logprob).all()
-            ):
+            if not torch.isfinite(logprob).all():
                 raise FloatingPointError(
                     "Encountered non-finite logprob during AC step."
                 )
@@ -1058,69 +953,30 @@ class IACTrainer(ActorCriticTrainerBase):
                 raise FloatingPointError("Returns contain non-finite values.")
 
             policy_loss = -(logprob * advantage)
-
-            value_target = sample.metadata.get("value_target")
-            if value_target is None:
-                raise RuntimeError("value_target missing for critic update.")
-            value_target = value_target.to(self.device, dtype=value.dtype)
-            if (
-                self.args.value_clip_range is not None
-                and not self.args.use_separate_critic
-            ):
-                clipped_value = old_value + torch.clamp(
-                    value - old_value,
-                    -self.args.value_clip_range,
-                    self.args.value_clip_range,
-                )
-                value_error = torch.max(
-                    (value_target - value) ** 2,
-                    (value_target - clipped_value) ** 2,
-                )
-            else:
-                value_error = (value_target - value) ** 2
+            value_error = (returns - value) ** 2
 
             actor_losses.append(policy_loss)
             value_losses.append(value_error)
 
         actor_loss = torch.stack(actor_losses).mean()
         value_loss = torch.stack(value_losses).mean()
-        if not torch.isfinite(actor_loss) or not torch.isfinite(value_loss):
-            raise FloatingPointError(
-                "Non-finite policy/value loss detected. Reduce learning rates or "
-                "adjust normalization settings."
-            )
-
-        actor_total = actor_loss
         value_total = self.args.value_loss_coef * value_loss
+        if not torch.isfinite(actor_loss) or not torch.isfinite(value_loss):
+            raise FloatingPointError("Non-finite loss detected.")
 
-        if not torch.isfinite(actor_total) or not torch.isfinite(value_total):
-            raise FloatingPointError(
-                "Non-finite combined AC loss encountered. Training halted."
-            )
+        actor_optimizer.zero_grad()
+        actor_loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            actor_model.parameters(), self.args.max_grad_norm
+        )
+        actor_optimizer.step()
 
-        if self.args.use_separate_critic:
-            if critic_optimizer is None:
-                raise RuntimeError("Critic optimizer missing.")
-            actor_optimizer.zero_grad()
-            actor_total.backward()
-            torch.nn.utils.clip_grad_norm_(
-                actor_model.parameters(), self.args.max_grad_norm
-            )
-            actor_optimizer.step()
-
-            critic_optimizer.zero_grad()
-            value_total.backward()
-            torch.nn.utils.clip_grad_norm_(
-                critic_model.parameters(), self.args.max_grad_norm  # type: ignore[arg-type]
-            )
-            critic_optimizer.step()
-        else:
-            actor_optimizer.zero_grad()
-            (actor_total + value_total).backward()
-            torch.nn.utils.clip_grad_norm_(
-                actor_model.parameters(), self.args.max_grad_norm
-            )
-            actor_optimizer.step()
+        self.critic_optimizer.zero_grad()
+        value_total.backward()
+        torch.nn.utils.clip_grad_norm_(
+            self.critic_model.parameters(), self.args.max_grad_norm
+        )
+        self.critic_optimizer.step()
 
         return {
             "policy_loss": actor_loss.detach().item(),
@@ -1132,79 +988,72 @@ class IACTrainer(ActorCriticTrainerBase):
     ) -> Dict[str, float]:
         if not rollouts:
             return {}
+        metrics = self._summarize_rollout_metrics(rollouts)
 
-        rewards = torch.stack([sample.reward for sample in rollouts]).float()
-        returns_raw = torch.stack([sample.returns for sample in rollouts]).float()
         self._prepare_advantages(rollouts)
-
-        metrics = defaultdict(list)
-        metrics["reward_mean"].append(rewards.mean().item())
-        if returns_raw.numel() > 0 and torch.isfinite(returns_raw).all():
-            metrics["expected_return"].append(returns_raw.mean().item())
-
-        if self.metrics_callback is not None:
-            extra = self.metrics_callback(rollouts)
-            if isinstance(extra, dict):
-                for key, value in extra.items():
-                    metrics[key].append(float(value))
         random.shuffle(rollouts)
+
+        loss_metrics = defaultdict(list)
         for start in range(0, len(rollouts), self.args.train_batch_size):
             batch = rollouts[start : start + self.args.train_batch_size]
             step_metrics = self._ac_step(agent_idx, batch)
             for key, value in step_metrics.items():
-                metrics[key].append(value)
-
-        averaged = {
+                loss_metrics[key].append(value)
+        averaged_losses = {
             key: float(sum(values) / len(values))
-            for key, values in metrics.items()
+            for key, values in loss_metrics.items()
             if values
         }
-        return averaged
+        metrics.update(averaged_losses)
+        return metrics
 
-    def save_model(self, output_dir: str) -> None:
-        os.makedirs(output_dir, exist_ok=True)
-        if self.args.num_agents == 1:
-            actor = self.actor_models[0]
-            actor.model.save_pretrained(output_dir)
-            if actor.value_head is not None:
-                torch.save(
-                    actor.value_head.state_dict(),
-                    os.path.join(output_dir, "value_head.pt"),
-                )
-            critic = self.critic_models[0]
-            if critic is not None:
-                critic_dir = os.path.join(output_dir, "critic")
-                os.makedirs(critic_dir, exist_ok=True)
-                critic.model.save_pretrained(critic_dir)
-                if critic.value_head is not None:
-                    torch.save(
-                        critic.value_head.state_dict(),
-                        os.path.join(critic_dir, "value_head.pt"),
-                    )
-        else:
-            for agent_idx, actor in enumerate(self.actor_models):
-                agent_dir = os.path.join(output_dir, f"agent_{agent_idx}")
-                os.makedirs(agent_dir, exist_ok=True)
-                actor.model.save_pretrained(agent_dir)
-                if actor.value_head is not None:
-                    torch.save(
-                        actor.value_head.state_dict(),
-                        os.path.join(agent_dir, "value_head.pt"),
-                    )
-                critic = self.critic_models[agent_idx]
-                if critic is None:
-                    continue
-                critic_dir = os.path.join(agent_dir, "critic")
-                os.makedirs(critic_dir, exist_ok=True)
-                critic.model.save_pretrained(critic_dir)
-                if critic.value_head is not None:
-                    torch.save(
-                        critic.value_head.state_dict(),
-                        os.path.join(critic_dir, "value_head.pt"),
-                    )
+    def _on_epoch_end(
+        self,
+        epoch: int,
+        total_epochs: int,
+        epoch_metrics: Dict[str, List[float]],
+    ) -> None:
+        num_turns = max(1, int(getattr(self.args, "num_turns", 1)))
+        epoch_log: Dict[str, float] = {}
+        for turn_idx in range(num_turns):
+            prefix = f"turn_{turn_idx + 1}/"
 
-        if self.tokenizer is not None:
-            self.tokenizer.save_pretrained(output_dir)
+            def _maybe_log(metric_key: str, epoch_key: str) -> None:
+                values = epoch_metrics.get(prefix + metric_key)
+                if values:
+                    epoch_log[prefix + epoch_key] = float(sum(values) / len(values))
+
+            _maybe_log("reward_mean", "epoch_reward_mean")
+            _maybe_log("expected_return", "epoch_avg_return")
+            _maybe_log("value_pred_mean", "epoch_value_pred_mean")
+            _maybe_log("value_target_mean", "epoch_value_target_mean")
+            _maybe_log("policy_loss", "epoch_policy_loss")
+            _maybe_log("value_loss", "epoch_value_loss")
+
+        if epoch_log:
+            self._log_metrics(epoch_log)
+
+        summary = self._summarize_epoch_metrics(epoch_metrics)
+        if summary and getattr(self, "verbose", True):
+            to_print = epoch_log if epoch_log else summary
+            print(f"Epoch {epoch + 1}/{total_epochs} metrics: {to_print}")
 
     def _include_value_target_fallback(self) -> bool:
         return False
+
+    def save_model(self, output_dir: str) -> None:
+        os.makedirs(output_dir, exist_ok=True)
+        for agent_idx, actor in enumerate(self.actor_models):
+            agent_dir = os.path.join(output_dir, f"agent_{agent_idx}")
+            os.makedirs(agent_dir, exist_ok=True)
+            actor.model.save_pretrained(agent_dir)
+        critic_dir = os.path.join(output_dir, "critic")
+        os.makedirs(critic_dir, exist_ok=True)
+        self.critic_model.model.save_pretrained(critic_dir)
+        if self.critic_model.value_head is not None:
+            torch.save(
+                self.critic_model.value_head.state_dict(),
+                os.path.join(critic_dir, "value_head.pt"),
+            )
+        if self.tokenizer is not None:
+            self.tokenizer.save_pretrained(output_dir)

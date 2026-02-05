@@ -5,7 +5,7 @@ from typing import List
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
-from comlrl.trainers.iac import IACConfig, IACTrainer
+from comlrl.trainers.actor_critic import IACConfig, IACTrainer
 
 
 def dual_length_reward(

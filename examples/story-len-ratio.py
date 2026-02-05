@@ -7,7 +7,7 @@ from datasets import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from comlrl.utils.reward_processor import RewardProcessors
-from comlrl.trainers.magrpo import MAGRPOConfig, MAGRPOTrainer
+from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
 
 
 def proper_length_ratio_reward(

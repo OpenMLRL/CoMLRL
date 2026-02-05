@@ -12,7 +12,7 @@ from typing import Any, Dict, List
 from datasets import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from comlrl.trainers.magrpo import MAGRPOConfig, MAGRPOTrainer
+from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
 
 
 def cleanup_code(code):

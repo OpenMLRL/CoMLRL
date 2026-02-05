@@ -18,7 +18,7 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 {{< /katex >}}
 
 {{% hint success %}}
-These classes are derived from `comlrl.trainers.magrpo.MAGRPOTrainer`. Interfaces for the trainer and configuration classes are the same as `MAGRPOTrainer` and `MAGRPOConfig`.
+These classes are derived from `comlrl.trainers.reinforce.MAGRPOTrainer`. Interfaces for the trainer and configuration classes are the same as `MAGRPOTrainer` and `MAGRPOConfig`.
 {{% /hint %}}
 
 ## MAGRPO
@@ -104,5 +104,5 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 {{< /katex >}}
 
 {{% hint success %}}
-These classes are derived from `comlrl.trainers.magrpo.MAGRPOTrainer`. Interfaces for the trainer and configuration classes are the same as `MAGRPOTrainer` and `MAGRPOConfig`.
+These classes are derived from `comlrl.trainers.reinforce.MAGRPOTrainer`. Interfaces for the trainer and configuration classes are the same as `MAGRPOTrainer` and `MAGRPOConfig`.
 {{% /hint %}}
