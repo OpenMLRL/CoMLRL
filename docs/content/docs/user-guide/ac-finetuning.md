@@ -14,7 +14,7 @@ Independent Actor-Critic (IAC) optimizes each agent's policy independently while
 J(\theta_i) = \mathbb{E}_{o_{i,0} \sim \mathcal{D}, h_i \sim \pi_{\theta_i}}\left[\log \pi_{\theta_i}(a_{i,t}|h_{i,t}) \cdot \delta_{i,t} + \beta \mathcal{H}(\pi_{\theta_i})\right]
 {{< /katex >}}
 
-where {{< katex inline=true >}}\delta_{i,t} = r_{i,t} + \gamma V_{\phi_i}(h_{i,t+1}) - V_{\phi_i}(h_{i,t}){{< /katex >}} is the (single-step) temporal difference error, {{< katex inline=true >}}\gamma{{< /katex >}} is the discount factor, and {{< katex inline=true >}}\mathcal{H}(\pi_{\theta_i}){{< /katex >}} is the entropy bonus with coefficient {{< katex inline=true >}}\beta{{< /katex >}}.
+where {{< katex inline=true >}}\delta_{i,t} = r_{i,t} + \gamma V_{\phi_i}(h_{i,t+1}) - V_{\phi_i}(h_{i,t}){{< /katex >}} is the (single-step) temporal difference error, {{< katex inline=true >}}\gamma{{< /katex >}} is the discount factor, and {{< katex inline=true >}}\mathcal{H}(\pi_{\theta_i}){{< /katex >}} is the entropy bonus with coefficient {{< katex inline=true >}}\beta{{< /katex >}}. Use `critic_type='q'` to switch to a Q-value critic {{< katex inline=true >}}Q(h_t, a_t){{< /katex >}}; the default is `critic_type='v'`.
 
 CoMLRL supports two IAC architectures for critic implementation:
 
@@ -43,14 +43,20 @@ CoMLRL supports two IAC architectures for critic implementation:
 - `num_train_epochs`: Number of training epochs
 - `use_separate_critic`: Whether to use separate critic model
 - `critic_model_name_or_path`: Model identifier for separate critic
+- `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
 - `critic_value_head_hidden_dim`: Hidden dimension for critic value head
 - `value_head_hidden_dim`: Hidden dimension for actor value head
+- `pad_token_id`: Padding token id
 - `num_agents`: Number of agents
 - `num_turns`: Number of turns
+- `external_prompt_passthrough`: Use external prompts directly in multi-turn
 - `discount`: Discount factor for multi-turn returns
+- `num_generations`: Number of generations per prompt per agent
 - `early_termination_threshold`: Optional early-stop threshold for multi-turn
 - `eval_interval`: Evaluation interval (in training batches)
 - `eval_num_samples`: Number of evaluation samples per interval
+- `eval_batch_size`: Eval dataloader batch size
+- `logging_steps`: Log every N training batches
 {{% /hint %}}
 
 {{% hint info %}}
@@ -86,7 +92,7 @@ Multi-Agent Actor-Critic (MAAC) shares a centralized critic across agents. The p
 J(\theta_i) = \mathbb{E}_{h_t \sim \mathcal{D},\, a_t \sim \pi_{\theta}}\left[\log \pi_{\theta_i}(a_{i,t}|h_{i,t}) \cdot \mathbf{\delta}_t + \beta \mathcal{H}(\pi_{\theta_i})\right]
 {{< /katex >}}
 
-where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf{h}_{t+1}) - V_{\phi}(\mathbf{h}_{t}){{< /katex >}} uses the shared critic on the joint prompt/history, and {{< katex inline=true >}}\beta{{< /katex >}} is the entropy coefficient.
+where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf{h}_{t+1}) - V_{\phi}(\mathbf{h}_{t}){{< /katex >}} uses the shared critic on the joint prompt/history, and {{< katex inline=true >}}\beta{{< /katex >}} is the entropy coefficient. Set `critic_type='q'` to condition the critic on joint responses via {{< katex inline=true >}}Q(\mathbf{h}_t, \mathbf{a}_t){{< /katex >}}.
 
 {{% hint info %}}
 **MAACConfig** parameters:
@@ -106,6 +112,15 @@ where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf
 - `num_agents`: Number of actors
 - `num_generations`: Number of generations per prompt per agent
 - `critic_model_name_or_path`: Required identifier for the shared critic
+- `num_turns`: Number of turns
+- `external_prompt_passthrough`: Use external prompts directly in multi-turn
+- `discount`: Discount factor for multi-turn returns
+- `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
+- `early_termination_threshold`: Optional early-stop threshold for multi-turn
+- `eval_interval`: Evaluation interval (in training batches)
+- `eval_num_samples`: Number of evaluation samples per interval
+- `eval_batch_size`: Eval dataloader batch size
+- `logging_steps`: Log every N training batches
 {{% /hint %}}
 
 {{% hint info %}}
