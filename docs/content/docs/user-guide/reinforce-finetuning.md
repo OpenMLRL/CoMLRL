@@ -54,8 +54,6 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 - `eval_batch_size`: Eval dataloader batch size (default: 1)
 - `external_prompt_passthrough`: Use external prompts directly in multi-turn (default: false)
 - `advantage_mode`: Baseline mode (`mean`, `max`, `rloo`, `raw`) (default: mean)
-- `dataloader_drop_last`: Drop the last batch (default: false)
-- `dataloader_num_workers`: DataLoader worker count (default: 0)
 {{% /hint %}}
 
 {{% hint info %}}

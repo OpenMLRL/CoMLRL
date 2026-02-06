@@ -45,10 +45,6 @@ class MAGRPOConfig:
     train_batch_size: Optional[int] = None
     advantage_mode: str = "mean"
 
-    # DataLoader
-    dataloader_drop_last: bool = False
-    dataloader_num_workers: int = 0
-
     def __post_init__(self) -> None:
         if self.num_train_epochs < 1:
             raise ValueError("num_train_epochs must be >= 1.")
@@ -457,8 +453,8 @@ class MAGRPOTrainer:
             batch_size=1,
             collate_fn=lambda examples: examples,
             shuffle=False,
-            drop_last=self.args.dataloader_drop_last,
-            num_workers=self.args.dataloader_num_workers,
+            drop_last=False,
+            num_workers=0,
         )
 
     def get_eval_dataloader(self) -> Optional[DataLoader]:
@@ -472,7 +468,7 @@ class MAGRPOTrainer:
             collate_fn=lambda examples: examples,
             shuffle=False,
             drop_last=False,
-            num_workers=self.args.dataloader_num_workers,
+            num_workers=0,
         )
 
     def evaluate(self, num_eval_samples: int = 4) -> Dict[str, float]:
