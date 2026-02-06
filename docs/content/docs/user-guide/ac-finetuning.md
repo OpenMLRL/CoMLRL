@@ -25,38 +25,38 @@ CoMLRL supports two IAC architectures for critic implementation:
 {{% hint info %}}
 **IACConfig** provides parameters for configuring Independent Actor-Critic training:
 
+- `num_agents`: Number of agents
+- `num_turns`: Number of turns
+- `critic_model_name_or_path`: Model identifier for separate critic
+- `num_train_epochs`: Number of training epochs
 - `actor_learning_rate`: Learning rate for actor
 - `critic_learning_rate`: Learning rate for critic
-- `weight_decay`: Weight decay for AdamW optimizer
-- `adam_beta1`, `adam_beta2`, `adam_epsilon`: Adam optimizer parameters
-- `max_grad_norm`: Maximum gradient norm for clipping
+- `value_loss_coef`: Coefficient for value loss
+- `value_clip_range`: Clipping range for value function
 - `rollout_buffer_size`: Number of samples to collect before update
 - `train_batch_size`: Mini-batch size for policy updates
-- `value_clip_range`: Clipping range for value function
-- `value_loss_coef`: Coefficient for value loss
-- `advantage_normalization`: Whether to normalize advantages
 - `max_new_tokens`: Maximum new tokens to generate
 - `temperature`: Temperature for sampling
 - `top_p`: Top-p for nucleus sampling
 - `top_k`: Top-k for sampling
-- `do_sample`: Whether to use sampling
-- `num_train_epochs`: Number of training epochs
 - `use_separate_critic`: Whether to use separate critic model
-- `critic_model_name_or_path`: Model identifier for separate critic
-- `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
-- `critic_value_head_hidden_dim`: Hidden dimension for critic value head
-- `value_head_hidden_dim`: Hidden dimension for actor value head
-- `pad_token_id`: Padding token id
-- `num_agents`: Number of agents
-- `num_turns`: Number of turns
-- `external_prompt_passthrough`: Use external prompts directly in multi-turn
 - `discount`: Discount factor for multi-turn returns
-- `num_generations`: Number of generations per prompt per agent
 - `early_termination_threshold`: Optional early-stop threshold for multi-turn
 - `eval_interval`: Evaluation interval (in training batches)
 - `eval_num_samples`: Number of evaluation samples per interval
 - `eval_batch_size`: Eval dataloader batch size
 - `logging_steps`: Log every N training batches
+- `weight_decay`: Weight decay for AdamW optimizer
+- `adam_beta1`, `adam_beta2`, `adam_epsilon`: Adam optimizer parameters
+- `max_grad_norm`: Maximum gradient norm for clipping
+- `advantage_normalization`: Whether to normalize advantages
+- `do_sample`: Whether to use sampling
+- `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
+- `critic_value_head_hidden_dim`: Hidden dimension for critic value head
+- `value_head_hidden_dim`: Hidden dimension for actor value head
+- `pad_token_id`: Padding token id
+- `num_generations`: Number of generations per prompt per agent
+- `external_prompt_passthrough`: Use external prompts directly in multi-turn
 {{% /hint %}}
 
 {{% hint info %}}
@@ -96,31 +96,34 @@ where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf
 
 {{% hint info %}}
 **MAACConfig** parameters:
+- `num_agents`: Number of actors
+- `num_turns`: Number of turns
+- `critic_model_name_or_path`: Required identifier for the shared critic
+- `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
+- `num_train_epochs`: Number of training epochs
 - `actor_learning_rate`: Learning rate for actors
 - `critic_learning_rate`: Learning rate for shared critic
-- `weight_decay`: Weight decay for AdamW
-- `adam_beta1`, `adam_beta2`, `adam_epsilon`: Adam optimizer parameters
-- `max_grad_norm`: Gradient clipping norm
+- `value_loss_coef`: Weight on critic loss
 - `rollout_buffer_size`: Number of samples to collect per agent before an update
 - `train_batch_size`: Mini-batch size within each update
-- `value_loss_coef`: Weight on critic loss
-- `advantage_normalization`: Whether to normalize advantages before updates
 - `max_new_tokens`: Maximum tokens to generate per completion
-- `temperature`, `top_p`, `top_k`, `do_sample`: Sampling parameters
-- `num_train_epochs`: Number of training epochs
-- `pad_token_id`: Padding token id
-- `num_agents`: Number of actors
-- `num_generations`: Number of generations per prompt per agent
-- `critic_model_name_or_path`: Required identifier for the shared critic
-- `num_turns`: Number of turns
-- `external_prompt_passthrough`: Use external prompts directly in multi-turn
+- `temperature`: Temperature for sampling
+- `top_p`: Top-p for nucleus sampling
+- `top_k`: Top-k for sampling
 - `discount`: Discount factor for multi-turn returns
-- `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
 - `early_termination_threshold`: Optional early-stop threshold for multi-turn
 - `eval_interval`: Evaluation interval (in training batches)
 - `eval_num_samples`: Number of evaluation samples per interval
 - `eval_batch_size`: Eval dataloader batch size
 - `logging_steps`: Log every N training batches
+- `weight_decay`: Weight decay for AdamW
+- `adam_beta1`, `adam_beta2`, `adam_epsilon`: Adam optimizer parameters
+- `max_grad_norm`: Gradient clipping norm
+- `advantage_normalization`: Whether to normalize advantages before updates
+- `do_sample`: Whether to use sampling
+- `pad_token_id`: Padding token id
+- `num_generations`: Number of generations per prompt per agent
+- `external_prompt_passthrough`: Use external prompts directly in multi-turn
 {{% /hint %}}
 
 {{% hint info %}}

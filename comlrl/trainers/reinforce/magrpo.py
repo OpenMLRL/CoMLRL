@@ -43,6 +43,7 @@ class MAGRPOConfig:
     eval_num_samples: int = 4
     eval_batch_size: int = 1
     rollout_buffer_size: int = 2
+    train_batch_size: Optional[int] = None
     advantage_mode: str = "mean"
 
     # DataLoader
@@ -70,6 +71,10 @@ class MAGRPOConfig:
             raise ValueError("num_turns must be >= 1.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
+        if self.train_batch_size is None:
+            self.train_batch_size = self.rollout_buffer_size
+        if self.train_batch_size < 1:
+            raise ValueError("train_batch_size must be >= 1.")
 
 
 @dataclass
@@ -1472,16 +1477,21 @@ class MAGRPOTrainer:
         if not samples:
             return
         random.shuffle(samples)
-        self.optimizers[agent_idx].zero_grad()
-        scale = 1.0 / len(samples)
-        for sample in samples:
-            loss = self._compute_loss_with_gradients(
-                self.agents[agent_idx],
-                sample.completions_data,
-                sample.returns,
-            )
-            (loss * scale).backward()
-        self.optimizers[agent_idx].step()
+        batch_size = int(getattr(self.args, "train_batch_size", len(samples)) or 1)
+        for start in range(0, len(samples), batch_size):
+            batch = samples[start : start + batch_size]
+            if not batch:
+                continue
+            self.optimizers[agent_idx].zero_grad()
+            scale = 1.0 / len(batch)
+            for sample in batch:
+                loss = self._compute_loss_with_gradients(
+                    self.agents[agent_idx],
+                    sample.completions_data,
+                    sample.returns,
+                )
+                (loss * scale).backward()
+            self.optimizers[agent_idx].step()
 
     def _compute_advantages(self, returns_tensor: torch.Tensor) -> torch.Tensor:
         mode = str(self.advantage_mode or "mean").lower()
