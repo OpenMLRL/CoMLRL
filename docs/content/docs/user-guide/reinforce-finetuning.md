@@ -78,11 +78,11 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 {{% /hint %}}
 
 {{% hint warning %}}
-For simplicity, MAGRPO computes the policy gradient using the current policy's samples without importance sampling or ratio clipping.
+For simplicity, MAGRPO computes the policy gradient using the current policy's samples without importance sampling or ratio clipping. And since it does not use a critic model, there is no `value_clip_range` applicable.
 {{% /hint %}}
 
 {{% hint warning %}}
-The trainer uses a fixed training DataLoader batch size of 1 and requires at least 2 generations for group baseline computation.
+The trainer uses a fixed training DataLoader batch size of 1 and requires at least `num_generations=2` generations for group baseline computation. The training use batch gradient descent by default, where `train_batch_size`=`rollout_buffer_size`.
 {{% /hint %}}
 
 ## Other Variants

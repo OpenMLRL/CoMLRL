@@ -74,11 +74,11 @@ CoMLRL supports two IAC architectures for critic implementation:
 {{% /hint %}}
 
 {{% hint warning %}}
-For simplicity, IAC computes the policy gradient using the current policy's samples without importance sampling or ratio clipping.
+For simplicity, IAC computes the policy gradient using the current policy's samples without importance sampling or ratio clipping. When using a shared critic in IAC `use_seperate_critic=False`, the actor and critic models share the same transformer backbone to get the latent representation of individual observation. Although this is memory/storage efficient, the PG and TD back propagations may disrupt each other, leading to unstable training. So `value_clip_range` can be applied to stabilize training. Note that `value_clip_rage` is **only effective when using a shared critic in IAC**.
 {{% /hint %}}
 
 {{% hint warning %}}
-The trainer uses a fixed training DataLoader batch size of 1. For `num_turns > 1`, provide an `external_transition` and set `num_generations=1`.
+The trainer uses a fixed training DataLoader batch size of 1. For `num_turns > 1`, provide an `external_transition` and set `num_generations=1`. The training use batch gradient descent by default, where `train_batch_size`=`rollout_buffer_size`.
 {{% /hint %}}
 
 ## MAAC
