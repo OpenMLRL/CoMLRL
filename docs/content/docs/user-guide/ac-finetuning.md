@@ -28,17 +28,21 @@ CoMLRL supports two IAC architectures for critic implementation:
 - `num_agents`: Number of agents
 - `num_turns`: Number of turns
 - `critic_model_name_or_path`: Model identifier for separate critic
+- `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
 - `num_train_epochs`: Number of training epochs
 - `actor_learning_rate`: Learning rate for actor
 - `critic_learning_rate`: Learning rate for critic
 - `value_loss_coef`: Coefficient for value loss
 - `value_clip_range`: Clipping range for value function
+- `advantage_normalization`: Whether to normalize advantages
 - `rollout_buffer_size`: Number of samples to collect before update
 - `train_batch_size`: Mini-batch size for policy updates
 - `max_new_tokens`: Maximum new tokens to generate
 - `temperature`: Temperature for sampling
 - `top_p`: Top-p for nucleus sampling
 - `top_k`: Top-k for sampling
+- `do_sample`: Whether to use sampling
+- `num_generations`: Number of generations per prompt per agent
 - `use_separate_critic`: Whether to use separate critic model
 - `discount`: Discount factor for multi-turn returns
 - `early_termination_threshold`: Optional early-stop threshold for multi-turn
@@ -46,14 +50,10 @@ CoMLRL supports two IAC architectures for critic implementation:
 - `eval_num_samples`: Number of evaluation samples per interval
 - `eval_batch_size`: Eval dataloader batch size
 - `logging_steps`: Log every N training batches
-- `advantage_normalization`: Whether to normalize advantages
-- `do_sample`: Whether to use sampling
-- `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
+- `external_prompt_passthrough`: Use external prompts directly in multi-turn
+- `pad_token_id`: Padding token id
 - `critic_value_head_hidden_dim`: Hidden dimension for critic value head
 - `value_head_hidden_dim`: Hidden dimension for actor value head
-- `pad_token_id`: Padding token id
-- `num_generations`: Number of generations per prompt per agent
-- `external_prompt_passthrough`: Use external prompts directly in multi-turn
 {{% /hint %}}
 
 {{% hint info %}}
@@ -74,7 +74,7 @@ CoMLRL supports two IAC architectures for critic implementation:
 {{% /hint %}}
 
 {{% hint warning %}}
-For simplicity, IAC computes the policy gradient using the current policy's samples without importance sampling or ratio clipping. When using a shared critic in IAC `use_seperate_critic=False`, the actor and critic models share the same transformer backbone to get the latent representation of individual observation. Although this is memory/storage efficient, the PG and TD back propagations may disrupt each other, leading to unstable training. So `value_clip_range` can be applied to stabilize training. Note that `value_clip_rage` is **only effective when using a shared critic in IAC**.
+For simplicity, IAC computes the policy gradient using the current policy's samples without importance sampling or ratio clipping. When using a shared critic in IAC `use_separate_critic=False`, the actor and critic models share the same transformer backbone to get the latent representation of individual observation. Although this is memory/storage efficient, the PG and TD back propagations may disrupt each other, leading to unstable training. So `value_clip_range` can be applied to stabilize training. Note that `value_clip_range` is **only effective when using a shared critic in IAC**.
 {{% /hint %}}
 
 {{% hint warning %}}
@@ -101,23 +101,23 @@ where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf
 - `actor_learning_rate`: Learning rate for actors
 - `critic_learning_rate`: Learning rate for shared critic
 - `value_loss_coef`: Weight on critic loss
+- `advantage_normalization`: Whether to normalize advantages before updates
 - `rollout_buffer_size`: Number of samples to collect per agent before an update
 - `train_batch_size`: Mini-batch size within each update
 - `max_new_tokens`: Maximum tokens to generate per completion
 - `temperature`: Temperature for sampling
 - `top_p`: Top-p for nucleus sampling
 - `top_k`: Top-k for sampling
+- `do_sample`: Whether to use sampling
+- `num_generations`: Number of generations per prompt per agent
 - `discount`: Discount factor for multi-turn returns
 - `early_termination_threshold`: Optional early-stop threshold for multi-turn
 - `eval_interval`: Evaluation interval (in training batches)
 - `eval_num_samples`: Number of evaluation samples per interval
 - `eval_batch_size`: Eval dataloader batch size
 - `logging_steps`: Log every N training batches
-- `advantage_normalization`: Whether to normalize advantages before updates
-- `do_sample`: Whether to use sampling
-- `pad_token_id`: Padding token id
-- `num_generations`: Number of generations per prompt per agent
 - `external_prompt_passthrough`: Use external prompts directly in multi-turn
+- `pad_token_id`: Padding token id
 {{% /hint %}}
 
 {{% hint info %}}
