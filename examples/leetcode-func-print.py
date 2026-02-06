@@ -3,7 +3,6 @@
 import ast
 import contextlib
 import io
-import os
 import re
 import signal
 from functools import partial
@@ -101,67 +100,6 @@ def deduplicate_tests(print_statements):
                 unique_tests.append((stmt, expected))
 
     return unique_tests
-
-
-def extract_imported_libraries(import_code):
-    """Extract library names from import statements."""
-    libraries = set()
-    if not import_code:
-        return libraries
-
-    lines = import_code.split("\n")
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-
-        if line.startswith("import "):
-            lib_part = line[7:].strip()
-            for lib in lib_part.split(","):
-                lib_name = lib.strip().split(".")[0].split(" as ")[0]
-                if lib_name and not lib_name.startswith("#"):
-                    libraries.add(lib_name)
-        elif line.startswith("from "):
-            match = re.match(r"from\s+(\w+)", line)
-            if match:
-                lib_name = match.group(1)
-                libraries.add(lib_name)
-
-    if libraries:
-        print(f"DEBUG: Extracted libraries: {libraries}")
-    else:
-        print(f"DEBUG: No libraries extracted from code: '{import_code}'")
-
-    return libraries
-
-
-def check_library_usage(function_code, imported_libraries):
-    """Check if the function code uses any of the imported libraries."""
-    if not imported_libraries or not function_code:
-        return False
-
-    function_lower = function_code.lower()
-
-    for lib in imported_libraries:
-        if re.search(rf"\b{re.escape(lib.lower())}\b\.", function_lower):
-            print(f"DEBUG: Found library usage: {lib} (dot notation)")
-            return True
-
-        common_aliases = {
-            "numpy": ["np"],
-            "pandas": ["pd"],
-            "matplotlib": ["plt"],
-            "seaborn": ["sns"],
-        }
-
-        if lib.lower() in common_aliases:
-            for alias in common_aliases[lib.lower()]:
-                if re.search(rf"\b{re.escape(alias)}\b\.", function_lower):
-                    print(f"DEBUG: Found library usage: {lib} via alias {alias}")
-                    return True
-
-    print(f"DEBUG: No library usage found for {imported_libraries} in function code")
-    return False
 
 
 def execution_reward(completion1: List[str], completion2: List[str]) -> List[float]:

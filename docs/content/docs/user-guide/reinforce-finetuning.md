@@ -49,6 +49,7 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 - `early_termination_threshold`: Early stop a branch if mean reward exceeds this threshold (default: -0.2)
 - `rollout_buffer_size`: Number of node samples to buffer before update (default: 2)
 - `train_batch_size`: Mini-batch size within each update (default: rollout_buffer_size)
+- `advantage_normalization`: Whether to normalize advantages within each prompt (default: true)
 - `eval_interval`: Run evaluation every N training batches (default: 16)
 - `eval_num_samples`: Number of samples to evaluate per evaluation run (default: 4)
 - `eval_batch_size`: Eval dataloader batch size (default: 1)

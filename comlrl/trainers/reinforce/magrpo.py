@@ -43,6 +43,7 @@ class MAGRPOConfig:
     eval_batch_size: int = 1
     rollout_buffer_size: int = 2
     train_batch_size: Optional[int] = None
+    advantage_normalization: bool = True
     advantage_mode: str = "mean"
 
     def __post_init__(self) -> None:
@@ -355,7 +356,7 @@ class MAGRPOTrainer:
                 "num_turns": self.args.num_turns,
                 "algorithm": self.algorithm_name,
                 "advantage_mode": self.advantage_mode,
-                # single reward function; keep legacy fields out
+                "advantage_normalization": self.args.advantage_normalization,
                 "agent_learning_rate": self.args.agent_learning_rate,
                 "num_train_epochs": self.args.num_train_epochs,
                 "num_generations": self.args.num_generations,
@@ -621,7 +622,6 @@ class MAGRPOTrainer:
                     num_return_sequences=1,
                     max_new_tokens=self.args.max_new_tokens,
                     external_prompts=agent_external_prompts[agent_idx],
-                    do_sample=True,
                 )
                 # Extract the completion directly
                 completion = agent_completions["completions"][0][0]
@@ -1077,7 +1077,6 @@ class MAGRPOTrainer:
         max_new_tokens=128,
         prompts_override: Optional[List[str]] = None,
         external_prompts: Optional[Any] = None,
-        do_sample: Optional[bool] = None,
         **kwargs,
     ):
         """
@@ -1127,6 +1126,16 @@ class MAGRPOTrainer:
             raise ValueError("Tokenizer is required for generating completions")
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        if self.tokenizer.pad_token_id is None:
+            raise ValueError("Tokenizer must expose pad_token_id.")
+        pad_id = self.tokenizer.pad_token_id
+        eos_id = self.tokenizer.eos_token_id or pad_id
+        if hasattr(agent, "config"):
+            agent.config.pad_token_id = pad_id
+            agent.config.eos_token_id = eos_id
+        elif hasattr(agent, "model") and hasattr(agent.model, "config"):
+            agent.model.config.pad_token_id = pad_id
+            agent.model.config.eos_token_id = eos_id
 
         # Tokenize prompts
         prompt_encodings = self.tokenizer(
@@ -1159,46 +1168,21 @@ class MAGRPOTrainer:
                 "return_dict_in_generate": True,
             }
 
-            # If requesting multiple sequences, use sampling for diversity
             top_k = getattr(self.args, "top_k", None)
-            if do_sample is None and num_return_sequences > 1:
-                # Use generation parameters from config
-                generation_update = {
-                    "do_sample": True,  # Enable sampling for randomness
+            generation_kwargs.update(
+                {
+                    "do_sample": True,
                     "temperature": self.args.temperature,
                     "top_p": self.args.top_p,
-                    "num_beams": 1,  # Disable beam search when sampling
+                    "num_beams": 1,
                     "num_return_sequences": num_return_sequences,
                 }
-                if top_k is not None:
-                    generation_update["top_k"] = top_k
-                generation_kwargs.update(generation_update)
-            elif do_sample is not None:
-                generation_kwargs.update(
-                    {
-                        "do_sample": bool(do_sample),
-                        "num_beams": 1,
-                        "num_return_sequences": num_return_sequences,
-                    }
-                )
-                if do_sample:
-                    generation_kwargs.update(
-                        {
-                            "temperature": self.args.temperature,
-                            "top_p": self.args.top_p,
-                        }
-                    )
-                    if top_k is not None:
-                        generation_kwargs["top_k"] = top_k
-
-            # Set pad_token_id from tokenizer if not set
-            if (
-                "pad_token_id" not in generation_kwargs
-                or generation_kwargs["pad_token_id"] is None
-            ):
-                generation_kwargs["pad_token_id"] = self.tokenizer.pad_token_id
+            )
+            if top_k is not None:
+                generation_kwargs["top_k"] = top_k
 
             # Add any additional user-provided kwargs (these override model defaults)
+            kwargs.pop("do_sample", None)
             generation_kwargs.update(kwargs)
             generation_output = agent.generate(**generation_kwargs)
         except Exception as e:
@@ -1283,7 +1267,6 @@ class MAGRPOTrainer:
         num_return_sequences=1,
         max_new_tokens=128,
         external_prompts=None,
-        do_sample: Optional[bool] = None,
         **kwargs,
     ):
         """
@@ -1300,7 +1283,6 @@ class MAGRPOTrainer:
                 agent_idx=agent_idx,
                 num_return_sequences=num_return_sequences,
                 max_new_tokens=max_new_tokens,
-                do_sample=do_sample,
                 external_prompts=external_prompts,
                 **kwargs,
             )
@@ -1316,7 +1298,6 @@ class MAGRPOTrainer:
                 num_return_sequences=num_return_sequences,
                 max_new_tokens=max_new_tokens,
                 prompts_override=prompts,
-                do_sample=do_sample,
                 external_prompts=external_prompts,
                 **kwargs,
             )
@@ -1336,7 +1317,6 @@ class MAGRPOTrainer:
             agent_idx=agent_idx,
             num_return_sequences=num_return_sequences,
             max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
             external_prompts=external_prompts,
             **kwargs,
         )
@@ -1524,6 +1504,10 @@ class MAGRPOTrainer:
         returns_tensor = torch.tensor(returns, dtype=torch.float, device=device)
 
         advantages = self._compute_advantages(returns_tensor)
+        if self.args.advantage_normalization and advantages.numel() > 1:
+            mean = advantages.mean()
+            std = advantages.std(unbiased=False).clamp(min=1e-6)
+            advantages = (advantages - mean) / std
 
         # Set agent to train mode to ensure gradients are tracked
         agent.train()

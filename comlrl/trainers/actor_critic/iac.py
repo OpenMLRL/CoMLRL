@@ -42,13 +42,11 @@ class IACConfig:
     temperature: float = 0.6
     top_p: float = 0.6
     top_k: Optional[int] = None
-    do_sample: bool = True
     num_train_epochs: int = 40
     use_separate_critic: bool = True
     critic_type: str = "v"  # "v" (V(h)) or "q" (Q(h,a))
     critic_value_head_hidden_dim: Optional[int] = None
     value_head_hidden_dim: Optional[int] = None
-    pad_token_id: Optional[int] = None
     num_agents: int = 2
     num_turns: int = 2
     external_prompt_passthrough: bool = False
@@ -171,12 +169,6 @@ class IACTrainer(ActorCriticTrainerBase):
             self.tokenizer.pad_token = self.tokenizer.eos_token
         if self.tokenizer.pad_token_id is None:
             raise ValueError("Tokenizer must expose pad_token_id.")
-
-        self.args.pad_token_id = (
-            self.args.pad_token_id
-            if self.args.pad_token_id is not None
-            else self.tokenizer.pad_token_id
-        )
 
         self.formatters = self._setup_formatters(formatters)
         self._reward_signature = self._infer_reward_signature(reward_func)
@@ -337,8 +329,8 @@ class IACTrainer(ActorCriticTrainerBase):
         )
 
     def _configure_tokenizer_specials(self) -> None:
-        pad_id = self.args.pad_token_id
-        eos_id = getattr(self.tokenizer, "eos_token_id", pad_id)
+        pad_id = self.tokenizer.pad_token_id
+        eos_id = self.tokenizer.eos_token_id or pad_id
         for agent_model in self.agent_models:
             agent_model.model.config.pad_token_id = pad_id
             agent_model.model.config.eos_token_id = eos_id
@@ -580,10 +572,9 @@ class IACTrainer(ActorCriticTrainerBase):
             "input_ids": prompt_input_ids,
             "attention_mask": prompt_attention_mask,
             "max_new_tokens": self.args.max_new_tokens,
-            "do_sample": bool(self.args.do_sample),
+            "do_sample": True,
             "temperature": self.args.temperature,
             "top_p": self.args.top_p,
-            "pad_token_id": self.args.pad_token_id,
             "num_return_sequences": num_ret,
             "num_beams": 1,
         }
@@ -595,19 +586,14 @@ class IACTrainer(ActorCriticTrainerBase):
             raise RuntimeError("Model produced an empty completion during rollout.")
 
         response_tokens = sequences[:, prompt_len:]
-        pad_id = self.args.pad_token_id
+        pad_id = self.tokenizer.pad_token_id
         response_lens: List[int] = []
         completion_texts: List[str] = []
         for seq in response_tokens:
-            if pad_id is not None:
-                pad_positions = (seq == pad_id).nonzero(as_tuple=False)
-                resp_len = (
-                    pad_positions[0].item()
-                    if pad_positions.numel() > 0
-                    else seq.size(0)
-                )
-            else:
-                resp_len = seq.size(0)
+            pad_positions = (seq == pad_id).nonzero(as_tuple=False)
+            resp_len = (
+                pad_positions[0].item() if pad_positions.numel() > 0 else seq.size(0)
+            )
             response_lens.append(resp_len)
             completion_texts.append(
                 self.tokenizer.decode(seq[:resp_len], skip_special_tokens=True)

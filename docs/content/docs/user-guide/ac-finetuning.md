@@ -36,26 +36,24 @@ CoMLRL supports two IAC architectures for critic implementation:
 
 - `num_agents`: Number of agents
 - `num_turns`: Number of turns
-- `num_generations`: Number of generations per prompt per agent
-- `external_prompt_passthrough`: Use external prompts directly in multi-turn
 - `num_train_epochs`: Number of training epochs
 - `agent_learning_rate`: Learning rate for agents
 - `critic_learning_rate`: Learning rate for critic
 - `value_loss_coef`: Coefficient for value loss
 - `value_clip_range`: Clipping range for value function
 - `advantage_normalization`: Whether to normalize advantages
-- `use_separate_critic`: Whether to use separate critic model
-- `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
-- `critic_value_head_hidden_dim`: Hidden dimension for critic value head
-- `value_head_hidden_dim`: Hidden dimension for value head in shared-critic mode
-- `pad_token_id`: Padding token id
 - `rollout_buffer_size`: Number of samples to collect before update
 - `train_batch_size`: Mini-batch size for policy updates
 - `max_new_tokens`: Maximum new tokens to generate
 - `temperature`: Temperature for sampling
 - `top_p`: Top-p for nucleus sampling
 - `top_k`: Top-k for sampling
-- `do_sample`: Whether to use sampling
+- `num_generations`: Number of generations per prompt per agent
+- `use_separate_critic`: Whether to use separate critic model
+- `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
+- `critic_value_head_hidden_dim`: Hidden dimension for critic value head
+- `value_head_hidden_dim`: Hidden dimension for value head in shared-critic mode
+- `external_prompt_passthrough`: Use external prompts directly in multi-turn
 - `discount`: Discount factor for multi-turn returns
 - `early_termination_threshold`: Optional early-stop threshold for multi-turn
 - `eval_interval`: Evaluation interval (in training batches)
@@ -110,8 +108,6 @@ L_V = \big(V_{\phi}(\mathbf{h}_t) - \hat{V}_t\big)^2.
 **MAACConfig** parameters:
 - `num_agents`: Number of agents
 - `num_turns`: Number of turns
-- `num_generations`: Number of generations per prompt per agent
-- `external_prompt_passthrough`: Use external prompts directly in multi-turn
 - `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
 - `num_train_epochs`: Number of training epochs
 - `agent_learning_rate`: Learning rate for agents
@@ -124,14 +120,14 @@ L_V = \big(V_{\phi}(\mathbf{h}_t) - \hat{V}_t\big)^2.
 - `temperature`: Temperature for sampling
 - `top_p`: Top-p for nucleus sampling
 - `top_k`: Top-k for sampling
-- `do_sample`: Whether to use sampling
+- `num_generations`: Number of generations per prompt per agent
+- `external_prompt_passthrough`: Use external prompts directly in multi-turn
 - `discount`: Discount factor for multi-turn returns
 - `early_termination_threshold`: Optional early-stop threshold for multi-turn
 - `eval_interval`: Evaluation interval (in training batches)
 - `eval_num_samples`: Number of evaluation samples per interval
 - `eval_batch_size`: Eval dataloader batch size
 - `logging_steps`: Log every N training batches
-- `pad_token_id`: Padding token id
 {{% /hint %}}
 
 {{% hint info %}}
