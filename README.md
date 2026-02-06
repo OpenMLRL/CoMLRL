@@ -111,7 +111,7 @@ For new contributors, please see [contributing guidelines](./CONTRIBUTING.md) on
 
 CoMLRL was developed using substantial computational resources. Its growth has been made possible by the generous support of the following organizations and institutions.
 
-<p><img src="docs/assets/sponsors.jpg" width="750px;" alt=""/></p>
+<p><img src="docs/assets/sponsors.jpg" width="800px;" alt=""/></p>
 
 We welcome computational sponsorship to support the continued development of CoMLRL. If you are interested in sponsoring this project, please contact us.
 <a href="mailto:liu.shuo2@northeastern.edu"><img src="docs/assets/email.svg" width="22px" alt="Email"/></a>

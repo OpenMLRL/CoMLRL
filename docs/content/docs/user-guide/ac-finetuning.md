@@ -4,7 +4,7 @@ weight: 3
 math: true
 ---
 
-Actor-Critic methods are widely used policy gradient approaches that employ critics to estimate advantages, reducing the high variance and supporting online training. Many LLM fine-tuning frameworks implement actor-critic training (e.g., [trl](https://huggingface.co/docs/trl), [verl](https://verl.readthedocs.io/en/latest/), [LLaMA Factory](https://llamafactory.readthedocs.io/en/latest/advanced/trainers.html)).
+Actor-Critic methods are widely used policy gradient approaches that employ critics to estimate advantages, reducing the high variance and supporting online training. In MARL, Actor-Critic methods can be instantiated as Independent Actor-Critic (IAC) and Multi-Agent Actor-Critic (MAAC).
 
 ## IAC
 
@@ -16,13 +16,6 @@ J(\theta_i) = \mathbb{E}_{o_{i,0} \sim \mathcal{D}, h_i \sim \pi_{\theta_i}}\lef
 
 where {{< katex inline=true >}}\delta_{i,t} = r_{i,t} + \gamma V_{\phi_i}(h_{i,t+1}) - V_{\phi_i}(h_{i,t}){{< /katex >}} is the (single-step) temporal difference error and {{< katex inline=true >}}\gamma{{< /katex >}} is the discount factor. Use `critic_type='q'` to switch to a Q-value critic {{< katex inline=true >}}Q(h_t, a_t){{< /katex >}}; the default is `critic_type='v'`.
 
-When using a shared critic (`use_separate_critic=false`), the value loss uses a clipped objective:
-
-{{< katex display=true >}}
-L(\phi_i) = \max\Big( (V_{\phi_i}(h_t) - \hat{V}_t)^2,\ (V_{\phi_i}^{\text{clip}}(h_t) - \hat{V}_t)^2 \Big)
-\\ V_{\phi_i}^{\text{clip}}(h_t) = V_{\phi_i}^{\text{old}}(h_t) + \mathrm{clip}(V_{\phi_i}(h_t) - V_{\phi_i}^{\text{old}}(h_t), -\epsilon_v, \epsilon_v),
-{{< /katex >}}
-
 where {{< katex inline=true >}}\hat{V}_t{{< /katex >}} is the value target and {{< katex inline=true >}}\epsilon_v{{< /katex >}} corresponds to `value_clip_range`.
 
 CoMLRL supports two IAC architectures for critic implementation:
@@ -30,6 +23,13 @@ CoMLRL supports two IAC architectures for critic implementation:
 - **Separate Critic**: Uses an independent model dedicated to value estimation, completely separate from the actor. It provides more stable training but requires longer training time and larger VRAM usage.
 
 - **Shared Model**: Attaches a small value prediction head directly to the transformer backbone, sharing the actor model's representations to reduce the time and space costs.
+
+When the critics share the models with actors (`use_separate_critic=false`), the value loss uses a clipped objective:
+
+{{< katex display=true >}}
+L(\phi_i) = \max\Big( (V_{\phi_i}(h_t) - \hat{V}_t)^2,\ (V_{\phi_i}^{\text{clip}}(h_t) - \hat{V}_t)^2 \Big)
+\\ V_{\phi_i}^{\text{clip}}(h_t) = V_{\phi_i}^{\text{old}}(h_t) + \mathrm{clip}(V_{\phi_i}(h_t) - V_{\phi_i}^{\text{old}}(h_t), -\epsilon_v, \epsilon_v),
+{{< /katex >}}
 
 {{% hint info %}}
 **IACConfig** provides parameters for configuring Independent Actor-Critic training:
@@ -145,4 +145,12 @@ L(\boldsymbol{\phi}) = \big(V_{\phi}(\mathbf{h}_t) - \hat{V}_t\big)^2.
 - `model_config`: Extra model kwargs (optional)
 - `wandb_config`: Weights & Biases logging config (optional)
 - `metrics_callback`: Optional callback for custom metrics
+{{% /hint %}}
+
+{{% hint warning %}}
+For simplicity, IAC computes the policy gradient using the current policy's samples without importance sampling or ratio clipping. The `value_clip_range` is not applicable in MAAC.
+{{% /hint %}}
+
+{{% hint warning %}}
+The trainer uses a fixed training DataLoader batch size of 1. For `num_turns > 1`, provide an `external_transition` and set `num_generations=1`. The training use batch gradient descent by default, where `train_batch_size`=`rollout_buffer_size`.
 {{% /hint %}}
