@@ -21,7 +21,6 @@ class MAGRPOConfig:
     # Core setup
     num_train_epochs: int = 20
     learning_rate: float = 5.0e-6
-    weight_decay: float = 0.0
     logging_steps: int = 50
     num_agents: int = 2
 
@@ -237,7 +236,6 @@ class MAGRPOTrainer:
             torch.optim.AdamW(
                 agent.parameters(),
                 lr=self.args.learning_rate,
-                weight_decay=self.args.weight_decay,
             )
             for agent in self.agents
         ]
@@ -363,7 +361,6 @@ class MAGRPOTrainer:
                 "advantage_mode": self.advantage_mode,
                 # single reward function; keep legacy fields out
                 "learning_rate": self.args.learning_rate,
-                "weight_decay": self.args.weight_decay,
                 "num_train_epochs": self.args.num_train_epochs,
                 "num_generations": self.args.num_generations,
                 "max_new_tokens": self.args.max_new_tokens,

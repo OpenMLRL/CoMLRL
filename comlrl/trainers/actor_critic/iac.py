@@ -33,11 +33,6 @@ class IACConfig:
 
     actor_learning_rate: float = 5e-6
     critic_learning_rate: Optional[float] = 5e-6
-    weight_decay: float = 0.0
-    adam_beta1: float = 0.9
-    adam_beta2: float = 0.999
-    adam_epsilon: float = 1e-8
-    max_grad_norm: float = 0.5
     rollout_buffer_size: int = 8
     train_batch_size: Optional[int] = None
     value_clip_range: Optional[float] = 0.2
@@ -211,9 +206,6 @@ class IACTrainer(ActorCriticTrainerBase):
             optimizer = torch.optim.AdamW(
                 actor_model.parameters(),
                 lr=self.args.actor_learning_rate,
-                betas=(self.args.adam_beta1, self.args.adam_beta2),
-                eps=self.args.adam_epsilon,
-                weight_decay=self.args.weight_decay,
             )
             self.actor_optimizers.append(optimizer)
 
@@ -221,14 +213,11 @@ class IACTrainer(ActorCriticTrainerBase):
             for critic_model in self.critic_models:
                 if critic_model is None:
                     raise RuntimeError("Critic model expected but missing.")
-                optimizer = torch.optim.AdamW(
-                    critic_model.parameters(),
-                    lr=self.args.critic_learning_rate,
-                    betas=(self.args.adam_beta1, self.args.adam_beta2),
-                    eps=self.args.adam_epsilon,
-                    weight_decay=self.args.weight_decay,
-                )
-                self.critic_optimizers.append(optimizer)
+            optimizer = torch.optim.AdamW(
+                critic_model.parameters(),
+                lr=self.args.critic_learning_rate,
+            )
+            self.critic_optimizers.append(optimizer)
 
         self.env_step = 0
         self.rollout_buffers: List[List[RolloutSample]] = [
@@ -1081,23 +1070,14 @@ class IACTrainer(ActorCriticTrainerBase):
                 raise RuntimeError("Critic optimizer missing.")
             actor_optimizer.zero_grad()
             actor_total.backward()
-            torch.nn.utils.clip_grad_norm_(
-                actor_model.parameters(), self.args.max_grad_norm
-            )
             actor_optimizer.step()
 
             critic_optimizer.zero_grad()
             value_total.backward()
-            torch.nn.utils.clip_grad_norm_(
-                critic_model.parameters(), self.args.max_grad_norm  # type: ignore[arg-type]
-            )
             critic_optimizer.step()
         else:
             actor_optimizer.zero_grad()
             (actor_total + value_total).backward()
-            torch.nn.utils.clip_grad_norm_(
-                actor_model.parameters(), self.args.max_grad_norm
-            )
             actor_optimizer.step()
 
         return {

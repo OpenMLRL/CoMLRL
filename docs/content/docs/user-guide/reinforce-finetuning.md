@@ -52,7 +52,6 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 - `eval_interval`: Run evaluation every N training batches (default: 16)
 - `eval_num_samples`: Number of samples to evaluate per evaluation run (default: 4)
 - `eval_batch_size`: Eval dataloader batch size (default: 1)
-- `weight_decay`: Weight decay (default: 0.0)
 - `external_prompt_passthrough`: Use external prompts directly in multi-turn (default: false)
 - `advantage_mode`: Baseline mode (`mean`, `max`, `rloo`, `raw`) (default: mean)
 - `dataloader_drop_last`: Drop the last batch (default: false)

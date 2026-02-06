@@ -33,11 +33,6 @@ class MAACConfig:
 
     actor_learning_rate: float = 5e-6
     critic_learning_rate: float = 5e-6
-    weight_decay: float = 0.0
-    adam_beta1: float = 0.9
-    adam_beta2: float = 0.999
-    adam_epsilon: float = 1e-8
-    max_grad_norm: float = 0.5
     rollout_buffer_size: int = 8
     train_batch_size: Optional[int] = None
     value_loss_coef: float = 0.6
@@ -168,18 +163,12 @@ class MAACTrainer(ActorCriticTrainerBase):
             optimizer = torch.optim.AdamW(
                 actor_model.parameters(),
                 lr=self.args.actor_learning_rate,
-                betas=(self.args.adam_beta1, self.args.adam_beta2),
-                eps=self.args.adam_epsilon,
-                weight_decay=self.args.weight_decay,
             )
             self.actor_optimizers.append(optimizer)
 
         self.critic_optimizer = torch.optim.AdamW(
             self.critic_model.parameters(),
             lr=self.args.critic_learning_rate,
-            betas=(self.args.adam_beta1, self.args.adam_beta2),
-            eps=self.args.adam_epsilon,
-            weight_decay=self.args.weight_decay,
         )
 
         self.rollout_buffers: List[List[RolloutSample]] = [
@@ -965,16 +954,10 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         actor_optimizer.zero_grad()
         actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            actor_model.parameters(), self.args.max_grad_norm
-        )
         actor_optimizer.step()
 
         self.critic_optimizer.zero_grad()
         value_total.backward()
-        torch.nn.utils.clip_grad_norm_(
-            self.critic_model.parameters(), self.args.max_grad_norm
-        )
         self.critic_optimizer.step()
 
         return {

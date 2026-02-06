@@ -4,17 +4,17 @@ weight: 3
 math: true
 ---
 
-Actor-Critic methods are widely used policy gradient approaches that employ generalized advantage estimation to estimate advantages, reducing the high variance and long rollout times in Monte Carlo methods, e.g., REINFORCE. Many LLM fine-tuning frameworks implement actor-critic training (e.g., [trl](https://huggingface.co/docs/trl), [verl](https://verl.readthedocs.io/en/latest/), [LLaMA Factory](https://llamafactory.readthedocs.io/en/latest/advanced/trainers.html)).
+Actor-Critic methods are widely used policy gradient approaches that employ critics to estimate advantages, reducing the high variance and supporting online training. Many LLM fine-tuning frameworks implement actor-critic training (e.g., [trl](https://huggingface.co/docs/trl), [verl](https://verl.readthedocs.io/en/latest/), [LLaMA Factory](https://llamafactory.readthedocs.io/en/latest/advanced/trainers.html)).
 
 ## IAC
 
 Independent Actor-Critic (IAC) optimizes each agent's policy independently while using joint returns from multiple agents. Each agent maintains its own actor and critic, other agents serve as part of the environment. The policy objective is:
 
 {{< katex display=true >}}
-J(\theta_i) = \mathbb{E}_{o_{i,0} \sim \mathcal{D}, h_i \sim \pi_{\theta_i}}\left[\log \pi_{\theta_i}(a_{i,t}|h_{i,t}) \cdot \delta_{i,t} + \beta \mathcal{H}(\pi_{\theta_i})\right]
+J(\theta_i) = \mathbb{E}_{o_{i,0} \sim \mathcal{D}, h_i \sim \pi_{\theta_i}}\left[\log \pi_{\theta_i}(a_{i,t}|h_{i,t}) \cdot \delta_{i,t}\right]
 {{< /katex >}}
 
-where {{< katex inline=true >}}\delta_{i,t} = r_{i,t} + \gamma V_{\phi_i}(h_{i,t+1}) - V_{\phi_i}(h_{i,t}){{< /katex >}} is the (single-step) temporal difference error, {{< katex inline=true >}}\gamma{{< /katex >}} is the discount factor, and {{< katex inline=true >}}\mathcal{H}(\pi_{\theta_i}){{< /katex >}} is the entropy bonus with coefficient {{< katex inline=true >}}\beta{{< /katex >}}. Use `critic_type='q'` to switch to a Q-value critic {{< katex inline=true >}}Q(h_t, a_t){{< /katex >}}; the default is `critic_type='v'`.
+where {{< katex inline=true >}}\delta_{i,t} = r_{i,t} + \gamma V_{\phi_i}(h_{i,t+1}) - V_{\phi_i}(h_{i,t}){{< /katex >}} is the (single-step) temporal difference error and {{< katex inline=true >}}\gamma{{< /katex >}} is the discount factor. Use `critic_type='q'` to switch to a Q-value critic {{< katex inline=true >}}Q(h_t, a_t){{< /katex >}}; the default is `critic_type='v'`.
 
 CoMLRL supports two IAC architectures for critic implementation:
 
@@ -46,9 +46,6 @@ CoMLRL supports two IAC architectures for critic implementation:
 - `eval_num_samples`: Number of evaluation samples per interval
 - `eval_batch_size`: Eval dataloader batch size
 - `logging_steps`: Log every N training batches
-- `weight_decay`: Weight decay for AdamW optimizer
-- `adam_beta1`, `adam_beta2`, `adam_epsilon`: Adam optimizer parameters
-- `max_grad_norm`: Maximum gradient norm for clipping
 - `advantage_normalization`: Whether to normalize advantages
 - `do_sample`: Whether to use sampling
 - `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
@@ -89,10 +86,10 @@ The trainer uses a fixed training DataLoader batch size of 1. For `num_turns > 1
 Multi-Agent Actor-Critic (MAAC) shares a centralized critic across agents. The policy objective mirrors IAC with a joint value baseline:
 
 {{< katex display=true >}}
-J(\theta_i) = \mathbb{E}_{h_t \sim \mathcal{D},\, a_t \sim \pi_{\theta}}\left[\log \pi_{\theta_i}(a_{i,t}|h_{i,t}) \cdot \mathbf{\delta}_t + \beta \mathcal{H}(\pi_{\theta_i})\right]
+J(\theta_i) = \mathbb{E}_{h_t \sim \mathcal{D},\, a_t \sim \pi_{\theta}}\left[\log \pi_{\theta_i}(a_{i,t}|h_{i,t}) \cdot \mathbf{\delta}_t\right]
 {{< /katex >}}
 
-where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf{h}_{t+1}) - V_{\phi}(\mathbf{h}_{t}){{< /katex >}} uses the shared critic on the joint prompt/history, and {{< katex inline=true >}}\beta{{< /katex >}} is the entropy coefficient. Set `critic_type='q'` to condition the critic on joint responses via {{< katex inline=true >}}Q(\mathbf{h}_t, \mathbf{a}_t){{< /katex >}}.
+where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf{h}_{t+1}) - V_{\phi}(\mathbf{h}_{t}){{< /katex >}} uses the shared critic on the joint prompt/history. Set `critic_type='q'` to condition the critic on joint responses via {{< katex inline=true >}}Q(\mathbf{h}_t, \mathbf{a}_t){{< /katex >}}.
 
 {{% hint info %}}
 **MAACConfig** parameters:
@@ -116,9 +113,6 @@ where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf
 - `eval_num_samples`: Number of evaluation samples per interval
 - `eval_batch_size`: Eval dataloader batch size
 - `logging_steps`: Log every N training batches
-- `weight_decay`: Weight decay for AdamW
-- `adam_beta1`, `adam_beta2`, `adam_epsilon`: Adam optimizer parameters
-- `max_grad_norm`: Gradient clipping norm
 - `advantage_normalization`: Whether to normalize advantages before updates
 - `do_sample`: Whether to use sampling
 - `pad_token_id`: Padding token id
