@@ -91,7 +91,7 @@ We set up the training configuration with hyperparameters like learning rate, ba
 output_dir = "./magrpo_multi_reward_output"
 config = MAGRPOConfig(
     num_train_epochs=3,
-    learning_rate=5e-5,
+    agent_learning_rate=5e-5,
     logging_steps=10,
     num_generations=8,
     max_new_tokens=128,

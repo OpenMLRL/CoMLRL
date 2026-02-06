@@ -37,7 +37,7 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 - `num_agents`: Number of agents (default: 2)
 - `num_turns`: Number of turns per episode; set >1 for multi-turn (default: 2)
 - `num_train_epochs`: Number of training epochs (default: 20)
-- `learning_rate`: Learning rate (default: 5e-6)
+- `agent_learning_rate`: Learning rate (default: 5e-6)
 - `logging_steps`: Log every N steps (default: 50)
 - `num_generations`: Number of generations to sample per prompt for each agent (default: 4)
 - `max_new_tokens`: Maximum number of new tokens to generate (default: 256)
@@ -46,7 +46,7 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 - `top_k`: Top-k for sampling (default: 50)
 - `discount`: Discount factor gamma over turns for returns (default: 0.9)
 - `joint_mode`: Joint action composition - `'aligned'` (index-aligned, default) or `'cross'` (Cartesian product)
-- `termination_threshold`: Early stop a branch if mean reward exceeds this threshold (default: -0.2)
+- `early_termination_threshold`: Early stop a branch if mean reward exceeds this threshold (default: -0.2)
 - `rollout_buffer_size`: Number of node samples to buffer before update (default: 2)
 - `train_batch_size`: Mini-batch size within each update (default: rollout_buffer_size)
 - `eval_interval`: Run evaluation every N training batches (default: 16)
@@ -57,9 +57,9 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 {{% /hint %}}
 
 {{% hint info %}}
-**MAGRPOTrainer** accepts either a model string/object for homogeneous agents or a list of `agents` for heterogeneous setups:
+**MAGRPOTrainer** accepts either a model string for homogeneous agents or a list of `agents` for heterogeneous setups:
 
-- `model` or `agents`: Model string/object for homogeneous agents, or list of agent models
+- `model` or `agents`: Model identifier string for homogeneous agents, or list of agent models (multi-agent `model` must be a string)
 - `num_agents`: Number of agents (default: 2)
 - `tokenizer`: The tokenizer (required)
 - `train_dataset`: Training dataset (required)

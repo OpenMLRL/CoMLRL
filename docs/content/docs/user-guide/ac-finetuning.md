@@ -16,6 +16,15 @@ J(\theta_i) = \mathbb{E}_{o_{i,0} \sim \mathcal{D}, h_i \sim \pi_{\theta_i}}\lef
 
 where {{< katex inline=true >}}\delta_{i,t} = r_{i,t} + \gamma V_{\phi_i}(h_{i,t+1}) - V_{\phi_i}(h_{i,t}){{< /katex >}} is the (single-step) temporal difference error and {{< katex inline=true >}}\gamma{{< /katex >}} is the discount factor. Use `critic_type='q'` to switch to a Q-value critic {{< katex inline=true >}}Q(h_t, a_t){{< /katex >}}; the default is `critic_type='v'`.
 
+When using a shared critic (`use_separate_critic=false`), the value loss uses a clipped objective:
+
+{{< katex display=true >}}
+L_V = \max\Big( (V_{\phi_i}(h_t) - \hat{V}_t)^2,\ (V_{\phi_i}^{\text{clip}}(h_t) - \hat{V}_t)^2 \Big),
+\quad V_{\phi_i}^{\text{clip}}(h_t) = V_{\phi_i}^{\text{old}}(h_t) + \mathrm{clip}(V_{\phi_i}(h_t) - V_{\phi_i}^{\text{old}}(h_t), -\epsilon_v, \epsilon_v)
+{{< /katex >}}
+
+where {{< katex inline=true >}}\hat{V}_t{{< /katex >}} is the value target and {{< katex inline=true >}}\epsilon_v{{< /katex >}} corresponds to `value_clip_range`.
+
 CoMLRL supports two IAC architectures for critic implementation:
 
 - **Separate Critic**: Uses an independent model dedicated to value estimation, completely separate from the actor. It provides more stable training but requires longer training time and larger VRAM usage.
@@ -27,14 +36,19 @@ CoMLRL supports two IAC architectures for critic implementation:
 
 - `num_agents`: Number of agents
 - `num_turns`: Number of turns
-- `critic_model_name_or_path`: Model identifier for separate critic
-- `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
+- `num_generations`: Number of generations per prompt per agent
+- `external_prompt_passthrough`: Use external prompts directly in multi-turn
 - `num_train_epochs`: Number of training epochs
-- `actor_learning_rate`: Learning rate for actor
+- `agent_learning_rate`: Learning rate for agents
 - `critic_learning_rate`: Learning rate for critic
 - `value_loss_coef`: Coefficient for value loss
 - `value_clip_range`: Clipping range for value function
 - `advantage_normalization`: Whether to normalize advantages
+- `use_separate_critic`: Whether to use separate critic model
+- `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
+- `critic_value_head_hidden_dim`: Hidden dimension for critic value head
+- `value_head_hidden_dim`: Hidden dimension for value head in shared-critic mode
+- `pad_token_id`: Padding token id
 - `rollout_buffer_size`: Number of samples to collect before update
 - `train_batch_size`: Mini-batch size for policy updates
 - `max_new_tokens`: Maximum new tokens to generate
@@ -42,24 +56,19 @@ CoMLRL supports two IAC architectures for critic implementation:
 - `top_p`: Top-p for nucleus sampling
 - `top_k`: Top-k for sampling
 - `do_sample`: Whether to use sampling
-- `num_generations`: Number of generations per prompt per agent
-- `use_separate_critic`: Whether to use separate critic model
 - `discount`: Discount factor for multi-turn returns
 - `early_termination_threshold`: Optional early-stop threshold for multi-turn
 - `eval_interval`: Evaluation interval (in training batches)
 - `eval_num_samples`: Number of evaluation samples per interval
 - `eval_batch_size`: Eval dataloader batch size
 - `logging_steps`: Log every N training batches
-- `external_prompt_passthrough`: Use external prompts directly in multi-turn
-- `pad_token_id`: Padding token id
-- `critic_value_head_hidden_dim`: Hidden dimension for critic value head
-- `value_head_hidden_dim`: Hidden dimension for actor value head
 {{% /hint %}}
 
 {{% hint info %}}
 **IACTrainer** trains agents using Independent Actor-Critic:
 
-- `model`: Model string or PreTrainedModel instance (required for single-agent, must be string for multi-agent)
+- `model` or `agents`: Model identifier string for homogeneous agents, or list of agent models (multi-agent `model` must be a string)
+- `critics`: Required list of critic models when `use_separate_critic=true`
 - `tokenizer`: The tokenizer (required)
 - `reward_func`: Callable that returns a list of floats (required)
 - `reward_processor`: Optional processor to apply to rewards
@@ -74,7 +83,7 @@ CoMLRL supports two IAC architectures for critic implementation:
 {{% /hint %}}
 
 {{% hint warning %}}
-For simplicity, IAC computes the policy gradient using the current policy's samples without importance sampling or ratio clipping. When using a shared critic in IAC `use_separate_critic=False`, the actor and critic models share the same transformer backbone to get the latent representation of individual observation. Although this is memory/storage efficient, the PG and TD back propagations may disrupt each other, leading to unstable training. So `value_clip_range` can be applied to stabilize training. Note that `value_clip_range` is **only effective when using a shared critic in IAC**.
+For simplicity, IAC computes the policy gradient using the current policy's samples without importance sampling or ratio clipping. Shared-critic mode (`use_separate_critic=false`) can be less stable; `value_clip_range` only applies in that mode.
 {{% /hint %}}
 
 {{% hint warning %}}
@@ -91,14 +100,21 @@ J(\theta_i) = \mathbb{E}_{h_t \sim \mathcal{D},\, a_t \sim \pi_{\theta}}\left[\l
 
 where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf{h}_{t+1}) - V_{\phi}(\mathbf{h}_{t}){{< /katex >}} uses the shared critic on the joint prompt/history. Set `critic_type='q'` to condition the critic on joint responses via {{< katex inline=true >}}Q(\mathbf{h}_t, \mathbf{a}_t){{< /katex >}}.
 
+The critic uses an MSE value loss:
+
+{{< katex display=true >}}
+L_V = \big(V_{\phi}(\mathbf{h}_t) - \hat{V}_t\big)^2.
+{{< /katex >}}
+
 {{% hint info %}}
 **MAACConfig** parameters:
-- `num_agents`: Number of actors
+- `num_agents`: Number of agents
 - `num_turns`: Number of turns
-- `critic_model_name_or_path`: Required identifier for the shared critic
+- `num_generations`: Number of generations per prompt per agent
+- `external_prompt_passthrough`: Use external prompts directly in multi-turn
 - `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
 - `num_train_epochs`: Number of training epochs
-- `actor_learning_rate`: Learning rate for actors
+- `agent_learning_rate`: Learning rate for agents
 - `critic_learning_rate`: Learning rate for shared critic
 - `value_loss_coef`: Weight on critic loss
 - `advantage_normalization`: Whether to normalize advantages before updates
@@ -109,21 +125,20 @@ where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf
 - `top_p`: Top-p for nucleus sampling
 - `top_k`: Top-k for sampling
 - `do_sample`: Whether to use sampling
-- `num_generations`: Number of generations per prompt per agent
 - `discount`: Discount factor for multi-turn returns
 - `early_termination_threshold`: Optional early-stop threshold for multi-turn
 - `eval_interval`: Evaluation interval (in training batches)
 - `eval_num_samples`: Number of evaluation samples per interval
 - `eval_batch_size`: Eval dataloader batch size
 - `logging_steps`: Log every N training batches
-- `external_prompt_passthrough`: Use external prompts directly in multi-turn
 - `pad_token_id`: Padding token id
 {{% /hint %}}
 
 {{% hint info %}}
 **MAACTrainer** setup:
 
-- `model`: Actor model identifier/string (required)
+- `model` or `agents`: Actor model identifier string for homogeneous agents, or list of agent models (multi-agent `model` must be a string)
+- `critics`: Required list containing a single shared critic model
 - `tokenizer`: Tokenizer (required)
 - `reward_func`: Callable returning rewards (required)
 - `reward_processor`: Optional reward post-processor

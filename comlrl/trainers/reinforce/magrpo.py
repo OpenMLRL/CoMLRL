@@ -20,7 +20,7 @@ class MAGRPOConfig:
 
     # Core setup
     num_train_epochs: int = 20
-    learning_rate: float = 5.0e-6
+    agent_learning_rate: float = 5.0e-6
     logging_steps: int = 50
     num_agents: int = 2
 
@@ -35,7 +35,7 @@ class MAGRPOConfig:
     num_turns: int = 2
     discount: float = 0.9
     joint_mode: str = "aligned"
-    termination_threshold: Optional[float] = -0.2
+    early_termination_threshold: Optional[float] = -0.2
     external_prompt_passthrough: bool = False
 
     eval_interval: int = 16
@@ -231,7 +231,7 @@ class MAGRPOTrainer:
         self.optimizers = [
             torch.optim.AdamW(
                 agent.parameters(),
-                lr=self.args.learning_rate,
+                lr=self.args.agent_learning_rate,
             )
             for agent in self.agents
         ]
@@ -356,7 +356,7 @@ class MAGRPOTrainer:
                 "algorithm": self.algorithm_name,
                 "advantage_mode": self.advantage_mode,
                 # single reward function; keep legacy fields out
-                "learning_rate": self.args.learning_rate,
+                "agent_learning_rate": self.args.agent_learning_rate,
                 "num_train_epochs": self.args.num_train_epochs,
                 "num_generations": self.args.num_generations,
                 "max_new_tokens": self.args.max_new_tokens,
@@ -902,7 +902,7 @@ class MAGRPOTrainer:
             turn_node_counts[turn_idx] += 1
 
             # Early termination: stop expanding this branch if mean reward exceeds threshold
-            term_threshold = getattr(self.args, "termination_threshold", None)
+            term_threshold = getattr(self.args, "early_termination_threshold", None)
             terminate_here = False
             if term_threshold is not None and rewards_vec:
                 try:

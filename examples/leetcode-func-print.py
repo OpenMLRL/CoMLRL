@@ -435,7 +435,7 @@ def main():
 
     config = MAGRPOConfig(
         num_train_epochs=100,
-        learning_rate=1e-5,
+        agent_learning_rate=1e-5,
         logging_steps=1,
         num_generations=4,
         max_new_tokens=256,

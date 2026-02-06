@@ -96,12 +96,12 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--model-name", type=str, default="Qwen/Qwen2.5-0.5B")
-    parser.add_argument("--critic-model", type=str, default=None)
+    parser.add_argument("--critic", type=str, default=None)
     parser.add_argument("--separate-critic", action="store_true")
     parser.add_argument("--output-dir", type=str, default="./iac_tldr")
     parser.add_argument("--dataset-size", type=int, default=320)
     parser.add_argument("--num-train-epochs", type=int, default=15)
-    parser.add_argument("--actor-learning-rate", type=float, default=1e-6)
+    parser.add_argument("--agent-learning-rate", type=float, default=1e-6)
     parser.add_argument("--critic-learning-rate", type=float, default=1e-6)
     parser.add_argument("--value-loss-coef", type=float, default=0.5)
     parser.add_argument("--rollout-buffer-size", type=int, default=8)
@@ -137,9 +137,15 @@ def main() -> None:
     usable = min(args.dataset_size, len(dataset))
     dataset = dataset.select(range(usable))
 
+    critics = None
+    if args.separate_critic and args.critic:
+        critics = [args.critic, args.critic]
+    elif args.separate_critic:
+        raise ValueError("--critic is required when --separate-critic is set.")
+
     config = IACConfig(
         num_train_epochs=args.num_train_epochs,
-        actor_learning_rate=args.actor_learning_rate,
+        agent_learning_rate=args.agent_learning_rate,
         critic_learning_rate=args.critic_learning_rate,
         value_loss_coef=args.value_loss_coef,
         rollout_buffer_size=args.rollout_buffer_size,
@@ -148,7 +154,6 @@ def main() -> None:
         top_p=args.top_p,
         top_k=args.top_k,
         use_separate_critic=args.separate_critic,
-        critic_model_name_or_path=args.critic_model,
         num_agents=2,
         num_turns=1,
     )
@@ -176,6 +181,7 @@ def main() -> None:
         train_dataset=dataset,
         wandb_config=wandb_config,
         metrics_callback=rollout_metrics,
+        critics=critics,
     )
 
     trainer.train()
