@@ -267,8 +267,7 @@ class IACTrainer(ActorCriticTrainerBase):
             raise ValueError(
                 "Tokenizer must be provided when model is a PreTrainedModel instance."
             )
-        tokenizer_kwargs = self.model_config.get("tokenizer_kwargs", {})
-        return AutoTokenizer.from_pretrained(model, **tokenizer_kwargs)
+        return AutoTokenizer.from_pretrained(model)
 
     def _infer_reward_signature(self, fn: RewardFunc):
         try:
@@ -288,7 +287,9 @@ class IACTrainer(ActorCriticTrainerBase):
         if isinstance(model, PreTrainedModel):
             base_model = model
         else:
-            model_kwargs = self.model_config.get("model_kwargs", {})
+            model_kwargs = self._filter_model_kwargs(
+                self.model_config.get("model_kwargs", {})
+            )
             try:
                 base_model = AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
             except (OSError, ValueError) as exc:
@@ -312,7 +313,9 @@ class IACTrainer(ActorCriticTrainerBase):
         if isinstance(model_identifier, PreTrainedModel):
             base_model = model_identifier
         else:
-            model_kwargs = self.model_config.get("critic_model_kwargs", {})
+            model_kwargs = self._filter_model_kwargs(
+                self.model_config.get("critic_model_kwargs", {})
+            )
             try:
                 base_model = AutoModelForCausalLM.from_pretrained(
                     model_identifier, **model_kwargs

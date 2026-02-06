@@ -178,18 +178,22 @@ class MAGRPOTrainer:
             if isinstance(model, str):
                 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+                model_kwargs = {}
+                torch_dtype = None
+                if isinstance(self.model_config, dict):
+                    torch_dtype = self.model_config.get(
+                        "torch_dtype"
+                    ) or self.model_config.get("dtype")
+                if torch_dtype is not None:
+                    model_kwargs["torch_dtype"] = torch_dtype
                 self.agents = [
-                    AutoModelForCausalLM.from_pretrained(
-                        model, **self.model_config.get("model_kwargs", {})
-                    )
+                    AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
                     for _ in range(num_agents)
                 ]
                 self.model_name = model
 
                 if tokenizer is None:
-                    self.tokenizer = AutoTokenizer.from_pretrained(
-                        model, **self.model_config.get("tokenizer_kwargs", {})
-                    )
+                    self.tokenizer = AutoTokenizer.from_pretrained(model)
                     special_tokens = self.model_config.get("special_tokens", {})
                     if special_tokens:
                         self.tokenizer.add_special_tokens(special_tokens)

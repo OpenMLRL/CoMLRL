@@ -223,8 +223,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             raise ValueError(
                 "Tokenizer must be provided when model is a PreTrainedModel instance."
             )
-        tokenizer_kwargs = self.model_config.get("tokenizer_kwargs", {})
-        return AutoTokenizer.from_pretrained(model, **tokenizer_kwargs)
+        return AutoTokenizer.from_pretrained(model)
 
     def _load_agent_model(
         self,
@@ -234,7 +233,9 @@ class MAACTrainer(ActorCriticTrainerBase):
             raise ValueError("model must be provided for MAAC.")
         if isinstance(model, CausalLMWithValueHead):
             return model
-        model_kwargs = self.model_config.get("model_kwargs", {})
+        model_kwargs = self._filter_model_kwargs(
+            self.model_config.get("model_kwargs", {})
+        )
         if isinstance(model, PreTrainedModel):
             base = model
         else:
@@ -253,7 +254,9 @@ class MAACTrainer(ActorCriticTrainerBase):
     ) -> CausalLMWithValueHead:
         if isinstance(model, CausalLMWithValueHead):
             return model
-        model_kwargs = self.model_config.get("critic_model_kwargs", {})
+        model_kwargs = self._filter_model_kwargs(
+            self.model_config.get("critic_model_kwargs", {})
+        )
         if isinstance(model, PreTrainedModel):
             base = model
         else:

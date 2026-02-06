@@ -61,6 +61,16 @@ class ActorCriticTrainerBase:
         model_name = self._infer_model_name(sources[0]) if sources else None
         return sources, model_name
 
+    def _filter_model_kwargs(self, cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        torch_dtype = None
+        if isinstance(cfg, dict):
+            torch_dtype = cfg.get("torch_dtype") or cfg.get("dtype")
+        if torch_dtype is None:
+            model_cfg = getattr(self, "model_config", None)
+            if isinstance(model_cfg, dict):
+                torch_dtype = model_cfg.get("torch_dtype") or model_cfg.get("dtype")
+        return {"torch_dtype": torch_dtype} if torch_dtype is not None else {}
+
     def _setup_formatters(
         self, formatters: Optional[Union[Formatter, Sequence[Formatter]]]
     ) -> List[Formatter]:

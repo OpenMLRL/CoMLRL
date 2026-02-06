@@ -19,8 +19,8 @@ where {{< katex inline=true >}}\delta_{i,t} = r_{i,t} + \gamma V_{\phi_i}(h_{i,t
 When using a shared critic (`use_separate_critic=false`), the value loss uses a clipped objective:
 
 {{< katex display=true >}}
-L_V = \max\Big( (V_{\phi_i}(h_t) - \hat{V}_t)^2,\ (V_{\phi_i}^{\text{clip}}(h_t) - \hat{V}_t)^2 \Big),
-\quad V_{\phi_i}^{\text{clip}}(h_t) = V_{\phi_i}^{\text{old}}(h_t) + \mathrm{clip}(V_{\phi_i}(h_t) - V_{\phi_i}^{\text{old}}(h_t), -\epsilon_v, \epsilon_v)
+L(\phi_i) = \max\Big( (V_{\phi_i}(h_t) - \hat{V}_t)^2,\ (V_{\phi_i}^{\text{clip}}(h_t) - \hat{V}_t)^2 \Big)
+\\ V_{\phi_i}^{\text{clip}}(h_t) = V_{\phi_i}^{\text{old}}(h_t) + \mathrm{clip}(V_{\phi_i}(h_t) - V_{\phi_i}^{\text{old}}(h_t), -\epsilon_v, \epsilon_v),
 {{< /katex >}}
 
 where {{< katex inline=true >}}\hat{V}_t{{< /katex >}} is the value target and {{< katex inline=true >}}\epsilon_v{{< /katex >}} corresponds to `value_clip_range`.
@@ -101,7 +101,7 @@ where {{< katex inline=true >}}\mathbf{\delta}_t = r_t + \gamma V_{\phi}(\mathbf
 The critic uses an MSE value loss:
 
 {{< katex display=true >}}
-L_V = \big(V_{\phi}(\mathbf{h}_t) - \hat{V}_t\big)^2.
+L(\boldsymbol{\phi}) = \big(V_{\phi}(\mathbf{h}_t) - \hat{V}_t\big)^2.
 {{< /katex >}}
 
 {{% hint info %}}
