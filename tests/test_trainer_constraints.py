@@ -145,7 +145,7 @@ def test_trainer_early_constraints(factory, match):
 
 
 def test_iac_separate_critic_requires_critics(dummy_tokenizer, tiny_model_a):
-    args = IACConfig(num_agents=1, use_separate_critic=True)
+    args = IACConfig(num_agents=1, use_separate_critic=True, num_turns=1)
     with pytest.raises(ValueError, match="critics must be provided"):
         IACTrainer(
             agents=[tiny_model_a],
@@ -156,7 +156,7 @@ def test_iac_separate_critic_requires_critics(dummy_tokenizer, tiny_model_a):
 
 
 def test_iac_critic_len_mismatch(dummy_tokenizer, tiny_model_a, tiny_model_b):
-    args = IACConfig(num_agents=2, use_separate_critic=True)
+    args = IACConfig(num_agents=2, use_separate_critic=True, num_turns=1)
     with pytest.raises(ValueError, match="critics length"):
         IACTrainer(
             agents=[tiny_model_a, tiny_model_b],
@@ -168,7 +168,7 @@ def test_iac_critic_len_mismatch(dummy_tokenizer, tiny_model_a, tiny_model_b):
 
 
 def test_iac_valid_shared_heads(dummy_tokenizer, tiny_model_a, tiny_model_b):
-    args = IACConfig(num_agents=2, use_separate_critic=False)
+    args = IACConfig(num_agents=2, use_separate_critic=False, num_turns=1)
     trainer = IACTrainer(
         agents=[tiny_model_a, tiny_model_b],
         tokenizer=dummy_tokenizer,
@@ -180,7 +180,7 @@ def test_iac_valid_shared_heads(dummy_tokenizer, tiny_model_a, tiny_model_b):
 
 
 def test_iac_valid_separate_critics(dummy_tokenizer, tiny_model_a, tiny_model_b):
-    args = IACConfig(num_agents=2, use_separate_critic=True)
+    args = IACConfig(num_agents=2, use_separate_critic=True, num_turns=1)
     trainer = IACTrainer(
         agents=[tiny_model_a, tiny_model_b],
         critics=[tiny_model_b, tiny_model_a],
@@ -192,8 +192,31 @@ def test_iac_valid_separate_critics(dummy_tokenizer, tiny_model_a, tiny_model_b)
     assert len(trainer.critic_models) == 2
 
 
+def test_iac_multiturn_with_transition(dummy_tokenizer, tiny_model_a):
+    args = IACConfig(num_agents=1, use_separate_critic=False, num_turns=2)
+    trainer = IACTrainer(
+        agents=[tiny_model_a],
+        tokenizer=dummy_tokenizer,
+        reward_func=_reward_func,
+        external_transition=_external_transition,
+        args=args,
+    )
+    assert len(trainer.agent_models) == 1
+
+
+def test_iac_multiturn_num_generations_mismatch(dummy_tokenizer, tiny_model_a):
+    with pytest.raises(ValueError, match="num_generations"):
+        IACTrainer(
+            agents=[tiny_model_a],
+            tokenizer=dummy_tokenizer,
+            reward_func=_reward_func,
+            external_transition=_external_transition,
+            args=IACConfig(num_agents=1, num_turns=2, num_generations=2),
+        )
+
+
 def test_maac_requires_critics(dummy_tokenizer, tiny_model_a):
-    args = MAACConfig(num_agents=1)
+    args = MAACConfig(num_agents=1, num_turns=1)
     with pytest.raises(ValueError, match="critics must be provided"):
         MAACTrainer(
             agents=[tiny_model_a],
@@ -204,7 +227,7 @@ def test_maac_requires_critics(dummy_tokenizer, tiny_model_a):
 
 
 def test_maac_critic_len_mismatch(dummy_tokenizer, tiny_model_a, tiny_model_b):
-    args = MAACConfig(num_agents=2)
+    args = MAACConfig(num_agents=2, num_turns=1)
     with pytest.raises(ValueError, match="critics length"):
         MAACTrainer(
             agents=[tiny_model_a, tiny_model_b],
@@ -216,7 +239,7 @@ def test_maac_critic_len_mismatch(dummy_tokenizer, tiny_model_a, tiny_model_b):
 
 
 def test_maac_valid(dummy_tokenizer, tiny_model_a, tiny_model_b):
-    args = MAACConfig(num_agents=2)
+    args = MAACConfig(num_agents=2, num_turns=1)
     trainer = MAACTrainer(
         agents=[tiny_model_a, tiny_model_b],
         critics=[tiny_model_a],
@@ -228,6 +251,32 @@ def test_maac_valid(dummy_tokenizer, tiny_model_a, tiny_model_b):
     assert trainer.critic_model is not None
 
 
+def test_maac_multiturn_with_transition(dummy_tokenizer, tiny_model_a):
+    args = MAACConfig(num_agents=1, num_turns=2, num_generations=1)
+    trainer = MAACTrainer(
+        agents=[tiny_model_a],
+        critics=[tiny_model_a],
+        tokenizer=dummy_tokenizer,
+        reward_func=_reward_func,
+        external_transition=_external_transition,
+        args=args,
+    )
+    assert len(trainer.agent_models) == 1
+    assert trainer.critic_model is not None
+
+
+def test_maac_multiturn_num_generations_mismatch(dummy_tokenizer, tiny_model_a):
+    with pytest.raises(ValueError, match="num_generations"):
+        MAACTrainer(
+            agents=[tiny_model_a],
+            critics=[tiny_model_a],
+            tokenizer=dummy_tokenizer,
+            reward_func=_reward_func,
+            external_transition=_external_transition,
+            args=MAACConfig(num_agents=1, num_turns=2, num_generations=2),
+        )
+
+
 def test_magrpo_requires_transition_for_multiturn(tiny_model_a, tiny_model_b):
     args = MAGRPOConfig(num_agents=2, num_turns=2, num_generations=2)
     with pytest.raises(ValueError, match="external_transition"):
@@ -236,6 +285,17 @@ def test_magrpo_requires_transition_for_multiturn(tiny_model_a, tiny_model_b):
             reward_func=_reward_func,
             args=args,
         )
+
+
+def test_magrpo_multiturn_with_transition(tiny_model_a, tiny_model_b):
+    args = MAGRPOConfig(num_agents=2, num_turns=2, num_generations=2)
+    trainer = MAGRPOTrainer(
+        agents=[tiny_model_a, tiny_model_b],
+        reward_func=_reward_func,
+        external_transition=_external_transition,
+        args=args,
+    )
+    assert trainer.num_agents == 2
 
 
 def test_magrpo_allows_model_and_agent_names(
