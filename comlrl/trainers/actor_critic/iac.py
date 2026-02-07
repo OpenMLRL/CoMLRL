@@ -11,13 +11,9 @@ import torch
 import torch.nn.functional as F
 from datasets import Dataset, IterableDataset
 from torch.utils.data import DataLoader
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    PreTrainedModel,
-    PreTrainedTokenizerBase,
-)
+from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 from comlrl.models.actor_critic import CausalLMWithValueHead
+from comlrl.utils.tokenizer_utils import ensure_pad_token, ensure_tokenizer
 from .ac_base import ActorCriticTrainerBase
 import wandb
 
@@ -132,16 +128,14 @@ class IACTrainer(ActorCriticTrainerBase):
             Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]
         ] = None,
     ) -> None:
-        if reward_func is None or not callable(reward_func):
-            raise ValueError("A callable reward_func must be provided.")
-        if model is None and agents is None:
-            raise ValueError("Either model or agents must be provided.")
-
         self.args = args if args is not None else IACConfig()
-        if not self.args.use_separate_critic and critics is not None:
-            raise ValueError(
-                "critics can only be provided when use_separate_critic=True."
-            )
+        self._validate_init_inputs(
+            model=model,
+            agents=agents,
+            critics=critics,
+            reward_func=reward_func,
+            external_transition=external_transition,
+        )
         self.reward_func = reward_func
         self.reward_processor = reward_processor or (lambda x: x)
         self.train_dataset = train_dataset
@@ -155,29 +149,9 @@ class IACTrainer(ActorCriticTrainerBase):
         self.agent_models: List[CausalLMWithValueHead] = []
         self.critic_models: List[Optional[CausalLMWithValueHead]] = []
 
-        self.tokenizer = tokenizer
-        if agents is not None and self.tokenizer is None:
-            raise ValueError("Tokenizer must be provided when agents are passed.")
-        if agents is None:
-            self.tokenizer = self._ensure_tokenizer(model, self.tokenizer)
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-        if self.tokenizer.pad_token_id is None:
-            raise ValueError("Tokenizer must expose pad_token_id.")
-
+        self.tokenizer = self._setup_tokenizer(model, tokenizer, agents)
         self.formatters = self._setup_formatters(formatters)
         self._reward_signature = self._infer_reward_signature(reward_func)
-
-        if (
-            agents is None
-            and self.args.num_agents > 1
-            and isinstance(model, PreTrainedModel)
-        ):
-            raise ValueError(
-                "Multi-agent IAC requires `model` to be a pretrained identifier string."
-            )
-        if self.args.num_turns > 1 and external_transition is None:
-            raise ValueError("Multi-turn IAC requires an external_transition.")
         self.external_transition = external_transition
 
         actor_sources, self.agent_model_name = self._resolve_model_sources(
@@ -186,10 +160,7 @@ class IACTrainer(ActorCriticTrainerBase):
             models=agents,
             expected_count=self.args.num_agents,
         )
-        for actor_source in actor_sources:
-            agent_model = self._load_agent_model(actor_source)
-            agent_model.to(self.device)
-            self.agent_models.append(agent_model)
+        self._load_agents(actor_sources)
 
         self.critic_model_name = None
         if self.args.use_separate_critic:
@@ -203,17 +174,70 @@ class IACTrainer(ActorCriticTrainerBase):
                 models=critics,
                 expected_count=self.args.num_agents,
             )
-            for critic_source in critic_sources:
-                critic_model = self._load_critic_model(critic_source)
-                critic_model.to(self.device)
-                self.critic_models.append(critic_model)
+            self._load_critics(critic_sources)
         else:
             self.critic_models = [None] * self.args.num_agents
 
         self._configure_tokenizer_specials()
+        self._init_optimizers()
+        self._init_state(wandb_config)
+        self._configure_verbose()
 
-        self.agent_optimizers: List[torch.optim.Optimizer] = []
-        self.critic_optimizers: List[torch.optim.Optimizer] = []
+    def _validate_init_inputs(
+        self,
+        *,
+        model: Optional[Union[str, PreTrainedModel]],
+        agents: Optional[Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]],
+        critics: Optional[Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]],
+        reward_func: Optional[RewardFunc],
+        external_transition: Optional[Callable],
+    ) -> None:
+        if reward_func is None or not callable(reward_func):
+            raise ValueError("reward_func must be a callable.")
+        if model is None and agents is None:
+            raise ValueError("Either model or agents must be provided.")
+        if not self.args.use_separate_critic and critics is not None:
+            raise ValueError(
+                "critics can only be provided when use_separate_critic=True."
+            )
+        if (
+            agents is None
+            and self.args.num_agents > 1
+            and isinstance(model, PreTrainedModel)
+        ):
+            raise ValueError(
+                "Multi-agent IAC requires `model` to be a pretrained identifier string."
+            )
+        if self.args.num_turns > 1 and external_transition is None:
+            raise ValueError("Multi-turn IAC requires an external_transition.")
+
+    def _setup_tokenizer(
+        self,
+        model: Optional[Union[str, PreTrainedModel]],
+        tokenizer: Optional[PreTrainedTokenizerBase],
+        agents: Optional[Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]],
+    ) -> PreTrainedTokenizerBase:
+        if agents is not None and tokenizer is None:
+            raise ValueError("Tokenizer must be provided when agents are passed.")
+        if agents is None:
+            return ensure_tokenizer(model, tokenizer)
+        return ensure_pad_token(tokenizer)
+
+    def _load_agents(self, actor_sources: Sequence[Any]) -> None:
+        for actor_source in actor_sources:
+            agent_model = self._load_agent_model(actor_source)
+            agent_model.to(self.device)
+            self.agent_models.append(agent_model)
+
+    def _load_critics(self, critic_sources: Sequence[Any]) -> None:
+        for critic_source in critic_sources:
+            critic_model = self._load_critic_model(critic_source)
+            critic_model.to(self.device)
+            self.critic_models.append(critic_model)
+
+    def _init_optimizers(self) -> None:
+        self.agent_optimizers = []
+        self.critic_optimizers = []
 
         for agent_model in self.agent_models:
             optimizer = torch.optim.AdamW(
@@ -232,36 +256,23 @@ class IACTrainer(ActorCriticTrainerBase):
             )
             self.critic_optimizers.append(optimizer)
 
+    def _init_state(self, wandb_config: Optional[Dict[str, Any]]) -> None:
         self.env_step = 0
-        self.rollout_buffers: List[List[RolloutSample]] = [
-            [] for _ in range(self.args.num_agents)
-        ]
-
+        self.rollout_buffers = [[] for _ in range(self.args.num_agents)]
         self.wandb_config = wandb_config
         self.wandb_initialized = False
         self.verbose = True
         self._last_train_log_step = -1
         if wandb_config is not None:
             self._init_wandb()
+
+    def _configure_verbose(self) -> None:
         if isinstance(self.wandb_config, dict):
             sections = self.wandb_config.get("config_sections", {})
             if isinstance(sections, dict):
                 out = sections.get("output", {})
                 if isinstance(out, dict) and "verbose" in out:
                     self.verbose = bool(out.get("verbose"))
-
-    def _ensure_tokenizer(
-        self,
-        model: Optional[Union[str, PreTrainedModel]],
-        tokenizer: Optional[PreTrainedTokenizerBase],
-    ) -> PreTrainedTokenizerBase:
-        if tokenizer is not None:
-            return tokenizer
-        if model is None:
-            raise ValueError(
-                "Tokenizer must be provided when model is a PreTrainedModel instance."
-            )
-        return AutoTokenizer.from_pretrained(model)
 
     def _infer_reward_signature(self, fn: RewardFunc):
         try:

@@ -13,6 +13,9 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm  # type: ignore
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
+from comlrl.utils.model_loading import resolve_model_sources
+from comlrl.utils.tokenizer_utils import ensure_pad_token, ensure_tokenizer
+
 
 @dataclass
 class MAGRPOConfig:
@@ -136,21 +139,8 @@ class MAGRPOTrainer:
     ):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        if model is None and agents is None:
-            raise ValueError("Either model or agents must be provided")
-        agents_is_name_list = (
-            agents is not None
-            and isinstance(agents, Sequence)
-            and not isinstance(agents, (str, bytes))
-            and all(isinstance(src, str) for src in agents)
-        )
-        if model is not None and agents is not None:
-            if not agents_is_name_list or len(agents) != num_agents:
-                raise ValueError(
-                    "Cannot provide both model and agents unless agents is a list of num_agents model names."
-                )
-
         self.args = args if args is not None else self.default_config_cls()
+        self._validate_init_inputs(model=model, agents=agents)
         self.env_step = 0
         self._last_train_log_step = -1
         self.advantage_mode = getattr(self.args, "advantage_mode", "mean")
@@ -161,65 +151,13 @@ class MAGRPOTrainer:
         self._setup_reward_function(reward_func, reward_processor)
 
         self.model_config = model_config if model_config else {}
-        model_kwargs = {}
-        torch_dtype = None
-        if isinstance(self.model_config, dict):
-            torch_dtype = self.model_config.get("torch_dtype") or self.model_config.get(
-                "dtype"
-            )
-        if torch_dtype is not None:
-            model_kwargs["torch_dtype"] = torch_dtype
-
-        if agents is not None:
-            if agents_is_name_list:
-                from transformers import AutoModelForCausalLM, AutoTokenizer
-
-                self.agents = [
-                    AutoModelForCausalLM.from_pretrained(name, **model_kwargs)
-                    for name in agents
-                ]
-                self.num_agents = len(agents)
-                self.model_name = agents[0]
-                if tokenizer is None:
-                    self.tokenizer = AutoTokenizer.from_pretrained(agents[0])
-                    special_tokens = self.model_config.get("special_tokens", {})
-                    if special_tokens:
-                        self.tokenizer.add_special_tokens(special_tokens)
-            else:
-                self.agents = agents
-                self.num_agents = len(agents)
-                if (
-                    hasattr(agents[0], "base_model")
-                    and hasattr(agents[0].base_model, "config")
-                    and hasattr(agents[0].base_model.config, "model_type")
-                ):
-                    self.model_name = agents[0].base_model.config.model_type
-                elif hasattr(agents[0], "config") and hasattr(
-                    agents[0].config, "_name_or_path"
-                ):
-                    self.model_name = agents[0].config._name_or_path
-                else:
-                    self.model_name = agents[0].__class__.__name__
-        else:
-            self.num_agents = num_agents
-            if isinstance(model, str):
-                from transformers import AutoModelForCausalLM, AutoTokenizer
-
-                self.agents = [
-                    AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
-                    for _ in range(num_agents)
-                ]
-                self.model_name = model
-
-                if tokenizer is None:
-                    self.tokenizer = AutoTokenizer.from_pretrained(model)
-                    special_tokens = self.model_config.get("special_tokens", {})
-                    if special_tokens:
-                        self.tokenizer.add_special_tokens(special_tokens)
-            else:
-                raise ValueError(
-                    "Model should be a string to create homogeneous agents"
-                )
+        actor_sources, model_name, expected_count = self._resolve_agent_sources(
+            model=model, agents=agents, num_agents=num_agents
+        )
+        self.num_agents = expected_count
+        self.model_name = model_name
+        self.agents = self._load_agents(actor_sources)
+        self._setup_tokenizer(tokenizer, actor_sources)
 
         # Allow single-agent as a special case (GRPO)
         if self.num_agents < 1:
@@ -239,14 +177,10 @@ class MAGRPOTrainer:
 
         # Check for external_transition requirement in multi-turn training
         if self.args.num_turns > 1 and external_transition is None:
-            raise ValueError(
-                "Multi-turn training requires an external_transition function."
-            )
+            raise ValueError("Multi-turn MAGRPO requires an external_transition.")
 
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
-        if tokenizer is not None:
-            self.tokenizer = tokenizer
 
         self.eval_logger = eval_logger
         self.eval_aggregator = eval_aggregator
@@ -285,6 +219,89 @@ class MAGRPOTrainer:
                 out = sections.get("output", {})
                 if isinstance(out, dict) and "verbose" in out:
                     self.verbose = bool(out.get("verbose"))
+
+    def _validate_init_inputs(
+        self,
+        *,
+        model: Optional[Union[str, PreTrainedModel]],
+        agents: Optional[Sequence[PreTrainedModel]],
+    ) -> None:
+        if model is None and agents is None:
+            raise ValueError("Either model or agents must be provided.")
+        if agents is None and model is not None and not isinstance(model, str):
+            raise ValueError("Model should be a string to create homogeneous agents")
+
+    def _resolve_agent_sources(
+        self,
+        *,
+        model: Optional[Union[str, PreTrainedModel]],
+        agents: Optional[Sequence[PreTrainedModel]],
+        num_agents: int,
+    ) -> Tuple[List[Any], Optional[str], int]:
+        expected_count = num_agents
+        if agents is not None and model is None:
+            expected_count = len(agents)
+
+        sources, model_name = resolve_model_sources(
+            kind="agents",
+            model=model,
+            models=agents,
+            expected_count=expected_count,
+            expected_label=f"num_agents ({expected_count})",
+        )
+
+        if sources and not all(isinstance(src, str) for src in sources):
+            model_name = self._infer_agent_model_name(sources[0])
+
+        return sources, model_name, expected_count
+
+    def _infer_agent_model_name(self, agent: Any) -> str:
+        if (
+            hasattr(agent, "base_model")
+            and hasattr(agent.base_model, "config")
+            and hasattr(agent.base_model.config, "model_type")
+        ):
+            return agent.base_model.config.model_type
+        if hasattr(agent, "config") and hasattr(agent.config, "_name_or_path"):
+            return agent.config._name_or_path
+        return agent.__class__.__name__
+
+    def _build_model_kwargs(self) -> Dict[str, Any]:
+        model_kwargs = {}
+        torch_dtype = None
+        if isinstance(self.model_config, dict):
+            torch_dtype = self.model_config.get("torch_dtype") or self.model_config.get(
+                "dtype"
+            )
+        if torch_dtype is not None:
+            model_kwargs["torch_dtype"] = torch_dtype
+        return model_kwargs
+
+    def _load_agents(self, actor_sources: Sequence[Any]) -> List[Any]:
+        if actor_sources and all(isinstance(src, str) for src in actor_sources):
+            from transformers import AutoModelForCausalLM
+
+            model_kwargs = self._build_model_kwargs()
+            return [
+                AutoModelForCausalLM.from_pretrained(name, **model_kwargs)
+                for name in actor_sources
+            ]
+        return list(actor_sources)
+
+    def _setup_tokenizer(
+        self,
+        tokenizer: Optional[PreTrainedTokenizerBase],
+        actor_sources: Sequence[Any],
+    ) -> None:
+        if tokenizer is not None:
+            self.tokenizer = ensure_pad_token(tokenizer)
+            return
+
+        if actor_sources and all(isinstance(src, str) for src in actor_sources):
+            self.tokenizer = ensure_tokenizer(actor_sources[0], None)
+            special_tokens = self.model_config.get("special_tokens", {})
+            if special_tokens:
+                self.tokenizer.add_special_tokens(special_tokens)
 
     def _setup_formatters(self, formatters, num_agents):
         """Set up format functions for each agent that can handle external transitions."""
@@ -342,9 +359,7 @@ class MAGRPOTrainer:
     def _setup_reward_function(self, reward_func, reward_processor=None):
         """Set up a single reward function with an optional processor."""
         if reward_func is None or not callable(reward_func):
-            raise ValueError(
-                "reward_func must be a callable that returns a list of floats"
-            )
+            raise ValueError("reward_func must be a callable.")
         self.reward_func = reward_func
         self.reward_processor = (
             reward_processor if reward_processor is not None else (lambda x: x)

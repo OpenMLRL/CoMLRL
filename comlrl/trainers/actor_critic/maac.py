@@ -11,14 +11,10 @@ import torch
 import torch.nn.functional as F
 from datasets import Dataset, IterableDataset
 from torch.utils.data import DataLoader
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    PreTrainedModel,
-    PreTrainedTokenizerBase,
-)
+from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 import wandb
 from comlrl.models.actor_critic import CausalLMWithValueHead
+from comlrl.utils.tokenizer_utils import ensure_pad_token, ensure_tokenizer
 from .ac_base import ActorCriticTrainerBase
 from .iac import RolloutSample
 
@@ -108,11 +104,14 @@ class MAACTrainer(ActorCriticTrainerBase):
             Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]
         ] = None,
     ) -> None:
-        if reward_func is None or not callable(reward_func):
-            raise ValueError("A callable reward_func must be provided.")
-        if model is None and agents is None:
-            raise ValueError("Either model or agents must be provided.")
         self.args = args if args is not None else MAACConfig()
+        self._validate_init_inputs(
+            model=model,
+            agents=agents,
+            critics=critics,
+            reward_func=reward_func,
+            external_transition=external_transition,
+        )
         self.reward_func = reward_func
         self.reward_processor = reward_processor or (lambda x: x)
         self.train_dataset = train_dataset
@@ -122,28 +121,7 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        if agents is not None and tokenizer is None:
-            raise ValueError("Tokenizer must be provided when agents are passed.")
-        if agents is None:
-            self.tokenizer = self._ensure_tokenizer(model, tokenizer)
-        else:
-            self.tokenizer = tokenizer
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-        if self.tokenizer.pad_token_id is None:
-            raise ValueError("Tokenizer must expose pad_token_id.")
-
-        if (
-            agents is None
-            and self.args.num_agents > 1
-            and isinstance(model, PreTrainedModel)
-        ):
-            raise ValueError(
-                "Multi-agent MAAC requires `model` to be a pretrained identifier string."
-            )
-
-        if self.args.num_turns > 1 and external_transition is None:
-            raise ValueError("Multi-turn MAAC requires an external_transition.")
+        self.tokenizer = self._setup_tokenizer(model, tokenizer, agents)
         self.external_transition = external_transition
 
         self.agent_models: List[CausalLMWithValueHead] = []
@@ -153,14 +131,9 @@ class MAACTrainer(ActorCriticTrainerBase):
             models=agents,
             expected_count=self.args.num_agents,
         )
-        for actor_source in actor_sources:
-            agent_model = self._load_agent_model(actor_source)
-            agent_model.to(self.device)
-            self.agent_models.append(agent_model)
+        self._load_agents(actor_sources)
 
         self.critic_model_name = None
-        if critics is None:
-            raise ValueError("critics must be provided for MAAC.")
         critic_sources, self.critic_model_name = self._resolve_model_sources(
             kind="critics",
             model=None,
@@ -175,7 +148,56 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.formatters = self._setup_formatters(formatters)
         self._reward_signature = self._infer_reward_signature(reward_func)
 
-        self.agent_optimizers: List[torch.optim.Optimizer] = []
+        self._init_optimizers()
+        self._init_state(wandb_config)
+        self._configure_verbose()
+
+    def _validate_init_inputs(
+        self,
+        *,
+        model: Optional[Union[str, PreTrainedModel]],
+        agents: Optional[Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]],
+        critics: Optional[Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]],
+        reward_func: Optional[RewardFunc],
+        external_transition: Optional[Callable],
+    ) -> None:
+        if reward_func is None or not callable(reward_func):
+            raise ValueError("reward_func must be a callable.")
+        if model is None and agents is None:
+            raise ValueError("Either model or agents must be provided.")
+        if (
+            agents is None
+            and self.args.num_agents > 1
+            and isinstance(model, PreTrainedModel)
+        ):
+            raise ValueError(
+                "Multi-agent MAAC requires `model` to be a pretrained identifier string."
+            )
+        if self.args.num_turns > 1 and external_transition is None:
+            raise ValueError("Multi-turn MAAC requires an external_transition.")
+        if critics is None:
+            raise ValueError("critics must be provided for MAAC.")
+
+    def _setup_tokenizer(
+        self,
+        model: Optional[Union[str, PreTrainedModel]],
+        tokenizer: Optional[PreTrainedTokenizerBase],
+        agents: Optional[Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]],
+    ) -> PreTrainedTokenizerBase:
+        if agents is not None and tokenizer is None:
+            raise ValueError("Tokenizer must be provided when agents are passed.")
+        if agents is None:
+            return ensure_tokenizer(model, tokenizer)
+        return ensure_pad_token(tokenizer)
+
+    def _load_agents(self, actor_sources: Sequence[Any]) -> None:
+        for actor_source in actor_sources:
+            agent_model = self._load_agent_model(actor_source)
+            agent_model.to(self.device)
+            self.agent_models.append(agent_model)
+
+    def _init_optimizers(self) -> None:
+        self.agent_optimizers = []
         for agent_model in self.agent_models:
             optimizer = torch.optim.AdamW(
                 agent_model.parameters(),
@@ -188,10 +210,8 @@ class MAACTrainer(ActorCriticTrainerBase):
             lr=self.args.critic_learning_rate,
         )
 
-        self.rollout_buffers: List[List[RolloutSample]] = [
-            [] for _ in range(self.args.num_agents)
-        ]
-
+    def _init_state(self, wandb_config: Optional[Dict[str, Any]]) -> None:
+        self.rollout_buffers = [[] for _ in range(self.args.num_agents)]
         self.wandb_config = wandb_config
         self.wandb_initialized = False
         self.env_step = 0
@@ -199,7 +219,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         if wandb_config is not None:
             self._init_wandb()
 
-        # Verbosity from config (default True)
+    def _configure_verbose(self) -> None:
         self.verbose = True
         if isinstance(self.wandb_config, dict):
             sections = self.wandb_config.get("config_sections", {})
@@ -207,19 +227,6 @@ class MAACTrainer(ActorCriticTrainerBase):
                 out = sections.get("output", {})
                 if isinstance(out, dict) and "verbose" in out:
                     self.verbose = bool(out.get("verbose"))
-
-    def _ensure_tokenizer(
-        self,
-        model: Optional[Union[str, PreTrainedModel]],
-        tokenizer: Optional[PreTrainedTokenizerBase],
-    ) -> PreTrainedTokenizerBase:
-        if tokenizer is not None:
-            return tokenizer
-        if model is None:
-            raise ValueError(
-                "Tokenizer must be provided when model is a PreTrainedModel instance."
-            )
-        return AutoTokenizer.from_pretrained(model)
 
     def _load_agent_model(
         self,
