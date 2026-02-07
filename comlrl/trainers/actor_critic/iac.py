@@ -145,6 +145,8 @@ class IACTrainer(ActorCriticTrainerBase):
             raise ValueError(
                 "Multi-agent IAC requires `model` to be a pretrained identifier string."
             )
+        if agents is not None and tokenizer is None:
+            raise ValueError("Tokenizer must be provided when using agents.")
         if self.args.num_turns > 1 and external_transition is None:
             raise ValueError("Multi-turn IAC requires an external_transition.")
         self.reward_func = reward_func

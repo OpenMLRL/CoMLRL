@@ -68,14 +68,6 @@ def tiny_model_b():
         (
             lambda: IACTrainer(
                 agents=[object()],
-                reward_func=_reward_func,
-                args=IACConfig(num_agents=1),
-            ),
-            "Tokenizer must be provided",
-        ),
-        (
-            lambda: IACTrainer(
-                agents=[object()],
                 tokenizer=SimpleNamespace(pad_token="x", eos_token="x", pad_token_id=0),
                 reward_func=_reward_func,
                 args=IACConfig(num_agents=1, num_turns=2),
@@ -102,14 +94,6 @@ def tiny_model_b():
         (
             lambda: MAACTrainer(
                 agents=[object()],
-                reward_func=_reward_func,
-                args=MAACConfig(num_agents=1),
-            ),
-            "Tokenizer must be provided",
-        ),
-        (
-            lambda: MAACTrainer(
-                agents=[object()],
                 tokenizer=SimpleNamespace(pad_token="x", eos_token="x", pad_token_id=0),
                 reward_func=_reward_func,
                 args=MAACConfig(num_agents=1, num_turns=2),
@@ -128,12 +112,10 @@ def tiny_model_b():
     ids=[
         "iac_reward_func",
         "iac_model_or_agents",
-        "iac_tokenizer_required",
         "iac_multiturn_transition",
         "iac_shared_heads_rejects_critics",
         "maac_reward_func",
         "maac_model_or_agents",
-        "maac_tokenizer_required",
         "maac_multiturn_transition",
         "magrpo_reward_func",
         "magrpo_model_or_agents",

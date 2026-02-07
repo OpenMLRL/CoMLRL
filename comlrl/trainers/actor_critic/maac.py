@@ -117,6 +117,8 @@ class MAACTrainer(ActorCriticTrainerBase):
             raise ValueError(
                 "Multi-agent MAAC requires `model` to be a pretrained identifier string."
             )
+        if agents is not None and tokenizer is None:
+            raise ValueError("Tokenizer must be provided when using agents.")
         if self.args.num_turns > 1 and external_transition is None:
             raise ValueError("Multi-turn MAAC requires an external_transition.")
         if critics is None:
