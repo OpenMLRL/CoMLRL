@@ -53,10 +53,14 @@ Custom External Feedback Interface:
 - `num_agents`: Number of agents in the system (required)
 - `prompt_history_per_agent`: List of prompt histories for each agent, where each history is a list of prompts from previous turns (optional)
 - `response_history_per_agent`: List of response histories for each agent, where each history is a list of responses from previous turns (optional)
-- `**kwargs`: Additional mode-specific parameters (optional)
 
-The function should return a list or tuple of formatted prompts for the next turn, one for each agent.
+The function must return a list or tuple of prompts for the next turn, one for each agent.
+The trainer only passes the arguments above (no extra kwargs), so any mode-specific parameters should be captured via closure or `functools.partial`.
 {{% /hint %}}
+
+By default, returned prompts are inserted as the new `prompt` field and then passed through each agent's formatter.
+If `external_prompt_passthrough=true`, the returned prompts are used directly without re-formatting.
+In MAGRPO, the external transition is called per rollout branch with that branch's histories.
 
 For example:
 
@@ -67,7 +71,6 @@ def custom_external(
     num_agents: int,
     prompt_history_per_agent: Optional[List[List[str]]] = None,
     response_history_per_agent: Optional[List[List[str]]] = None,
-    **kwargs
 ) -> List[str]:
     # Custom logic to format next-turn prompts
     # Access environment feedback, tool outputs, etc.
@@ -79,7 +82,9 @@ def custom_external(
     return next_turn_prompts
 ```
 
-This interface allows full flexibility in how environment feedback, tool outputs, or other contextual information is integrated into the multi-turn training loop.
+{{% hint warning %}}
+For IAC/MAAC multi-turn training, `num_generations` must be set to 1.
+{{% /hint %}}
 
 ### Example Modes (Expert, Diagnosis, and Self-Improvement)
 
