@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Any, Optional, Sequence, Tuple, List
 
 
@@ -8,7 +6,19 @@ def infer_model_name(source: Any) -> Optional[str]:
         return None
     if isinstance(source, str):
         return source
-    base = getattr(source, "model", source)
+    if hasattr(source, "base_model") and hasattr(source.base_model, "config"):
+        config = source.base_model.config
+        name = getattr(config, "model_type", None) or getattr(
+            config, "_name_or_path", None
+        )
+        if name:
+            return str(name)
+    if hasattr(source, "model"):
+        base = source.model
+    elif hasattr(source, "base_model"):
+        base = source.base_model
+    else:
+        base = source
     config = getattr(base, "config", None)
     if config is not None:
         name = getattr(config, "_name_or_path", None) or getattr(

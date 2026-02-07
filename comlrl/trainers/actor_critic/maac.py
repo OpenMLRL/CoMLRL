@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import inspect
 import os
 import random
@@ -10,11 +8,13 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 import torch
 import torch.nn.functional as F
 from datasets import Dataset, IterableDataset
-from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 import wandb
 from comlrl.models.actor_critic import CausalLMWithValueHead
-from comlrl.utils.tokenizer_utils import ensure_pad_token, ensure_tokenizer
+from comlrl.utils.formatters import build_formatters
+from comlrl.utils.model_loading import resolve_model_sources
+from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
+from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizer
 from .ac_base import ActorCriticTrainerBase
 from .iac import RolloutSample
 
@@ -105,62 +105,6 @@ class MAACTrainer(ActorCriticTrainerBase):
         ] = None,
     ) -> None:
         self.args = args if args is not None else MAACConfig()
-        self._validate_init_inputs(
-            model=model,
-            agents=agents,
-            critics=critics,
-            reward_func=reward_func,
-            external_transition=external_transition,
-        )
-        self.reward_func = reward_func
-        self.reward_processor = reward_processor or (lambda x: x)
-        self.train_dataset = train_dataset
-        self.eval_dataset = eval_dataset
-        self.metrics_callback = metrics_callback
-        self.model_config = model_config or {}
-
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        self.tokenizer = self._setup_tokenizer(model, tokenizer, agents)
-        self.external_transition = external_transition
-
-        self.agent_models: List[CausalLMWithValueHead] = []
-        actor_sources, self.agent_model_name = self._resolve_model_sources(
-            kind="agents",
-            model=model,
-            models=agents,
-            expected_count=self.args.num_agents,
-        )
-        self._load_agents(actor_sources)
-
-        self.critic_model_name = None
-        critic_sources, self.critic_model_name = self._resolve_model_sources(
-            kind="critics",
-            model=None,
-            models=critics,
-            expected_count=1,
-            expected_label="1 critic",
-        )
-        self.critic_model = self._load_critic_model(critic_sources[0])
-        self.critic_model.to(self.device)
-
-        self._configure_tokenizer_specials()
-        self.formatters = self._setup_formatters(formatters)
-        self._reward_signature = self._infer_reward_signature(reward_func)
-
-        self._init_optimizers()
-        self._init_state(wandb_config)
-        self._configure_verbose()
-
-    def _validate_init_inputs(
-        self,
-        *,
-        model: Optional[Union[str, PreTrainedModel]],
-        agents: Optional[Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]],
-        critics: Optional[Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]],
-        reward_func: Optional[RewardFunc],
-        external_transition: Optional[Callable],
-    ) -> None:
         if reward_func is None or not callable(reward_func):
             raise ValueError("reward_func must be a callable.")
         if model is None and agents is None:
@@ -177,26 +121,107 @@ class MAACTrainer(ActorCriticTrainerBase):
             raise ValueError("Multi-turn MAAC requires an external_transition.")
         if critics is None:
             raise ValueError("critics must be provided for MAAC.")
+        self.reward_func = reward_func
+        self.reward_processor = reward_processor or (lambda x: x)
+        self.train_dataset = train_dataset
+        self.eval_dataset = eval_dataset
+        self.metrics_callback = metrics_callback
+        self.model_config = model_config or {}
 
-    def _setup_tokenizer(
-        self,
-        model: Optional[Union[str, PreTrainedModel]],
-        tokenizer: Optional[PreTrainedTokenizerBase],
-        agents: Optional[Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]],
-    ) -> PreTrainedTokenizerBase:
-        if agents is not None and tokenizer is None:
-            raise ValueError("Tokenizer must be provided when agents are passed.")
-        if agents is None:
-            return ensure_tokenizer(model, tokenizer)
-        return ensure_pad_token(tokenizer)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def _load_agents(self, actor_sources: Sequence[Any]) -> None:
+        self.tokenizer = resolve_tokenizer(model, tokenizer, agents)
+        self.external_transition = external_transition
+
+        self.agent_models: List[CausalLMWithValueHead] = []
+        actor_sources, self.agent_model_name = resolve_model_sources(
+            kind="agents",
+            model=model,
+            models=agents,
+            expected_count=self.args.num_agents,
+        )
         for actor_source in actor_sources:
-            agent_model = self._load_agent_model(actor_source)
+            if actor_source is None:
+                raise ValueError("model must be provided for MAAC.")
+            if isinstance(actor_source, CausalLMWithValueHead):
+                agent_model = actor_source
+            elif isinstance(actor_source, PreTrainedModel):
+                base = actor_source
+                agent_model = CausalLMWithValueHead(
+                    base_model=base,
+                    attach_value_head=False,
+                    value_head_hidden_dim=None,
+                )
+            else:
+                model_kwargs = self._filter_model_kwargs(
+                    self.model_config.get("model_kwargs", {})
+                )
+                try:
+                    base = AutoModelForCausalLM.from_pretrained(
+                        actor_source, **model_kwargs
+                    )
+                except (OSError, ValueError) as exc:
+                    raise ValueError(
+                        f"Failed to load actor model from identifier '{actor_source}'."
+                    ) from exc
+                agent_model = CausalLMWithValueHead(
+                    base_model=base,
+                    attach_value_head=False,
+                    value_head_hidden_dim=None,
+                )
             agent_model.to(self.device)
             self.agent_models.append(agent_model)
 
-    def _init_optimizers(self) -> None:
+        self.critic_model_name = None
+        critic_sources, self.critic_model_name = resolve_model_sources(
+            kind="critics",
+            model=None,
+            models=critics,
+            expected_count=1,
+            expected_label="1 critic",
+        )
+        critic_source = critic_sources[0]
+        if isinstance(critic_source, CausalLMWithValueHead):
+            self.critic_model = critic_source
+        elif isinstance(critic_source, PreTrainedModel):
+            base = critic_source
+            self.critic_model = CausalLMWithValueHead(
+                base_model=base,
+                attach_value_head=True,
+                value_head_hidden_dim=self.model_config.get(
+                    "critic_value_head_hidden_dim"
+                ),
+            )
+        else:
+            model_kwargs = self._filter_model_kwargs(
+                self.model_config.get("critic_model_kwargs", {})
+            )
+            try:
+                base = AutoModelForCausalLM.from_pretrained(
+                    critic_source, **model_kwargs
+                )
+            except (OSError, ValueError) as exc:
+                raise ValueError(
+                    f"Failed to load critic model from identifier '{critic_source}'."
+                ) from exc
+            self.critic_model = CausalLMWithValueHead(
+                base_model=base,
+                attach_value_head=True,
+                value_head_hidden_dim=self.model_config.get(
+                    "critic_value_head_hidden_dim"
+                ),
+            )
+        self.critic_model.to(self.device)
+
+        apply_tokenizer_specials(
+            self.tokenizer, [*self.agent_models, self.critic_model]
+        )
+        self.formatters = build_formatters(formatters, self.args.num_agents)
+        try:
+            self._reward_signature = inspect.signature(reward_func)
+        except (TypeError, ValueError):
+            self._reward_signature = inspect.Signature()
+
         self.agent_optimizers = []
         for agent_model in self.agent_models:
             optimizer = torch.optim.AdamW(
@@ -210,7 +235,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             lr=self.args.critic_learning_rate,
         )
 
-    def _init_state(self, wandb_config: Optional[Dict[str, Any]]) -> None:
         self.rollout_buffers = [[] for _ in range(self.args.num_agents)]
         self.wandb_config = wandb_config
         self.wandb_initialized = False
@@ -218,8 +242,6 @@ class MAACTrainer(ActorCriticTrainerBase):
         self._last_train_log_step = -1
         if wandb_config is not None:
             self._init_wandb()
-
-    def _configure_verbose(self) -> None:
         self.verbose = True
         if isinstance(self.wandb_config, dict):
             sections = self.wandb_config.get("config_sections", {})
@@ -227,66 +249,6 @@ class MAACTrainer(ActorCriticTrainerBase):
                 out = sections.get("output", {})
                 if isinstance(out, dict) and "verbose" in out:
                     self.verbose = bool(out.get("verbose"))
-
-    def _load_agent_model(
-        self,
-        model: Optional[Union[str, PreTrainedModel, CausalLMWithValueHead]],
-    ) -> CausalLMWithValueHead:
-        if model is None:
-            raise ValueError("model must be provided for MAAC.")
-        if isinstance(model, CausalLMWithValueHead):
-            return model
-        model_kwargs = self._filter_model_kwargs(
-            self.model_config.get("model_kwargs", {})
-        )
-        if isinstance(model, PreTrainedModel):
-            base = model
-        else:
-            try:
-                base = AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
-            except (OSError, ValueError) as exc:
-                raise ValueError(
-                    f"Failed to load actor model from identifier '{model}'."
-                ) from exc
-        return CausalLMWithValueHead(
-            base_model=base, attach_value_head=False, value_head_hidden_dim=None
-        )
-
-    def _load_critic_model(
-        self, model: Union[str, PreTrainedModel, CausalLMWithValueHead]
-    ) -> CausalLMWithValueHead:
-        if isinstance(model, CausalLMWithValueHead):
-            return model
-        model_kwargs = self._filter_model_kwargs(
-            self.model_config.get("critic_model_kwargs", {})
-        )
-        if isinstance(model, PreTrainedModel):
-            base = model
-        else:
-            try:
-                base = AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
-            except (OSError, ValueError) as exc:
-                raise ValueError(
-                    f"Failed to load critic model from identifier '{model}'."
-                ) from exc
-        return CausalLMWithValueHead(
-            base_model=base,
-            attach_value_head=True,
-            value_head_hidden_dim=self.model_config.get("critic_value_head_hidden_dim"),
-        )
-
-    def _configure_tokenizer_specials(self) -> None:
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-        if self.tokenizer.pad_token_id is None:
-            raise ValueError("Tokenizer must expose pad_token_id.")
-        pad_id = self.tokenizer.pad_token_id
-        eos_id = self.tokenizer.eos_token_id or pad_id
-        for agent_model in self.agent_models:
-            agent_model.model.config.pad_token_id = pad_id
-            agent_model.model.config.eos_token_id = eos_id
-        self.critic_model.model.config.pad_token_id = pad_id
-        self.critic_model.model.config.eos_token_id = eos_id
 
     def _init_wandb(self) -> None:
         if self.wandb_config is None:
@@ -380,26 +342,6 @@ class MAACTrainer(ActorCriticTrainerBase):
         wandb.init(**init_kwargs)
         self.wandb_initialized = True
 
-    def get_train_dataloader(self) -> DataLoader:
-        if self.train_dataset is None:
-            raise ValueError("Training requires a dataset.")
-        return DataLoader(
-            self.train_dataset,
-            batch_size=1,
-            shuffle=False,
-            collate_fn=lambda batch: batch,
-        )
-
-    def get_eval_dataloader(self) -> Optional[DataLoader]:
-        if self.eval_dataset is None:
-            return None
-        return DataLoader(
-            self.eval_dataset,
-            batch_size=self.args.eval_batch_size,
-            shuffle=False,
-            collate_fn=lambda batch: batch,
-        )
-
     def _build_critic_input(
         self, prompts: Sequence[str], action_completions: Optional[Sequence[str]] = None
     ) -> str:
@@ -431,92 +373,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             "prompt_len": prompt_len,
             "value": value,
         }
-
-    def _infer_reward_signature(self, reward_func: Callable) -> inspect.Signature:
-        try:
-            return inspect.signature(reward_func)
-        except (TypeError, ValueError):
-            return inspect.Signature()
-
-    # Rollout collection
-    def _call_reward_func(
-        self,
-        prompts: Sequence[str],
-        agent_completions: Sequence[Sequence[str]],
-        batch_items: Optional[Sequence[Dict[str, Any]]] = None,
-    ) -> List[float]:
-        signature = self._reward_signature or inspect.signature(self.reward_func)
-        params = signature.parameters
-        num_agents = self.args.num_agents
-        param_list = list(params.values())
-        positional_params = [
-            p
-            for p in param_list
-            if p.kind
-            in (
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            )
-        ]
-        param_count = len(positional_params)
-        has_varargs = any(
-            p.kind == inspect.Parameter.VAR_POSITIONAL for p in param_list
-        )
-        has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in param_list)
-        has_batch_items = "batch_items" in params
-        has_prompts_kw = "prompts" in params
-
-        def _call_with_args():
-            kwargs: Dict[str, Any] = {}
-            if batch_items is not None and (has_batch_items or has_varkw):
-                kwargs["batch_items"] = batch_items
-
-            if has_varargs:
-                args = list(agent_completions)
-                used_prompts = False
-            else:
-                if num_agents == 1:
-                    if param_count == 1:
-                        args = [agent_completions[0]]
-                        used_prompts = False
-                    else:
-                        args = [prompts, agent_completions[0]]
-                        used_prompts = True
-                else:
-                    if param_count == num_agents:
-                        args = list(agent_completions)
-                        used_prompts = False
-                    elif param_count == num_agents + 1:
-                        args = [prompts] + list(agent_completions)
-                        used_prompts = True
-                    elif param_count == 1:
-                        args = [agent_completions]
-                        used_prompts = False
-                    else:
-                        args = list(agent_completions)
-                        used_prompts = False
-
-            if not used_prompts and (has_prompts_kw or has_varkw):
-                kwargs["prompts"] = prompts
-
-            return self.reward_func(*args, **kwargs)  # type: ignore[arg-type]
-
-        try:
-            raw = _call_with_args()
-        except TypeError as exc:
-            try:
-                raw = self.reward_func(*agent_completions)  # type: ignore[arg-type]
-            except TypeError:
-                raise exc
-
-        if isinstance(raw, torch.Tensor):
-            rewards = raw.detach().cpu().tolist()
-        elif isinstance(raw, (list, tuple)):
-            rewards = list(raw)
-        else:
-            rewards = [float(raw)]
-
-        return [float(self.reward_processor(r)) for r in rewards]
 
     def _generate(self, agent_model, prompt: str) -> Dict[str, Any]:
         encoded_prompt = self._encode_prompt(prompt)
@@ -591,8 +447,19 @@ class MAACTrainer(ActorCriticTrainerBase):
                 }
             )
 
-        rewards = self._call_reward_func(
-            prompts, completions_per_agent, batch_items=[item]
+        rewards = call_reward_function(
+            self.reward_func,
+            prompts,
+            completions_per_agent,
+            num_agents=self.args.num_agents,
+            batch_items=[item],
+            signature=self._reward_signature,
+        )
+        rewards = normalize_reward_lengths(
+            [float(self.reward_processor(r)) for r in rewards],
+            num_agents=self.args.num_agents,
+            num_generations=num_ret,
+            algorithm="MAAC",
         )
         num_agents = self.args.num_agents
         if len(rewards) == 1:
@@ -755,8 +622,19 @@ class MAACTrainer(ActorCriticTrainerBase):
                 )
                 prompt_history[agent_idx].append(prompt)
 
-            rewards = self._call_reward_func(
-                turn_prompts, completions_per_agent, batch_items=[item]
+            rewards = call_reward_function(
+                self.reward_func,
+                turn_prompts,
+                completions_per_agent,
+                num_agents=self.args.num_agents,
+                batch_items=[item],
+                signature=self._reward_signature,
+            )
+            rewards = normalize_reward_lengths(
+                [float(self.reward_processor(r)) for r in rewards],
+                num_agents=self.args.num_agents,
+                num_generations=1,
+                algorithm="MAAC",
             )
             rewards_matrix = self._expand_rewards(rewards, num_ret=1)
             critic_input = self._build_critic_input(
