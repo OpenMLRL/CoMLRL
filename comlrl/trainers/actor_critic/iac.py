@@ -1195,6 +1195,3 @@ class IACTrainer(ActorCriticTrainerBase):
 
         if self.tokenizer is not None:
             self.tokenizer.save_pretrained(output_dir)
-
-    def _include_value_target_fallback(self) -> bool:
-        return False

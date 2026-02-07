@@ -208,17 +208,8 @@ class ActorCriticTrainerBase:
             ).float()
             if target_vals.numel() > 0 and torch.isfinite(target_vals).all():
                 metrics["value_target_mean"] = float(target_vals.mean().item())
-        elif (
-            self._include_value_target_fallback()
-            and returns.numel() > 0
-            and torch.isfinite(returns).all()
-        ):
-            metrics["value_target_mean"] = float(returns.mean().item())
 
         return metrics
-
-    def _include_value_target_fallback(self) -> bool:
-        return True
 
     def _iter_dataloader(self, dataloader, epoch: int, total_epochs: int):
         if getattr(self, "verbose", True):

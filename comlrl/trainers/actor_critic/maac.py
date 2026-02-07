@@ -1058,9 +1058,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             to_print = epoch_log if epoch_log else summary
             print(f"Epoch {epoch + 1}/{total_epochs} metrics: {to_print}")
 
-    def _include_value_target_fallback(self) -> bool:
-        return False
-
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
         for agent_idx, actor in enumerate(self.agent_models):
