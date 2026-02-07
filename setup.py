@@ -14,7 +14,6 @@ core_requires = [
     "wandb>=0.15.0",
 ]
 
-# Extra dependency groups are currently unused.
 extras_require = {}
 
 short_description = (

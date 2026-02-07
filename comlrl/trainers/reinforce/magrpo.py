@@ -455,10 +455,8 @@ class MAGRPOTrainer:
                 if seen >= num_eval_samples:
                     break
 
-        # Prepare extra metrics to pass into logging after computing returns/components
         extra_eval_metrics: Dict[str, Any] = {}
 
-        # Compute eval returns per turn and add to extra metrics
         n_turns = self.args.num_turns
         if n_turns > 0 and eval_turn_rewards and eval_turn_rewards[0]:
             n_samp = len(eval_turn_rewards[0])
@@ -1058,8 +1056,6 @@ class MAGRPOTrainer:
                     format_func(item, external_prompts=ext)
                     for item, ext in zip(batch_items, external_list)
                 ]
-        # batch_size is always 1 due to enforced constraint
-
         # Ensure tokenizer exists
         if self.tokenizer is None:
             raise ValueError("Tokenizer is required for generating completions")
@@ -1277,8 +1273,6 @@ class MAGRPOTrainer:
         # Initialize list to store rewards
         all_rewards = []
 
-        # Single prompt case (batch_size=1 enforced)
-        # Ensure correct structure for all agents
         for i in range(self.num_agents):
             if not isinstance(completions_list[i], list):
                 completions_list[i] = (
@@ -1287,7 +1281,6 @@ class MAGRPOTrainer:
                     else completions_list[i]
                 )
 
-        # Find minimum number of completions across all agents
         min_completions = min(len(completions_list[i]) for i in range(self.num_agents))
         try:
             reward_signature = inspect.signature(self.reward_func)
@@ -1295,7 +1288,6 @@ class MAGRPOTrainer:
             reward_signature = None
 
         for completion_idx in range(min_completions):
-            # Extract one completion from each agent
             agent_completions = [
                 completions_list[agent_idx][completion_idx]
                 for agent_idx in range(self.num_agents)
@@ -1313,7 +1305,6 @@ class MAGRPOTrainer:
 
             processed_rewards = [self.reward_processor(r) for r in func_rewards]
 
-            # Take the processed reward for the chosen completion
             all_rewards.append(processed_rewards[0])
 
         return all_rewards
