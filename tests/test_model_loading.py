@@ -10,8 +10,8 @@ from comlrl.trainers.actor_critic.maac import MAACConfig
 from comlrl.trainers.reinforce import MAGRPOTrainer
 from comlrl.trainers.reinforce.magrpo import MAGRPOConfig
 
-MODEL_NAME_05 = os.getenv("COMLRL_TEST_MODEL_NAME", "Qwen/Qwen2.5-0.5B-Instruct")
-MODEL_NAME_06 = os.getenv("COMLRL_TEST_MODEL_NAME_ALT", "Qwen/Qwen3-0.6B-Instruct")
+MODEL_NAME_05 = os.getenv("COMLRL_TEST_MODEL_NAME", "Qwen/Qwen2.5-0.5B")
+MODEL_NAME_06 = os.getenv("COMLRL_TEST_MODEL_NAME_ALT", "Qwen/Qwen3-0.6B")
 
 
 def _reward_func(*_args, **_kwargs):
