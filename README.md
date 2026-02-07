@@ -122,7 +122,7 @@ Please cite the following papers if you find this library useful in your researc
 
 ```bibtex
 @inproceedings{liu2025llmcollabmarl,
-  title     = {{LLM} Collaboration With Multi-Agent Reinforcement Learning},
+  title     = {LLM Collaboration With Multi-Agent Reinforcement Learning},
   author    = {Liu, Shuo and Liang, Zeyu and Lyu, Xueguang and Amato, Christopher},
   booktitle = {Proceedings of the 40th Annual AAAI Conference on Artificial Intelligence},
   year      = {2026}
