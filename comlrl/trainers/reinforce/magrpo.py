@@ -305,14 +305,10 @@ class MAGRPOTrainer:
             for formatter in formatters:
                 sig = inspect.signature(formatter)
                 if "external_prompts" in sig.parameters:
-
-                    def make_wrapper(f):
-                        def wrapped(x, external_prompts=None):
-                            return f(x, external_prompts=external_prompts)
-
-                        return wrapped
-
-                    wrapped_formatters.append(make_wrapper(formatter))
+                    wrapped = lambda x, external_prompts=None, f=formatter: f(
+                        x, external_prompts=external_prompts
+                    )
+                    wrapped_formatters.append(wrapped)
                 else:
                     # Wrap to accept but ignore parameter
                     wrapped = lambda x, external_prompts=None, f=formatter: f(x)

@@ -397,10 +397,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             collate_fn=lambda batch: batch,
         )
 
-    def _build_joint_prompt(self, prompts: Sequence[str]) -> str:
-        pieces = [f"[Agent {idx}] {p}" for idx, p in enumerate(prompts)]
-        return "\n\n".join(pieces)
-
     def _build_critic_input(
         self, prompts: Sequence[str], action_completions: Optional[Sequence[str]] = None
     ) -> str:
@@ -409,7 +405,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         - critic_type='v': V(s) conditioned on joint prompt only.
         - critic_type='q': Q(s,a) conditioned on joint prompt + joint action text.
         """
-        base = self._build_joint_prompt(prompts)
+        base = "\n\n".join([f"[Agent {idx}] {p}" for idx, p in enumerate(prompts)])
         if (self.args.critic_type or "v").lower() == "v":
             return base
 
