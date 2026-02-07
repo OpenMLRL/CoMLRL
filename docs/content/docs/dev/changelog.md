@@ -5,6 +5,11 @@ weight: 3
 
 ---
 
+## Version 1.3.5
+
+- Add unit tests for hyperparameter constraints.
+- Clean legacy interfaces.
+
 ## Version 1.3.4
 
 - Fix the bug of loading heterogeneous models and reform the loading logics.
