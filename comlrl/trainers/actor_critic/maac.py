@@ -123,8 +123,6 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.model_config = model_config or {}
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if not torch.cuda.is_available():
-            print("Warning: CUDA not available. Training will run on CPU.")
 
         if agents is not None and tokenizer is None:
             raise ValueError("Tokenizer must be provided when agents are passed.")

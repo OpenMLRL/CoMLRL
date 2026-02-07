@@ -153,9 +153,6 @@ class IACTrainer(ActorCriticTrainerBase):
         self.critic_type = (self.args.critic_type or "v").lower()
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if not torch.cuda.is_available():
-            # CPU fallback is allowed for experimentation but will be slow.
-            print("Warning: CUDA not available. Training will run on CPU.")
 
         self.agent_models: List[CausalLMWithValueHead] = []
         self.critic_models: List[Optional[CausalLMWithValueHead]] = []
@@ -191,7 +188,6 @@ class IACTrainer(ActorCriticTrainerBase):
             models=agents,
             expected_count=self.args.num_agents,
         )
-
         for actor_source in actor_sources:
             agent_model = self._load_agent_model(actor_source)
             agent_model.to(self.device)

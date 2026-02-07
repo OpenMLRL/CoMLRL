@@ -134,11 +134,7 @@ class MAGRPOTrainer:
         eval_aggregator: Optional[Callable] = None,
         args: Optional[MAGRPOConfig] = None,
     ):
-        # Check for GPU availability
-        if not torch.cuda.is_available():
-            raise RuntimeError(
-                "GPU not found. MAGRPOTrainer requires GPU for training."
-            )
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         if model is None and agents is None:
             raise ValueError("Either model or agents must be provided")
@@ -704,7 +700,7 @@ class MAGRPOTrainer:
         if self.wandb_config is not None and not self.wandb_initialized:
             self._init_wandb()
 
-        device = torch.device("cuda")
+        device = self.device
         for agent in self.agents:
             agent.to(device)
             agent.train()
