@@ -136,8 +136,6 @@ class IACTrainer(ActorCriticTrainerBase):
             raise ValueError("A callable reward_func must be provided.")
         if model is None and agents is None:
             raise ValueError("Either model or agents must be provided.")
-        if model is not None and agents is not None:
-            raise ValueError("Cannot provide both model and agents parameters.")
 
         self.args = args if args is not None else IACConfig()
         if not self.args.use_separate_critic and critics is not None:

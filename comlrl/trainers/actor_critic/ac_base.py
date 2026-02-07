@@ -39,7 +39,16 @@ class ActorCriticTrainerBase:
         expected_label: Optional[str] = None,
     ) -> Tuple[List[Any], Optional[str]]:
         if model is not None and models is not None:
-            raise ValueError(f"Cannot provide both model and {kind}.")
+            is_name_list = (
+                isinstance(models, Sequence)
+                and not isinstance(models, (str, bytes))
+                and all(isinstance(src, str) for src in models)
+            )
+            if not is_name_list or len(models) != expected_count:
+                label = expected_label or f"num_agents ({expected_count})"
+                raise ValueError(
+                    f"Cannot provide both model and {kind} unless {kind} is a list of {label} model names."
+                )
         if model is None and models is None:
             raise ValueError(f"Either model or {kind} must be provided.")
         if expected_count < 1:

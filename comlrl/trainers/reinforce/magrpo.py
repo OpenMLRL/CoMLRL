@@ -3,7 +3,7 @@ import os
 import random
 from dataclasses import dataclass
 import itertools
-from typing import Any, Callable, Dict, List, Optional, Union, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Union, Tuple, Type, Sequence
 
 import numpy as np
 import torch
@@ -138,8 +138,17 @@ class MAGRPOTrainer:
 
         if model is None and agents is None:
             raise ValueError("Either model or agents must be provided")
+        agents_is_name_list = (
+            agents is not None
+            and isinstance(agents, Sequence)
+            and not isinstance(agents, (str, bytes))
+            and all(isinstance(src, str) for src in agents)
+        )
         if model is not None and agents is not None:
-            raise ValueError("Cannot provide both model and agents parameters")
+            if not agents_is_name_list or len(agents) != num_agents:
+                raise ValueError(
+                    "Cannot provide both model and agents unless agents is a list of num_agents model names."
+                )
 
         self.args = args if args is not None else self.default_config_cls()
         self.env_step = 0
@@ -151,37 +160,51 @@ class MAGRPOTrainer:
         self._setup_formatters(formatters, num_agents)
         self._setup_reward_function(reward_func, reward_processor)
 
-        if agents is not None:
-            self.agents = agents
-            self.num_agents = len(agents)
-            if (
-                hasattr(agents[0], "base_model")
-                and hasattr(agents[0].base_model, "config")
-                and hasattr(agents[0].base_model.config, "model_type")
-            ):
-                self.model_name = agents[0].base_model.config.model_type
-            elif hasattr(agents[0], "config") and hasattr(
-                agents[0].config, "_name_or_path"
-            ):
-                self.model_name = agents[0].config._name_or_path
-            else:
-                self.model_name = agents[0].__class__.__name__
+        self.model_config = model_config if model_config else {}
+        model_kwargs = {}
+        torch_dtype = None
+        if isinstance(self.model_config, dict):
+            torch_dtype = self.model_config.get("torch_dtype") or self.model_config.get(
+                "dtype"
+            )
+        if torch_dtype is not None:
+            model_kwargs["torch_dtype"] = torch_dtype
 
-            self.model_config = model_config if model_config else {}
+        if agents is not None:
+            if agents_is_name_list:
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+
+                self.agents = [
+                    AutoModelForCausalLM.from_pretrained(name, **model_kwargs)
+                    for name in agents
+                ]
+                self.num_agents = len(agents)
+                self.model_name = agents[0]
+                if tokenizer is None:
+                    self.tokenizer = AutoTokenizer.from_pretrained(agents[0])
+                    special_tokens = self.model_config.get("special_tokens", {})
+                    if special_tokens:
+                        self.tokenizer.add_special_tokens(special_tokens)
+            else:
+                self.agents = agents
+                self.num_agents = len(agents)
+                if (
+                    hasattr(agents[0], "base_model")
+                    and hasattr(agents[0].base_model, "config")
+                    and hasattr(agents[0].base_model.config, "model_type")
+                ):
+                    self.model_name = agents[0].base_model.config.model_type
+                elif hasattr(agents[0], "config") and hasattr(
+                    agents[0].config, "_name_or_path"
+                ):
+                    self.model_name = agents[0].config._name_or_path
+                else:
+                    self.model_name = agents[0].__class__.__name__
         else:
-            self.model_config = model_config if model_config else {}
             self.num_agents = num_agents
             if isinstance(model, str):
                 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-                model_kwargs = {}
-                torch_dtype = None
-                if isinstance(self.model_config, dict):
-                    torch_dtype = self.model_config.get(
-                        "torch_dtype"
-                    ) or self.model_config.get("dtype")
-                if torch_dtype is not None:
-                    model_kwargs["torch_dtype"] = torch_dtype
                 self.agents = [
                     AutoModelForCausalLM.from_pretrained(model, **model_kwargs)
                     for _ in range(num_agents)
