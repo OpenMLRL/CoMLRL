@@ -55,7 +55,6 @@ def extract_print_statements(code):
     for line in lines:
         line = line.strip()
         if line.startswith("print(") and "#" in line:
-            # Split by comment
             code_part, comment_part = line.split("#", 1)
 
             print_stmt = code_part.strip()
