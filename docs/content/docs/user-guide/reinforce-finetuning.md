@@ -4,13 +4,13 @@ weight: 2
 math: true
 ---
 
-REINFORCE optimizes the policy directly using sampled returns. An action-independent baseline can be included to reduce variance for REINFORCE methods. REINFORCE methods have been widely used to fine-tune LLMs because of their simplicity and effectiveness, e.g., [GRPO](https://arxiv.org/pdf/2402.03300), [Dr. GRPO](https://arxiv.org/abs/2503.20783), [RLOO](https://openreview.net/forum?id=r1lgTGL5DE), [ReMax](https://arxiv.org/abs/2310.1050), [TreeRPO](https://arxiv.org/abs/2506.05183), and [REINFORCE++](https://arxiv.org/abs/2501.03262).
+REINFORCE is a class of policy gradient methods that optimize the policy directly using sampled returns.
+It has been widely used to fine-tune LLMs because of its simplicity and efficiency, e.g., [GRPO](https://arxiv.org/pdf/2402.03300), [Dr. GRPO](https://arxiv.org/abs/2503.20783), [RLOO](https://openreview.net/forum?id=r1lgTGL5DE), [ReMax](https://arxiv.org/abs/2310.1050), [TreeRPO](https://arxiv.org/abs/2506.05183), and [REINFORCE++](https://arxiv.org/abs/2501.03262).
+REINFORCE can be extended to multi-agent settings, where multiple LLM agents response synchronously and their joint responses form a solution at each turn to receive a shared reward at each turn.
 
 ## MAREINFORCE
 
-In the LLM collaboration setting, REINFORCE can be extended to optimize each agent's policy with joint returns from multiple agents.
-
-- **MAREINFORCE**: The naive Multi‑Agent REINFORCE without a baseline can be expressed by:
+REINFORCE methods do not use a critic for value estimation, thus the return could The naive Multi‑Agent REINFORCE an be expressed by:
 
 {{< katex display=true >}}
 J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} \sim \mathbf{\pi}_{\mathbf{\theta}}}
@@ -22,6 +22,9 @@ These classes are derived from `comlrl.trainers.reinforce.MAGRPOTrainer`. Interf
 {{% /hint %}}
 
 ## MAGRPO
+
+
+An action-independent baseline can be added to reduce variance for REINFORCE methods.
 
 Multi‑Agent Group‑Relative Policy Optimization optimizes each agent with a group‑relative baseline computed among sibling joint actions at the same node.
 
