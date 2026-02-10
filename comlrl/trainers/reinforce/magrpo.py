@@ -1061,14 +1061,12 @@ class MAGRPOTrainer:
                     format_func(item, external_prompts=ext)
                     for item, ext in zip(batch_items, external_list)
                 ]
-        # Ensure tokenizer exists
         if self.tokenizer is None:
             raise ValueError("Tokenizer is required for generating completions")
         tokenizer = self.tokenizers[agent_idx]
         apply_tokenizer_specials(tokenizer, [agent])
         pad_id = tokenizer.pad_token_id
 
-        # Tokenize prompts
         prompt_encodings = tokenizer(
             prompts, padding=True, truncation=True, return_tensors="pt"
         ).to(device)
@@ -1076,25 +1074,21 @@ class MAGRPOTrainer:
         prompt_input_ids = prompt_encodings.input_ids
         prompt_attention_mask = prompt_encodings.attention_mask
 
-        # Store original model state and gradient settings
         training_mode = agent.training
         original_requires_grad = {}
 
-        # Save original requires_grad states
         for name, param in agent.named_parameters():
             original_requires_grad[name] = param.requires_grad
-            param.requires_grad = False  # Temporarily disable gradients for generation
+            param.requires_grad = False
 
-        agent.eval()  # Set to eval mode for generation
+        agent.eval()
 
-        # Generate completions without gradients
         generation_output = None
         try:
-            # Use max_new_tokens instead of max_length
             generation_kwargs = {
                 "input_ids": prompt_input_ids,
                 "attention_mask": prompt_attention_mask,
-                "max_new_tokens": max_new_tokens,  # Changed from max_length
+                "max_new_tokens": max_new_tokens,
                 "output_scores": True,
                 "return_dict_in_generate": True,
             }
@@ -1112,52 +1106,38 @@ class MAGRPOTrainer:
             if top_k is not None:
                 generation_kwargs["top_k"] = top_k
 
-            # Add any additional user-provided kwargs (these override model defaults)
             kwargs.pop("do_sample", None)
             generation_kwargs.update(kwargs)
             generation_output = agent.generate(**generation_kwargs)
         except Exception as e:
             raise ValueError(f"Generation failed: {str(e)}")
 
-        # Restore original model state and gradients
         agent.train(training_mode)
         for name, param in agent.named_parameters():
             if name in original_requires_grad:
                 param.requires_grad = original_requires_grad[name]
 
-        # Extract completion tokens (excluding prompt tokens)
         completion_input_ids = generation_output.sequences
 
-        # For single prompt, find its actual length in tokens
-        # to properly extract just the completion part
         prompt_len = prompt_input_ids[0].shape[0]
-        # Find where padding token starts if any
         pad_positions = (prompt_input_ids[0] == tokenizer.pad_token_id).nonzero()
         if pad_positions.shape[0] > 0:
-            prompt_len = pad_positions[
-                0
-            ].item()  # prompt ends at index prompt_len, this is the index of the first pad token
+            prompt_len = pad_positions[0].item()
 
-        # Extract completion text for single prompt
         completions = []
         completion_tokens_list = []
 
-        # Calculate total sequence count
         total_sequences = completion_input_ids.shape[0]
 
-        # Process single prompt and its multiple completions
         batch_completions = []
         batch_completion_tokens = []
 
-        # Get all sequences for this prompt (start_idx=0, end_idx=num_return_sequences)
         end_idx = min(num_return_sequences, total_sequences)
 
         for s in range(end_idx):
-            # Get only the completion part (exclude the prompt tokens)
             completion_tokens = completion_input_ids[s, prompt_len:]
             batch_completion_tokens.append(completion_tokens)
 
-            # Decode to text
             completion_text = tokenizer.decode(
                 completion_tokens, skip_special_tokens=True
             )
@@ -1166,7 +1146,6 @@ class MAGRPOTrainer:
         completions.append(batch_completions)
         completion_tokens_list.append(batch_completion_tokens)
 
-        # Create attention masks for completions (single batch)
         completion_attention_masks = []
         batch_masks = []
         for tokens in completion_tokens_list[0]:  # Only one batch
@@ -1174,7 +1153,6 @@ class MAGRPOTrainer:
             batch_masks.append(mask)
         completion_attention_masks.append(batch_masks)
 
-        # Extract logit for computing loss
         logits = (
             generation_output.scores if hasattr(generation_output, "scores") else []
         )
