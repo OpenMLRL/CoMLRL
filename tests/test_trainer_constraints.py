@@ -161,6 +161,30 @@ def test_iac_valid_shared_heads(dummy_tokenizer, tiny_model_a, tiny_model_b):
     assert all(c is None for c in trainer.critic_models)
 
 
+def test_iac_accepts_tokenizer_list(dummy_tokenizer, tiny_model_a, tiny_model_b):
+    args = IACConfig(num_agents=2, use_separate_critic=False, num_turns=1)
+    trainer = IACTrainer(
+        agents=[tiny_model_a, tiny_model_b],
+        tokenizer=[dummy_tokenizer, dummy_tokenizer],
+        reward_func=_reward_func,
+        args=args,
+    )
+    assert len(trainer.tokenizers) == 2
+
+
+def test_iac_rejects_tokenizer_len_mismatch(
+    dummy_tokenizer, tiny_model_a, tiny_model_b
+):
+    args = IACConfig(num_agents=2, use_separate_critic=False, num_turns=1)
+    with pytest.raises(ValueError, match="tokenizers length"):
+        IACTrainer(
+            agents=[tiny_model_a, tiny_model_b],
+            tokenizer=[dummy_tokenizer],
+            reward_func=_reward_func,
+            args=args,
+        )
+
+
 def test_iac_valid_separate_critics(dummy_tokenizer, tiny_model_a, tiny_model_b):
     args = IACConfig(num_agents=2, use_separate_critic=True, num_turns=1)
     trainer = IACTrainer(
@@ -278,6 +302,17 @@ def test_magrpo_multiturn_with_transition(tiny_model_a, tiny_model_b):
         args=args,
     )
     assert trainer.num_agents == 2
+
+
+def test_magrpo_accepts_tokenizer_list(dummy_tokenizer, tiny_model_a, tiny_model_b):
+    args = MAGRPOConfig(num_agents=2, num_turns=1, num_generations=2)
+    trainer = MAGRPOTrainer(
+        agents=[tiny_model_a, tiny_model_b],
+        tokenizer=[dummy_tokenizer, dummy_tokenizer],
+        reward_func=_reward_func,
+        args=args,
+    )
+    assert len(trainer.tokenizers) == 2
 
 
 def test_magrpo_allows_model_and_agent_names(
