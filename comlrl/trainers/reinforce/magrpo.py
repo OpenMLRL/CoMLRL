@@ -18,8 +18,7 @@ from comlrl.utils.model_loading import infer_model_name, resolve_model_sources
 from comlrl.utils.reward_utils import call_reward_function
 from comlrl.utils.tokenizer_utils import (
     apply_tokenizer_specials,
-    ensure_pad_token,
-    ensure_tokenizer,
+    resolve_tokenizers,
 )
 
 
@@ -128,7 +127,9 @@ class MAGRPOTrainer:
         model: Optional[Union[str, PreTrainedModel]] = None,
         agents: Optional[List[PreTrainedModel]] = None,
         num_agents: int = 2,
-        tokenizer: Optional[PreTrainedTokenizerBase] = None,
+        tokenizer: Optional[
+            Union[PreTrainedTokenizerBase, Sequence[PreTrainedTokenizerBase]]
+        ] = None,
         model_config: Optional[Dict[str, Any]] = None,
         train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
         eval_dataset: Optional[Union[Dataset, IterableDataset]] = None,
@@ -201,13 +202,17 @@ class MAGRPOTrainer:
         else:
             self.agents = list(actor_sources)
 
-        if tokenizer is not None:
-            self.tokenizer = ensure_pad_token(tokenizer)
-        elif actor_sources and all(isinstance(src, str) for src in actor_sources):
-            self.tokenizer = ensure_tokenizer(actor_sources[0], None)
-            special_tokens = self.model_config.get("special_tokens", {})
-            if special_tokens:
-                self.tokenizer.add_special_tokens(special_tokens)
+        tokenizers = resolve_tokenizers(model, tokenizer, actor_sources)
+        if isinstance(tokenizers, list):
+            self.tokenizers = tokenizers
+            self.tokenizer = tokenizers[0] if tokenizers else None
+        else:
+            self.tokenizers = [tokenizers] * self.num_agents
+            self.tokenizer = tokenizers
+        special_tokens = self.model_config.get("special_tokens", {})
+        if special_tokens:
+            for tok in self.tokenizers:
+                tok.add_special_tokens(special_tokens)
 
         # Allow single-agent as a special case (GRPO)
         if self.num_agents < 1:
@@ -1059,11 +1064,12 @@ class MAGRPOTrainer:
         # Ensure tokenizer exists
         if self.tokenizer is None:
             raise ValueError("Tokenizer is required for generating completions")
-        apply_tokenizer_specials(self.tokenizer, [agent])
-        pad_id = self.tokenizer.pad_token_id
+        tokenizer = self.tokenizers[agent_idx]
+        apply_tokenizer_specials(tokenizer, [agent])
+        pad_id = tokenizer.pad_token_id
 
         # Tokenize prompts
-        prompt_encodings = self.tokenizer(
+        prompt_encodings = tokenizer(
             prompts, padding=True, truncation=True, return_tensors="pt"
         ).to(device)
 
@@ -1126,7 +1132,7 @@ class MAGRPOTrainer:
         # to properly extract just the completion part
         prompt_len = prompt_input_ids[0].shape[0]
         # Find where padding token starts if any
-        pad_positions = (prompt_input_ids[0] == self.tokenizer.pad_token_id).nonzero()
+        pad_positions = (prompt_input_ids[0] == tokenizer.pad_token_id).nonzero()
         if pad_positions.shape[0] > 0:
             prompt_len = pad_positions[
                 0
@@ -1152,7 +1158,7 @@ class MAGRPOTrainer:
             batch_completion_tokens.append(completion_tokens)
 
             # Decode to text
-            completion_text = self.tokenizer.decode(
+            completion_text = tokenizer.decode(
                 completion_tokens, skip_special_tokens=True
             )
             batch_completions.append(completion_text)
@@ -1517,8 +1523,8 @@ class MAGRPOTrainer:
 
             agent.save_pretrained(agent_dir)
 
-            if self.tokenizer:
-                self.tokenizer.save_pretrained(agent_dir)
+            if self.tokenizers:
+                self.tokenizers[agent_idx].save_pretrained(agent_dir)
 
         # Log final model saving to wandb
         if self.wandb_initialized and wandb.run is not None:

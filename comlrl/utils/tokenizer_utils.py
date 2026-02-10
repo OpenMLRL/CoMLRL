@@ -1,4 +1,4 @@
-from typing import Optional, Sequence, Union
+from typing import Optional, Sequence, Union, List
 
 from transformers import AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
 
@@ -24,16 +24,51 @@ def ensure_tokenizer(
     return ensure_pad_token(tokenizer)
 
 
+def _is_tokenizer_sequence(tokenizer: object) -> bool:
+    return isinstance(tokenizer, Sequence) and not isinstance(
+        tokenizer, (str, bytes, PreTrainedTokenizerBase)
+    )
+
+
+def resolve_tokenizers(
+    model: Optional[Union[str, PreTrainedModel]],
+    tokenizer: Optional[
+        Union[PreTrainedTokenizerBase, Sequence[PreTrainedTokenizerBase]]
+    ],
+    agents: Optional[Sequence[object]],
+) -> Union[PreTrainedTokenizerBase, List[PreTrainedTokenizerBase]]:
+    if agents is None:
+        if tokenizer is not None and not _is_tokenizer_sequence(tokenizer):
+            return ensure_pad_token(tokenizer)  # allow custom tokenizers
+        return ensure_tokenizer(model, None)
+    if tokenizer is None:
+        if (
+            isinstance(agents, Sequence)
+            and not isinstance(agents, (str, bytes))
+            and all(isinstance(src, str) for src in agents)
+        ):
+            tokenizers = [
+                ensure_pad_token(AutoTokenizer.from_pretrained(name)) for name in agents
+            ]
+            return tokenizers
+        raise ValueError("Tokenizer(s) must be provided when agents are model objects.")
+    if _is_tokenizer_sequence(tokenizer):
+        tokenizers = list(tokenizer)
+        if len(tokenizers) != len(agents):
+            raise ValueError("tokenizers length must match agents.")
+        return [ensure_pad_token(tok) for tok in tokenizers]
+    return ensure_pad_token(tokenizer)  # shared tokenizer for all agents
+
+
 def resolve_tokenizer(
     model: Optional[Union[str, PreTrainedModel]],
     tokenizer: Optional[PreTrainedTokenizerBase],
     agents: Optional[Sequence[object]],
 ) -> PreTrainedTokenizerBase:
-    if agents is not None and tokenizer is None:
-        raise ValueError("Tokenizer must be provided when agents are passed.")
-    if agents is None:
-        return ensure_tokenizer(model, tokenizer)
-    return ensure_pad_token(tokenizer)
+    tokenizers = resolve_tokenizers(model, tokenizer, agents)
+    if isinstance(tokenizers, list):
+        return ensure_pad_token(tokenizers[0])
+    return tokenizers
 
 
 def apply_tokenizer_specials(

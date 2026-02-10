@@ -292,10 +292,31 @@ def test_magrpo_allows_model_and_agent_names(
     args = MAGRPOConfig(num_agents=2, num_turns=1, num_generations=2)
     trainer = MAGRPOTrainer(
         model="dummy",
-        agents=["a", "b"],
+        agents=["dummy", "dummy"],
         num_agents=2,
         tokenizer=dummy_tokenizer,
         reward_func=_reward_func,
         args=args,
     )
     assert trainer.num_agents == 2
+
+
+def test_magrpo_rejects_model_and_agent_conflict(
+    dummy_tokenizer, tiny_model_a, monkeypatch
+):
+    def _fake_from_pretrained(*_args, **_kwargs):
+        return tiny_model_a
+
+    monkeypatch.setattr(
+        "transformers.AutoModelForCausalLM.from_pretrained", _fake_from_pretrained
+    )
+    args = MAGRPOConfig(num_agents=2, num_turns=1, num_generations=2)
+    with pytest.raises(ValueError, match="conflict"):
+        MAGRPOTrainer(
+            model="dummy",
+            agents=["dummy", "other"],
+            num_agents=2,
+            tokenizer=dummy_tokenizer,
+            reward_func=_reward_func,
+            args=args,
+        )

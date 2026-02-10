@@ -13,7 +13,7 @@ from comlrl.models.actor_critic import CausalLMWithValueHead
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_sources
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
-from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizer
+from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizers
 from .ac_base import ActorCriticTrainerBase
 import wandb
 
@@ -110,7 +110,9 @@ class IACTrainer(ActorCriticTrainerBase):
     def __init__(
         self,
         model: Optional[Union[str, PreTrainedModel]] = None,
-        tokenizer: Optional[PreTrainedTokenizerBase] = None,
+        tokenizer: Optional[
+            Union[PreTrainedTokenizerBase, Sequence[PreTrainedTokenizerBase]]
+        ] = None,
         reward_func: Optional[RewardFunc] = None,
         reward_processor: Optional[Callable[[float], float]] = None,
         formatters: Optional[Union[Formatter, Sequence[Formatter]]] = None,
@@ -162,7 +164,13 @@ class IACTrainer(ActorCriticTrainerBase):
         self.agent_models: List[CausalLMWithValueHead] = []
         self.critic_models: List[Optional[CausalLMWithValueHead]] = []
 
-        self.tokenizer = resolve_tokenizer(model, tokenizer, agents)
+        tokenizers = resolve_tokenizers(model, tokenizer, agents)
+        if isinstance(tokenizers, list):
+            self.tokenizers = tokenizers
+            self.tokenizer = tokenizers[0] if tokenizers else None
+        else:
+            self.tokenizers = [tokenizers] * self.args.num_agents
+            self.tokenizer = tokenizers
         self.formatters = build_formatters(formatters, self.args.num_agents)
         try:
             self._reward_signature = inspect.signature(reward_func)
@@ -254,9 +262,19 @@ class IACTrainer(ActorCriticTrainerBase):
         else:
             self.critic_models = [None] * self.args.num_agents
 
-        apply_tokenizer_specials(
-            self.tokenizer, [*self.agent_models, *self.critic_models]
-        )
+        if self.tokenizers and len(self.tokenizers) == len(self.agent_models):
+            for idx, tok in enumerate(self.tokenizers):
+                models = [self.agent_models[idx]]
+                if (
+                    idx < len(self.critic_models)
+                    and self.critic_models[idx] is not None
+                ):
+                    models.append(self.critic_models[idx])
+                apply_tokenizer_specials(tok, models)
+        else:
+            apply_tokenizer_specials(
+                self.tokenizer, [*self.agent_models, *self.critic_models]
+            )
         self.agent_optimizers = []
         self.critic_optimizers = []
 
@@ -403,7 +421,7 @@ class IACTrainer(ActorCriticTrainerBase):
         agent_idx: int,
         num_ret: int,
     ) -> Dict[str, Any]:
-        encoded_prompt = self._encode_prompt(prompt)
+        encoded_prompt = self._encode_prompt(prompt, agent_idx=agent_idx)
         prompt_input_ids = encoded_prompt["input_ids"]
         prompt_attention_mask = encoded_prompt["attention_mask"]
         prompt_len = prompt_input_ids.size(1)
@@ -426,7 +444,8 @@ class IACTrainer(ActorCriticTrainerBase):
             raise RuntimeError("Model produced an empty completion during rollout.")
 
         response_tokens = sequences[:, prompt_len:]
-        pad_id = self.tokenizer.pad_token_id
+        tokenizer = self._get_tokenizer(agent_idx)
+        pad_id = tokenizer.pad_token_id
         response_lens: List[int] = []
         completion_texts: List[str] = []
         for seq in response_tokens:
@@ -436,7 +455,7 @@ class IACTrainer(ActorCriticTrainerBase):
             )
             response_lens.append(resp_len)
             completion_texts.append(
-                self.tokenizer.decode(seq[:resp_len], skip_special_tokens=True)
+                tokenizer.decode(seq[:resp_len], skip_special_tokens=True)
             )
 
         full_attention_mask = torch.ones_like(sequences, device=self.device)
@@ -551,7 +570,7 @@ class IACTrainer(ActorCriticTrainerBase):
                     RolloutSample(
                         agent_idx=agent_idx,
                         prompt=data["prompt"],
-                        completion=self.tokenizer.decode(
+                        completion=self._get_tokenizer(agent_idx).decode(
                             seq[data["prompt_len"] : data["prompt_len"] + resp_len],
                             skip_special_tokens=True,
                         ),
@@ -1052,5 +1071,13 @@ class IACTrainer(ActorCriticTrainerBase):
                         os.path.join(critic_dir, "value_head.pt"),
                     )
 
-        if self.tokenizer is not None:
+        if self.tokenizers:
+            if self.args.num_agents == 1:
+                self.tokenizers[0].save_pretrained(output_dir)
+            else:
+                for idx, tok in enumerate(self.tokenizers):
+                    agent_dir = os.path.join(output_dir, f"agent_{idx}")
+                    os.makedirs(agent_dir, exist_ok=True)
+                    tok.save_pretrained(agent_dir)
+        elif self.tokenizer is not None:
             self.tokenizer.save_pretrained(output_dir)

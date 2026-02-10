@@ -7,6 +7,7 @@ from .tokenizer_utils import (
     ensure_pad_token,
     ensure_tokenizer,
     resolve_tokenizer,
+    resolve_tokenizers,
 )
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "ensure_tokenizer",
     "apply_tokenizer_specials",
     "resolve_tokenizer",
+    "resolve_tokenizers",
     "infer_model_name",
     "resolve_model_sources",
     "RewardProcessors",

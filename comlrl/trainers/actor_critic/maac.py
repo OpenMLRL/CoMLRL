@@ -14,7 +14,7 @@ from comlrl.models.actor_critic import CausalLMWithValueHead
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_sources
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
-from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizer
+from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizers
 from .ac_base import ActorCriticTrainerBase
 from .iac import RolloutSample
 
@@ -86,7 +86,9 @@ class MAACTrainer(ActorCriticTrainerBase):
     def __init__(
         self,
         model: Optional[Union[str, PreTrainedModel]] = None,
-        tokenizer: Optional[PreTrainedTokenizerBase] = None,
+        tokenizer: Optional[
+            Union[PreTrainedTokenizerBase, Sequence[PreTrainedTokenizerBase]]
+        ] = None,
         reward_func: Optional[RewardFunc] = None,
         reward_processor: Optional[Callable[[float], float]] = None,
         formatters: Optional[Union[Formatter, Sequence[Formatter]]] = None,
@@ -132,7 +134,13 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.tokenizer = resolve_tokenizer(model, tokenizer, agents)
+        tokenizers = resolve_tokenizers(model, tokenizer, agents)
+        if isinstance(tokenizers, list):
+            self.tokenizers = tokenizers
+            self.tokenizer = tokenizers[0] if tokenizers else None
+        else:
+            self.tokenizers = [tokenizers] * self.args.num_agents
+            self.tokenizer = tokenizers
         self.external_transition = external_transition
 
         self.agent_models: List[CausalLMWithValueHead] = []
@@ -215,9 +223,14 @@ class MAACTrainer(ActorCriticTrainerBase):
             )
         self.critic_model.to(self.device)
 
-        apply_tokenizer_specials(
-            self.tokenizer, [*self.agent_models, self.critic_model]
-        )
+        if self.tokenizers and len(self.tokenizers) == len(self.agent_models):
+            for idx, tok in enumerate(self.tokenizers):
+                apply_tokenizer_specials(tok, [self.agent_models[idx]])
+            apply_tokenizer_specials(self.tokenizers[0], [self.critic_model])
+        else:
+            apply_tokenizer_specials(
+                self.tokenizer, [*self.agent_models, self.critic_model]
+            )
         self.formatters = build_formatters(formatters, self.args.num_agents)
         try:
             self._reward_signature = inspect.signature(reward_func)
@@ -363,7 +376,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         return base + "\n\n" + "\n\n".join(action_lines)
 
     def _critic_value_from_text(self, critic_input: str) -> Dict[str, Any]:
-        encoded = self._encode_prompt(critic_input)
+        encoded = self._encode_prompt(critic_input, tokenizer=self._get_tokenizer(0))
         ids = encoded["input_ids"]
         mask = encoded["attention_mask"]
         prompt_len = ids.size(1)
@@ -376,8 +389,8 @@ class MAACTrainer(ActorCriticTrainerBase):
             "value": value,
         }
 
-    def _generate(self, agent_model, prompt: str) -> Dict[str, Any]:
-        encoded_prompt = self._encode_prompt(prompt)
+    def _generate(self, agent_model, prompt: str, agent_idx: int) -> Dict[str, Any]:
+        encoded_prompt = self._encode_prompt(prompt, agent_idx=agent_idx)
         prompt_input_ids = encoded_prompt["input_ids"]
         prompt_attention_mask = encoded_prompt["attention_mask"]
         prompt_len = prompt_input_ids.size(1)
@@ -401,7 +414,8 @@ class MAACTrainer(ActorCriticTrainerBase):
             raise RuntimeError("Model produced an empty completion during rollout.")
 
         response_tokens = sequences[:, prompt_len:]
-        pad_id = self.tokenizer.pad_token_id
+        tokenizer = self._get_tokenizer(agent_idx)
+        pad_id = tokenizer.pad_token_id
         response_lens: List[int] = []
         completion_texts: List[str] = []
         for seq in response_tokens:
@@ -411,7 +425,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             )
             response_lens.append(resp_len)
             completion_texts.append(
-                self.tokenizer.decode(seq[:resp_len], skip_special_tokens=True)
+                tokenizer.decode(seq[:resp_len], skip_special_tokens=True)
             )
 
         return {
@@ -435,7 +449,7 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         for agent_idx, agent_model in enumerate(self.agent_models):
             prompt = self._resolve_turn_prompt(item, agent_idx)
-            gen = self._generate(agent_model, prompt)
+            gen = self._generate(agent_model, prompt, agent_idx)
             prompts.append(prompt)
             completions_per_agent.append(gen["completions"])
             rollout_data.append(
@@ -525,7 +539,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                     RolloutSample(
                         agent_idx=agent_idx,
                         prompt=data["prompt"],
-                        completion=self.tokenizer.decode(
+                        completion=self._get_tokenizer(agent_idx).decode(
                             seq[data["prompt_len"] : data["prompt_len"] + resp_len],
                             skip_special_tokens=True,
                         ),
@@ -609,7 +623,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             rollout_data: List[Dict[str, Any]] = []
             for agent_idx, agent_model in enumerate(self.agent_models):
                 prompt = turn_prompts[agent_idx]
-                gen = self._generate(agent_model, prompt)
+                gen = self._generate(agent_model, prompt, agent_idx)
                 completions_per_agent.append(gen["completions"])
                 rollout_data.append(
                     {
@@ -951,5 +965,10 @@ class MAACTrainer(ActorCriticTrainerBase):
                 self.critic_model.value_head.state_dict(),
                 os.path.join(critic_dir, "value_head.pt"),
             )
-        if self.tokenizer is not None:
+        if self.tokenizers:
+            for idx, tok in enumerate(self.tokenizers):
+                agent_dir = os.path.join(output_dir, f"agent_{idx}")
+                os.makedirs(agent_dir, exist_ok=True)
+                tok.save_pretrained(agent_dir)
+        elif self.tokenizer is not None:
             self.tokenizer.save_pretrained(output_dir)

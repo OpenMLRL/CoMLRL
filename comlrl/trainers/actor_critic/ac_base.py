@@ -51,8 +51,22 @@ class ActorCriticTrainerBase:
             modified_item, agent_idx, external_prompts=external_prompt
         )
 
-    def _encode_prompt(self, prompt: str) -> Dict[str, torch.Tensor]:
-        encoded = self.tokenizer(
+    def _get_tokenizer(self, agent_idx: Optional[int] = None):
+        tokenizers = getattr(self, "tokenizers", None)
+        if isinstance(tokenizers, list) and tokenizers:
+            if agent_idx is None:
+                return tokenizers[0]
+            return tokenizers[agent_idx]
+        return self.tokenizer
+
+    def _encode_prompt(
+        self,
+        prompt: str,
+        agent_idx: Optional[int] = None,
+        tokenizer: Optional[Any] = None,
+    ) -> Dict[str, torch.Tensor]:
+        tokenizer = tokenizer or self._get_tokenizer(agent_idx)
+        encoded = tokenizer(
             prompt,
             return_tensors="pt",
             truncation=True,
