@@ -58,9 +58,9 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}^\mathcal{G} 
 {{% /hint %}}
 
 {{% hint info %}}
-**MAGRPOTrainer** accepts either a model string for homogeneous agents or a list of `agents` for heterogeneous setups:
+**MAGRPOTrainer** accepts either an `agent_model` string for homogeneous agents or a list of `agents` for heterogeneous setups:
 
-- `model` or `agents`: Model identifier string for homogeneous agents, or list of agent models (multi-agent `model` must be a string)
+- `agent_model` or `agents`: Model identifier string for homogeneous agents, or list of agent models (multi-agent `agent_model` must be a string)
 - `num_agents`: Number of agents (default: 2)
 - `tokenizer`: The tokenizer (required)
 - `train_dataset`: Training dataset (required)

@@ -58,12 +58,12 @@ def tiny_model_b():
     "factory, match",
     [
         (
-            lambda: IACTrainer(model="dummy", reward_func=None, args=IACConfig()),
+            lambda: IACTrainer(agent_model="dummy", reward_func=None, args=IACConfig()),
             "reward_func",
         ),
         (
             lambda: IACTrainer(reward_func=_reward_func, args=IACConfig()),
-            "Either model or agents",
+            "Either agent_model or agents",
         ),
         (
             lambda: IACTrainer(
@@ -76,7 +76,7 @@ def tiny_model_b():
         ),
         (
             lambda: IACTrainer(
-                model="dummy",
+                agent_model="dummy",
                 critics=[object()],
                 reward_func=_reward_func,
                 args=IACConfig(use_separate_critic=False),
@@ -84,12 +84,14 @@ def tiny_model_b():
             "use_separate_critic",
         ),
         (
-            lambda: MAACTrainer(model="dummy", reward_func=None, args=MAACConfig()),
+            lambda: MAACTrainer(
+                agent_model="dummy", reward_func=None, args=MAACConfig()
+            ),
             "reward_func",
         ),
         (
             lambda: MAACTrainer(reward_func=_reward_func, args=MAACConfig()),
-            "Either model or agents",
+            "Either agent_model or agents",
         ),
         (
             lambda: MAACTrainer(
@@ -101,12 +103,14 @@ def tiny_model_b():
             "external_transition",
         ),
         (
-            lambda: MAGRPOTrainer(model="dummy", reward_func=None, args=MAGRPOConfig()),
+            lambda: MAGRPOTrainer(
+                agent_model="dummy", reward_func=None, args=MAGRPOConfig()
+            ),
             "reward_func",
         ),
         (
             lambda: MAGRPOTrainer(reward_func=_reward_func, args=MAGRPOConfig()),
-            "Either model or agents",
+            "Either agent_model or agents",
         ),
     ],
     ids=[
@@ -196,6 +200,7 @@ def test_iac_valid_separate_critics(dummy_tokenizer, tiny_model_a, tiny_model_b)
     )
     assert len(trainer.agent_models) == 2
     assert len(trainer.critic_models) == 2
+    assert len(trainer.critic_optimizers) == 2
 
 
 def test_iac_multiturn_with_transition(dummy_tokenizer, tiny_model_a):
@@ -326,7 +331,7 @@ def test_magrpo_allows_model_and_agent_names(
     )
     args = MAGRPOConfig(num_agents=2, num_turns=1, num_generations=2)
     trainer = MAGRPOTrainer(
-        model="dummy",
+        agent_model="dummy",
         agents=["dummy", "dummy"],
         num_agents=2,
         tokenizer=dummy_tokenizer,
@@ -348,7 +353,7 @@ def test_magrpo_rejects_model_and_agent_conflict(
     args = MAGRPOConfig(num_agents=2, num_turns=1, num_generations=2)
     with pytest.raises(ValueError, match="conflict"):
         MAGRPOTrainer(
-            model="dummy",
+            agent_model="dummy",
             agents=["dummy", "other"],
             num_agents=2,
             tokenizer=dummy_tokenizer,

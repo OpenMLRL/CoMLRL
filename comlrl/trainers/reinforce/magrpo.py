@@ -101,8 +101,8 @@ class MAGRPOTrainer:
     When num_turns>1, it adds multi-turn capabilities with external transitions between turns.
 
     Args:
-        model: The model to be trained for homogeneous agents
-        agents: List of agent models (alternative to model)
+        agent_model: The model to be trained for homogeneous agents
+        agents: List of agent models (alternative to agent_model)
         num_agents: The number of agents
         reward_func: Single reward function callable
         reward_processor: Optional processor to apply to the reward (e.g., scaling)
@@ -124,7 +124,7 @@ class MAGRPOTrainer:
 
     def __init__(
         self,
-        model: Optional[Union[str, PreTrainedModel]] = None,
+        agent_model: Optional[Union[str, PreTrainedModel]] = None,
         agents: Optional[List[PreTrainedModel]] = None,
         num_agents: int = 2,
         tokenizer: Optional[
@@ -147,10 +147,16 @@ class MAGRPOTrainer:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.args = args if args is not None else self.default_config_cls()
-        if model is None and agents is None:
-            raise ValueError("Either model or agents must be provided.")
-        if agents is None and model is not None and not isinstance(model, str):
-            raise ValueError("Model should be a string to create homogeneous agents")
+        if agent_model is None and agents is None:
+            raise ValueError("Either agent_model or agents must be provided.")
+        if (
+            agents is None
+            and agent_model is not None
+            and not isinstance(agent_model, str)
+        ):
+            raise ValueError(
+                "agent_model should be a string to create homogeneous agents"
+            )
         self.env_step = 0
         self._last_train_log_step = -1
         self.advantage_mode = getattr(self.args, "advantage_mode", "mean")
@@ -169,15 +175,16 @@ class MAGRPOTrainer:
 
         self.model_config = model_config if model_config else {}
         expected_count = num_agents
-        if agents is not None and model is None:
+        if agents is not None and agent_model is None:
             expected_count = len(agents)
 
         actor_sources, model_name = resolve_model_sources(
             kind="agents",
-            model=model,
+            model=agent_model,
             models=agents,
             expected_count=expected_count,
             expected_label=f"num_agents ({expected_count})",
+            model_label="agent_model",
         )
         if actor_sources and not all(isinstance(src, str) for src in actor_sources):
             model_name = infer_model_name(actor_sources[0])
@@ -202,7 +209,7 @@ class MAGRPOTrainer:
         else:
             self.agents = list(actor_sources)
 
-        tokenizers = resolve_tokenizers(model, tokenizer, actor_sources)
+        tokenizers = resolve_tokenizers(agent_model, tokenizer, actor_sources)
         if isinstance(tokenizers, list):
             self.tokenizers = tokenizers
             self.tokenizer = tokenizers[0] if tokenizers else None
@@ -317,7 +324,6 @@ class MAGRPOTrainer:
             )
             if isinstance(sections, dict):
                 dataset_section = sections.get("dataset") or {}
-                model_section = sections.get("model") or {}
                 output_section = sections.get("output") or {}
                 external_section = sections.get("external") or {}
                 trainer_section = sections.get("trainer") or {}
@@ -326,7 +332,6 @@ class MAGRPOTrainer:
                 config_dict.update(
                     {
                         "dataset": dataset_section,
-                        "model": model_section,
                         "output": output_section,
                         "external": external_section,
                         "trainer": trainer_section,

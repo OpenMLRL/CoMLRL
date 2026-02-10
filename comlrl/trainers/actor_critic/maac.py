@@ -85,7 +85,8 @@ class MAACTrainer(ActorCriticTrainerBase):
 
     def __init__(
         self,
-        model: Optional[Union[str, PreTrainedModel]] = None,
+        agent_model: Optional[Union[str, PreTrainedModel]] = None,
+        critic_model: Optional[Union[str, PreTrainedModel]] = None,
         tokenizer: Optional[
             Union[PreTrainedTokenizerBase, Sequence[PreTrainedTokenizerBase]]
         ] = None,
@@ -109,22 +110,24 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.args = args if args is not None else MAACConfig()
         if reward_func is None or not callable(reward_func):
             raise ValueError("reward_func must be a callable.")
-        if model is None and agents is None:
-            raise ValueError("Either model or agents must be provided.")
+        if agent_model is None and agents is None:
+            raise ValueError("Either agent_model or agents must be provided.")
         if (
             agents is None
             and self.args.num_agents > 1
-            and isinstance(model, PreTrainedModel)
+            and isinstance(agent_model, PreTrainedModel)
         ):
             raise ValueError(
-                "Multi-agent MAAC requires `model` to be a pretrained identifier string."
+                "Multi-agent MAAC requires `agent_model` to be a pretrained identifier string."
             )
         if agents is not None and tokenizer is None:
             raise ValueError("Tokenizer must be provided when using agents.")
         if self.args.num_turns > 1 and external_transition is None:
             raise ValueError("Multi-turn MAAC requires an external_transition.")
-        if critics is None:
-            raise ValueError("critics must be provided for MAAC.")
+        if critics is None and critic_model is None:
+            raise ValueError(
+                "Either critic_model or critics must be provided for MAAC."
+            )
         self.reward_func = reward_func
         self.reward_processor = reward_processor or (lambda x: x)
         self.train_dataset = train_dataset
@@ -134,7 +137,7 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        tokenizers = resolve_tokenizers(model, tokenizer, agents)
+        tokenizers = resolve_tokenizers(agent_model, tokenizer, agents)
         if isinstance(tokenizers, list):
             self.tokenizers = tokenizers
             self.tokenizer = tokenizers[0] if tokenizers else None
@@ -146,13 +149,14 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.agent_models: List[CausalLMWithValueHead] = []
         actor_sources, self.agent_model_name = resolve_model_sources(
             kind="agents",
-            model=model,
+            model=agent_model,
             models=agents,
             expected_count=self.args.num_agents,
+            model_label="agent_model",
         )
         for actor_source in actor_sources:
             if actor_source is None:
-                raise ValueError("model must be provided for MAAC.")
+                raise ValueError("agent_model must be provided for MAAC.")
             if isinstance(actor_source, CausalLMWithValueHead):
                 agent_model = actor_source
             elif isinstance(actor_source, PreTrainedModel):
@@ -185,10 +189,11 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.critic_model_name = None
         critic_sources, self.critic_model_name = resolve_model_sources(
             kind="critics",
-            model=None,
+            model=critic_model,
             models=critics,
             expected_count=1,
             expected_label="1 critic",
+            model_label="critic_model",
         )
         critic_source = critic_sources[0]
         if isinstance(critic_source, CausalLMWithValueHead):
@@ -296,7 +301,6 @@ class MAACTrainer(ActorCriticTrainerBase):
         )
         if isinstance(sections, dict):
             dataset_section = sections.get("dataset") or {}
-            model_section = sections.get("model") or {}
             output_section = sections.get("output") or {}
             external_section = sections.get("external") or {}
             trainer_section = sections.get("trainer") or {}
@@ -304,7 +308,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             config_dict.update(
                 {
                     "dataset": dataset_section,
-                    "model": model_section,
                     "output": output_section,
                     "external": external_section,
                     "trainer": trainer_section,

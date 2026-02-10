@@ -64,8 +64,8 @@ L(\phi_i) = \max\Big( (V_{\phi_i}(h_t) - \hat{V}_t)^2,\ (V_{\phi_i}^{\text{clip}
 {{% hint info %}}
 **IACTrainer** trains agents using Independent Actor-Critic:
 
-- `model` or `agents`: Model identifier string for homogeneous agents, or list of agent models (multi-agent `model` must be a string)
-- `critics`: Required list of critic models when `use_separate_critic=true`
+- `agent_model` or `agents`: Model identifier string for homogeneous agents, or list of agent models (multi-agent `agent_model` must be a string)
+- `critic_model` or `critics`: Critic identifier or list of critic models when `use_separate_critic=true`
 - `tokenizer`: The tokenizer (required)
 - `reward_func`: Callable that returns a list of floats (required)
 - `reward_processor`: Optional processor to apply to rewards
@@ -80,7 +80,7 @@ L(\phi_i) = \max\Big( (V_{\phi_i}(h_t) - \hat{V}_t)^2,\ (V_{\phi_i}^{\text{clip}
 {{% /hint %}}
 
 {{% hint warning %}}
-For simplicity, IAC computes the policy gradient using the current policy's samples without importance sampling or ratio clipping. In shared-critic mode (`use_separate_critic=false`), value heads are attached to the actor models (do not pass `critics`; passing them raises an error), and agents may be homogeneous or heterogeneous; this mode can be less stable, and `value_clip_range` only applies there. In separate-critic mode (`use_separate_critic=true`), pass a `critics` list with length equal to `num_agents`; critic models may differ from actor models.
+For simplicity, IAC computes the policy gradient using the current policy's samples without importance sampling or ratio clipping. In shared-critic mode (`use_separate_critic=false`), value heads are attached to the actor models (do not pass `critic_model`/`critics`; passing them raises an error), and agents may be homogeneous or heterogeneous; this mode can be less stable, and `value_clip_range` only applies there. In separate-critic mode (`use_separate_critic=true`), pass a `critics` list with length equal to `num_agents` or a single `critic_model` to be broadcast; critic models may differ from actor models.
 {{% /hint %}}
 
 {{% hint warning %}}
@@ -132,8 +132,8 @@ L(\boldsymbol{\phi}) = \big(V_{\phi}(\mathbf{h}_t) - \hat{V}_t\big)^2.
 {{% hint info %}}
 **MAACTrainer** setup:
 
-- `model` or `agents`: Actor model identifier string for homogeneous agents, or list of agent models (multi-agent `model` must be a string)
-- `critics`: Required list containing a single shared critic model
+- `agent_model` or `agents`: Actor model identifier string for homogeneous agents, or list of agent models (multi-agent `agent_model` must be a string)
+- `critic_model` or `critics`: Required single shared critic (either one identifier or a 1-element list)
 - `tokenizer`: Tokenizer (required)
 - `reward_func`: Callable returning rewards (required)
 - `reward_processor`: Optional reward post-processor

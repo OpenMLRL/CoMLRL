@@ -77,7 +77,7 @@ dataset = load_dataset("trl-lib/tldr", split="train").select(range(128))
 
 # Initialize trainer and start training
 trainer = MAGRPOTrainer(
-    model="Qwen/Qwen2.5-0.5B",
+    agent_model="Qwen/Qwen2.5-0.5B",
     num_agents=2,
     tokenizer=tokenizer,
     train_dataset=dataset,

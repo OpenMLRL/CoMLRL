@@ -42,7 +42,7 @@ def _cleanup(*objs):
 def test_magrpo_model_name():
     args = MAGRPOConfig(num_agents=2, num_turns=1, num_generations=2)
     trainer = MAGRPOTrainer(
-        model=MODEL_NAME_05,
+        agent_model=MODEL_NAME_05,
         num_agents=2,
         reward_func=_reward_func,
         args=args,
@@ -68,7 +68,7 @@ def test_magrpo_pretrained(tokenizer_05, model_05, model_06):
 def test_maac_model_name():
     args = MAACConfig(num_agents=2, num_turns=1)
     trainer = MAACTrainer(
-        model=MODEL_NAME_05,
+        agent_model=MODEL_NAME_05,
         critics=[MODEL_NAME_06],
         reward_func=_reward_func,
         args=args,
@@ -108,7 +108,7 @@ def test_maac_critics_len_mismatch(tokenizer_05, model_05, model_06):
 def test_iac_model_name_critics(tokenizer_05, model_06):
     args = IACConfig(num_agents=2, num_turns=1, use_separate_critic=True)
     trainer = IACTrainer(
-        model=MODEL_NAME_05,
+        agent_model=MODEL_NAME_05,
         critics=[model_06, model_06],
         tokenizer=tokenizer_05,
         reward_func=_reward_func,
@@ -123,7 +123,7 @@ def test_iac_model_and_agents_names_conflict(tokenizer_05):
     args = IACConfig(num_agents=2, num_turns=1, use_separate_critic=False)
     with pytest.raises(ValueError, match="conflict"):
         IACTrainer(
-            model=MODEL_NAME_05,
+            agent_model=MODEL_NAME_05,
             agents=[MODEL_NAME_05, MODEL_NAME_06],
             tokenizer=tokenizer_05,
             reward_func=_reward_func,
@@ -134,7 +134,7 @@ def test_iac_model_and_agents_names_conflict(tokenizer_05):
 def test_iac_model_and_agents_names_match(tokenizer_05):
     args = IACConfig(num_agents=2, num_turns=1, use_separate_critic=False)
     trainer = IACTrainer(
-        model=MODEL_NAME_05,
+        agent_model=MODEL_NAME_05,
         agents=[MODEL_NAME_05, MODEL_NAME_05],
         tokenizer=tokenizer_05,
         reward_func=_reward_func,
@@ -148,7 +148,7 @@ def test_iac_model_and_agents_len_mismatch(tokenizer_05):
     args = IACConfig(num_agents=2, num_turns=1, use_separate_critic=False)
     with pytest.raises(ValueError, match="agents length"):
         IACTrainer(
-            model=MODEL_NAME_05,
+            agent_model=MODEL_NAME_05,
             agents=[MODEL_NAME_05],
             tokenizer=tokenizer_05,
             reward_func=_reward_func,
@@ -191,7 +191,7 @@ def test_iac_critics_len_mismatch(tokenizer_05, model_05):
     args = IACConfig(num_agents=2, num_turns=1, use_separate_critic=True)
     with pytest.raises(ValueError, match="critics length"):
         IACTrainer(
-            model=MODEL_NAME_05,
+            agent_model=MODEL_NAME_05,
             critics=[model_05],
             tokenizer=tokenizer_05,
             reward_func=_reward_func,

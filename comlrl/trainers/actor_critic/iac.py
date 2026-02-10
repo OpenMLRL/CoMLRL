@@ -109,7 +109,8 @@ class IACTrainer(ActorCriticTrainerBase):
 
     def __init__(
         self,
-        model: Optional[Union[str, PreTrainedModel]] = None,
+        agent_model: Optional[Union[str, PreTrainedModel]] = None,
+        critic_model: Optional[Union[str, PreTrainedModel]] = None,
         tokenizer: Optional[
             Union[PreTrainedTokenizerBase, Sequence[PreTrainedTokenizerBase]]
         ] = None,
@@ -133,19 +134,21 @@ class IACTrainer(ActorCriticTrainerBase):
         self.args = args if args is not None else IACConfig()
         if reward_func is None or not callable(reward_func):
             raise ValueError("reward_func must be a callable.")
-        if model is None and agents is None:
-            raise ValueError("Either model or agents must be provided.")
-        if not self.args.use_separate_critic and critics is not None:
+        if agent_model is None and agents is None:
+            raise ValueError("Either agent_model or agents must be provided.")
+        if not self.args.use_separate_critic and (
+            critics is not None or critic_model is not None
+        ):
             raise ValueError(
                 "critics can only be provided when use_separate_critic=True."
             )
         if (
             agents is None
             and self.args.num_agents > 1
-            and isinstance(model, PreTrainedModel)
+            and isinstance(agent_model, PreTrainedModel)
         ):
             raise ValueError(
-                "Multi-agent IAC requires `model` to be a pretrained identifier string."
+                "Multi-agent IAC requires `agent_model` to be a pretrained identifier string."
             )
         if agents is not None and tokenizer is None:
             raise ValueError("Tokenizer must be provided when using agents.")
@@ -164,7 +167,7 @@ class IACTrainer(ActorCriticTrainerBase):
         self.agent_models: List[CausalLMWithValueHead] = []
         self.critic_models: List[Optional[CausalLMWithValueHead]] = []
 
-        tokenizers = resolve_tokenizers(model, tokenizer, agents)
+        tokenizers = resolve_tokenizers(agent_model, tokenizer, agents)
         if isinstance(tokenizers, list):
             self.tokenizers = tokenizers
             self.tokenizer = tokenizers[0] if tokenizers else None
@@ -180,9 +183,10 @@ class IACTrainer(ActorCriticTrainerBase):
 
         actor_sources, self.agent_model_name = resolve_model_sources(
             kind="agents",
-            model=model,
+            model=agent_model,
             models=agents,
             expected_count=self.args.num_agents,
+            model_label="agent_model",
         )
         for actor_source in actor_sources:
             if actor_source is None:
@@ -220,15 +224,16 @@ class IACTrainer(ActorCriticTrainerBase):
 
         self.critic_model_name = None
         if self.args.use_separate_critic:
-            if critics is None:
+            if critics is None and critic_model is None:
                 raise ValueError(
-                    "critics must be provided when use_separate_critic=True."
+                    "Either critic_model or critics must be provided when use_separate_critic=True."
                 )
             critic_sources, self.critic_model_name = resolve_model_sources(
                 kind="critics",
-                model=None,
+                model=critic_model,
                 models=critics,
                 expected_count=self.args.num_agents,
+                model_label="critic_model",
             )
             for critic_source in critic_sources:
                 if isinstance(critic_source, CausalLMWithValueHead):
@@ -288,12 +293,12 @@ class IACTrainer(ActorCriticTrainerBase):
         if self.args.use_separate_critic:
             if any(critic is None for critic in self.critic_models):
                 raise RuntimeError("Critic model expected but missing.")
-            critic_model = self.critic_models[-1]
-            optimizer = torch.optim.AdamW(
-                critic_model.parameters(),
-                lr=self.args.critic_learning_rate,
-            )
-            self.critic_optimizers.append(optimizer)
+            for critic_model in self.critic_models:
+                optimizer = torch.optim.AdamW(
+                    critic_model.parameters(),
+                    lr=self.args.critic_learning_rate,
+                )
+                self.critic_optimizers.append(optimizer)
 
         self.env_step = 0
         self.rollout_buffers = [[] for _ in range(self.args.num_agents)]
@@ -349,7 +354,6 @@ class IACTrainer(ActorCriticTrainerBase):
         )
         if isinstance(sections, dict):
             dataset_section = sections.get("dataset") or {}
-            model_section = sections.get("model") or {}
             output_section = sections.get("output") or {}
             external_section = sections.get("external") or {}
             trainer_section = sections.get("trainer") or {}
@@ -357,7 +361,6 @@ class IACTrainer(ActorCriticTrainerBase):
             config_dict.update(
                 {
                     "dataset": dataset_section,
-                    "model": model_section,
                     "output": output_section,
                     "external": external_section,
                     "trainer": trainer_section,
