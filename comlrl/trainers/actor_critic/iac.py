@@ -164,8 +164,8 @@ class IACTrainer(ActorCriticTrainerBase):
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.agent_models: List[CausalLMWithValueHead] = []
-        self.critic_models: List[Optional[CausalLMWithValueHead]] = []
+        self.agents: List[CausalLMWithValueHead] = []
+        self.critics: List[CausalLMWithValueHead] = []
 
         tokenizers = resolve_tokenizers(agent_model, tokenizer, agents)
         if isinstance(tokenizers, list):
@@ -181,7 +181,7 @@ class IACTrainer(ActorCriticTrainerBase):
             self._reward_signature = None
         self.external_transition = external_transition
 
-        actor_sources, self.agent_model_name = resolve_model_sources(
+        actor_sources, _agent_name = resolve_model_sources(
             kind="agents",
             model=agent_model,
             models=agents,
@@ -220,15 +220,14 @@ class IACTrainer(ActorCriticTrainerBase):
                     attach_value_head=attach_value,
                 )
             agent_model.to(self.device)
-            self.agent_models.append(agent_model)
+            self.agents.append(agent_model)
 
-        self.critic_model_name = None
         if self.args.use_separate_critic:
             if critics is None and critic_model is None:
                 raise ValueError(
                     "Either critic_model or critics must be provided when use_separate_critic=True."
                 )
-            critic_sources, self.critic_model_name = resolve_model_sources(
+            critic_sources, _critic_name = resolve_model_sources(
                 kind="critics",
                 model=critic_model,
                 models=critics,
@@ -263,27 +262,22 @@ class IACTrainer(ActorCriticTrainerBase):
                         attach_value_head=True,
                     )
                 critic_model.to(self.device)
-                self.critic_models.append(critic_model)
+                self.critics.append(critic_model)
         else:
-            self.critic_models = [None] * self.args.num_agents
+            self.critics = []
 
-        if self.tokenizers and len(self.tokenizers) == len(self.agent_models):
+        if self.tokenizers and len(self.tokenizers) == len(self.agents):
             for idx, tok in enumerate(self.tokenizers):
-                models = [self.agent_models[idx]]
-                if (
-                    idx < len(self.critic_models)
-                    and self.critic_models[idx] is not None
-                ):
-                    models.append(self.critic_models[idx])
+                models = [self.agents[idx]]
+                if idx < len(self.critics):
+                    models.append(self.critics[idx])
                 apply_tokenizer_specials(tok, models)
         else:
-            apply_tokenizer_specials(
-                self.tokenizer, [*self.agent_models, *self.critic_models]
-            )
+            apply_tokenizer_specials(self.tokenizer, [*self.agents, *self.critics])
         self.agent_optimizers = []
         self.critic_optimizers = []
 
-        for agent_model in self.agent_models:
+        for agent_model in self.agents:
             optimizer = torch.optim.AdamW(
                 agent_model.parameters(),
                 lr=self.args.agent_learning_rate,
@@ -291,9 +285,7 @@ class IACTrainer(ActorCriticTrainerBase):
             self.agent_optimizers.append(optimizer)
 
         if self.args.use_separate_critic:
-            if any(critic is None for critic in self.critic_models):
-                raise RuntimeError("Critic model expected but missing.")
-            for critic_model in self.critic_models:
+            for critic_model in self.critics:
                 optimizer = torch.optim.AdamW(
                     critic_model.parameters(),
                     lr=self.args.critic_learning_rate,
@@ -465,7 +457,7 @@ class IACTrainer(ActorCriticTrainerBase):
 
         with torch.no_grad():
             if self.args.use_separate_critic:
-                critic_model = self.critic_models[agent_idx]
+                critic_model = self.critics[agent_idx]
                 if critic_model is None:
                     raise RuntimeError("Critic model missing for agent.")
                 value = self._value_for_critic_type(
@@ -530,7 +522,7 @@ class IACTrainer(ActorCriticTrainerBase):
         rollout_data: List[Dict[str, Any]] = []
         num_ret = int(getattr(self.args, "num_generations", 1))
 
-        for agent_idx, agent_model in enumerate(self.agent_models):
+        for agent_idx, agent_model in enumerate(self.agents):
             prompt = self._resolve_turn_prompt(item, agent_idx)
             gen = self._generate_rollout(agent_model, prompt, agent_idx, num_ret)
             completions_per_agent.append(gen["completions"])
@@ -643,7 +635,7 @@ class IACTrainer(ActorCriticTrainerBase):
 
             completions_per_agent: List[List[str]] = []
             rollout_data: List[Dict[str, Any]] = []
-            for agent_idx, agent_model in enumerate(self.agent_models):
+            for agent_idx, agent_model in enumerate(self.agents):
                 prompt = turn_prompts[agent_idx]
                 gen = self._generate_rollout(agent_model, prompt, agent_idx, num_ret=1)
                 completions_per_agent.append(gen["completions"])
@@ -876,9 +868,9 @@ class IACTrainer(ActorCriticTrainerBase):
 
     # Actor-Critic update logic
     def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> Dict[str, float]:
-        agent_model = self.agent_models[agent_idx]
+        agent_model = self.agents[agent_idx]
         critic_model = (
-            self.critic_models[agent_idx] if self.args.use_separate_critic else None
+            self.critics[agent_idx] if self.args.use_separate_critic else None
         )
         agent_optimizer = self.agent_optimizers[agent_idx]
         critic_optimizer = (
@@ -1035,14 +1027,14 @@ class IACTrainer(ActorCriticTrainerBase):
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
         if self.args.num_agents == 1:
-            actor = self.agent_models[0]
+            actor = self.agents[0]
             actor.model.save_pretrained(output_dir)
             if actor.value_head is not None:
                 torch.save(
                     actor.value_head.state_dict(),
                     os.path.join(output_dir, "value_head.pt"),
                 )
-            critic = self.critic_models[0]
+            critic = self.critics[0] if self.critics else None
             if critic is not None:
                 critic_dir = os.path.join(output_dir, "critic")
                 os.makedirs(critic_dir, exist_ok=True)
@@ -1053,7 +1045,7 @@ class IACTrainer(ActorCriticTrainerBase):
                         os.path.join(critic_dir, "value_head.pt"),
                     )
         else:
-            for agent_idx, actor in enumerate(self.agent_models):
+            for agent_idx, actor in enumerate(self.agents):
                 agent_dir = os.path.join(output_dir, f"agent_{agent_idx}")
                 os.makedirs(agent_dir, exist_ok=True)
                 actor.model.save_pretrained(agent_dir)
@@ -1062,9 +1054,9 @@ class IACTrainer(ActorCriticTrainerBase):
                         actor.value_head.state_dict(),
                         os.path.join(agent_dir, "value_head.pt"),
                     )
-                critic = self.critic_models[agent_idx]
-                if critic is None:
+                if not self.critics or agent_idx >= len(self.critics):
                     continue
+                critic = self.critics[agent_idx]
                 critic_dir = os.path.join(agent_dir, "critic")
                 os.makedirs(critic_dir, exist_ok=True)
                 critic.model.save_pretrained(critic_dir)

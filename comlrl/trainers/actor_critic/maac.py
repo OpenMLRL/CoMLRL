@@ -146,8 +146,8 @@ class MAACTrainer(ActorCriticTrainerBase):
             self.tokenizer = tokenizers
         self.external_transition = external_transition
 
-        self.agent_models: List[CausalLMWithValueHead] = []
-        actor_sources, self.agent_model_name = resolve_model_sources(
+        self.agents: List[CausalLMWithValueHead] = []
+        actor_sources, _agent_name = resolve_model_sources(
             kind="agents",
             model=agent_model,
             models=agents,
@@ -184,10 +184,9 @@ class MAACTrainer(ActorCriticTrainerBase):
                     value_head_hidden_dim=None,
                 )
             agent_model.to(self.device)
-            self.agent_models.append(agent_model)
+            self.agents.append(agent_model)
 
-        self.critic_model_name = None
-        critic_sources, self.critic_model_name = resolve_model_sources(
+        critic_sources, _critic_name = resolve_model_sources(
             kind="critics",
             model=critic_model,
             models=critics,
@@ -197,10 +196,10 @@ class MAACTrainer(ActorCriticTrainerBase):
         )
         critic_source = critic_sources[0]
         if isinstance(critic_source, CausalLMWithValueHead):
-            self.critic_model = critic_source
+            critic_model_instance = critic_source
         elif isinstance(critic_source, PreTrainedModel):
             base = critic_source
-            self.critic_model = CausalLMWithValueHead(
+            critic_model_instance = CausalLMWithValueHead(
                 base_model=base,
                 attach_value_head=True,
                 value_head_hidden_dim=self.model_config.get(
@@ -219,23 +218,22 @@ class MAACTrainer(ActorCriticTrainerBase):
                 raise ValueError(
                     f"Failed to load critic model from identifier '{critic_source}'."
                 ) from exc
-            self.critic_model = CausalLMWithValueHead(
+            critic_model_instance = CausalLMWithValueHead(
                 base_model=base,
                 attach_value_head=True,
                 value_head_hidden_dim=self.model_config.get(
                     "critic_value_head_hidden_dim"
                 ),
             )
-        self.critic_model.to(self.device)
+        critic_model_instance.to(self.device)
+        self.critics: List[CausalLMWithValueHead] = [critic_model_instance]
 
-        if self.tokenizers and len(self.tokenizers) == len(self.agent_models):
+        if self.tokenizers and len(self.tokenizers) == len(self.agents):
             for idx, tok in enumerate(self.tokenizers):
-                apply_tokenizer_specials(tok, [self.agent_models[idx]])
-            apply_tokenizer_specials(self.tokenizers[0], [self.critic_model])
+                apply_tokenizer_specials(tok, [self.agents[idx]])
+            apply_tokenizer_specials(self.tokenizers[0], [self.critics[0]])
         else:
-            apply_tokenizer_specials(
-                self.tokenizer, [*self.agent_models, self.critic_model]
-            )
+            apply_tokenizer_specials(self.tokenizer, [*self.agents, self.critics[0]])
         self.formatters = build_formatters(formatters, self.args.num_agents)
         try:
             self._reward_signature = inspect.signature(reward_func)
@@ -243,7 +241,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             self._reward_signature = inspect.Signature()
 
         self.agent_optimizers = []
-        for agent_model in self.agent_models:
+        for agent_model in self.agents:
             optimizer = torch.optim.AdamW(
                 agent_model.parameters(),
                 lr=self.args.agent_learning_rate,
@@ -251,7 +249,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             self.agent_optimizers.append(optimizer)
 
         self.critic_optimizer = torch.optim.AdamW(
-            self.critic_model.parameters(),
+            self.critics[0].parameters(),
             lr=self.args.critic_learning_rate,
         )
 
@@ -383,7 +381,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         ids = encoded["input_ids"]
         mask = encoded["attention_mask"]
         prompt_len = ids.size(1)
-        value = self._value_on_prompt_only(self.critic_model, ids, mask, prompt_len)
+        value = self._value_on_prompt_only(self.critics[0], ids, mask, prompt_len)
         return {
             "critic_input": critic_input,
             "input_ids": ids,
@@ -450,7 +448,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         rollout_data: List[Dict[str, Any]] = []
         num_ret = int(self.args.num_generations)
 
-        for agent_idx, agent_model in enumerate(self.agent_models):
+        for agent_idx, agent_model in enumerate(self.agents):
             prompt = self._resolve_turn_prompt(item, agent_idx)
             gen = self._generate(agent_model, prompt, agent_idx)
             prompts.append(prompt)
@@ -521,7 +519,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 reward_tensor = torch.tensor([reward], device=self.device)
 
                 logprob, _ = self._policy_eval(
-                    self.agent_models[agent_idx],
+                    self.agents[agent_idx],
                     seq.unsqueeze(0),
                     attn.unsqueeze(0),
                     data["prompt_len"],
@@ -624,7 +622,7 @@ class MAACTrainer(ActorCriticTrainerBase):
 
             completions_per_agent: List[List[str]] = []
             rollout_data: List[Dict[str, Any]] = []
-            for agent_idx, agent_model in enumerate(self.agent_models):
+            for agent_idx, agent_model in enumerate(self.agents):
                 prompt = turn_prompts[agent_idx]
                 gen = self._generate(agent_model, prompt, agent_idx)
                 completions_per_agent.append(gen["completions"])
@@ -676,7 +674,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 reward_tensor = torch.tensor([reward_val], device=self.device)
 
                 logprob, _ = self._policy_eval(
-                    self.agent_models[agent_idx],
+                    self.agents[agent_idx],
                     seq.unsqueeze(0),
                     attn.unsqueeze(0),
                     data["prompt_len"],
@@ -832,7 +830,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         return response_log_probs.sum(dim=-1)
 
     def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> Dict[str, float]:
-        agent_model = self.agent_models[agent_idx]
+        agent_model = self.agents[agent_idx]
         agent_optimizer = self.agent_optimizers[agent_idx]
 
         actor_losses: List[torch.Tensor] = []
@@ -855,7 +853,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             joint_mask = sample.metadata["joint_attention_mask"].to(self.device)
             joint_len = int(sample.metadata["joint_prompt_len"])
             value = self._value_on_prompt_only(
-                self.critic_model, joint_ids, joint_mask, joint_len
+                self.critics[0], joint_ids, joint_mask, joint_len
             )
 
             old_value = sample.old_value.to(self.device, dtype=value.dtype)
@@ -956,16 +954,16 @@ class MAACTrainer(ActorCriticTrainerBase):
 
     def save_model(self, output_dir: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
-        for agent_idx, actor in enumerate(self.agent_models):
+        for agent_idx, actor in enumerate(self.agents):
             agent_dir = os.path.join(output_dir, f"agent_{agent_idx}")
             os.makedirs(agent_dir, exist_ok=True)
             actor.model.save_pretrained(agent_dir)
         critic_dir = os.path.join(output_dir, "critic")
         os.makedirs(critic_dir, exist_ok=True)
-        self.critic_model.model.save_pretrained(critic_dir)
-        if self.critic_model.value_head is not None:
+        self.critics[0].model.save_pretrained(critic_dir)
+        if self.critics[0].value_head is not None:
             torch.save(
-                self.critic_model.value_head.state_dict(),
+                self.critics[0].value_head.state_dict(),
                 os.path.join(critic_dir, "value_head.pt"),
             )
         if self.tokenizers:

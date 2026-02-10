@@ -73,9 +73,8 @@ def test_maac_model_name():
         reward_func=_reward_func,
         args=args,
     )
-    assert len(trainer.agent_models) == 2
-    assert trainer.agent_model_name == MODEL_NAME_05
-    assert trainer.critic_model_name == MODEL_NAME_06
+    assert len(trainer.agents) == 2
+    assert len(trainer.critics) == 1
     _cleanup(trainer)
 
 
@@ -88,8 +87,8 @@ def test_maac_pretrained(tokenizer_05, model_05, model_06):
         reward_func=_reward_func,
         args=args,
     )
-    assert len(trainer.agent_models) == 2
-    assert trainer.critic_model is not None
+    assert len(trainer.agents) == 2
+    assert len(trainer.critics) == 1
     _cleanup(trainer)
 
 
@@ -114,8 +113,8 @@ def test_iac_model_name_critics(tokenizer_05, model_06):
         reward_func=_reward_func,
         args=args,
     )
-    assert len(trainer.agent_models) == 2
-    assert len(trainer.critic_models) == 2
+    assert len(trainer.agents) == 2
+    assert len(trainer.critics) == 2
     _cleanup(trainer)
 
 
@@ -140,7 +139,7 @@ def test_iac_model_and_agents_names_match(tokenizer_05):
         reward_func=_reward_func,
         args=args,
     )
-    assert len(trainer.agent_models) == 2
+    assert len(trainer.agents) == 2
     _cleanup(trainer)
 
 
@@ -170,8 +169,8 @@ def test_iac_shared_heads(agents_case, tokenizer_05, model_05, model_06):
         reward_func=_reward_func,
         args=args,
     )
-    assert len(trainer.agent_models) == 2
-    assert all(c is None for c in trainer.critic_models)
+    assert len(trainer.agents) == 2
+    assert len(trainer.critics) == 0
     _cleanup(trainer)
 
 
@@ -214,6 +213,6 @@ def test_iac_separate_critics(critics_case, tokenizer_05, model_05, model_06):
         reward_func=_reward_func,
         args=args,
     )
-    assert len(trainer.agent_models) == 2
-    assert len(trainer.critic_models) == 2
+    assert len(trainer.agents) == 2
+    assert len(trainer.critics) == 2
     _cleanup(trainer)

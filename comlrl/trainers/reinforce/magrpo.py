@@ -208,6 +208,7 @@ class MAGRPOTrainer:
             ]
         else:
             self.agents = list(actor_sources)
+        self.critics = []
 
         tokenizers = resolve_tokenizers(agent_model, tokenizer, actor_sources)
         if isinstance(tokenizers, list):

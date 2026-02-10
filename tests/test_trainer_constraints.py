@@ -161,8 +161,8 @@ def test_iac_valid_shared_heads(dummy_tokenizer, tiny_model_a, tiny_model_b):
         reward_func=_reward_func,
         args=args,
     )
-    assert len(trainer.agent_models) == 2
-    assert all(c is None for c in trainer.critic_models)
+    assert len(trainer.agents) == 2
+    assert len(trainer.critics) == 0
 
 
 def test_iac_accepts_tokenizer_list(dummy_tokenizer, tiny_model_a, tiny_model_b):
@@ -198,8 +198,8 @@ def test_iac_valid_separate_critics(dummy_tokenizer, tiny_model_a, tiny_model_b)
         reward_func=_reward_func,
         args=args,
     )
-    assert len(trainer.agent_models) == 2
-    assert len(trainer.critic_models) == 2
+    assert len(trainer.agents) == 2
+    assert len(trainer.critics) == 2
     assert len(trainer.critic_optimizers) == 2
 
 
@@ -212,7 +212,7 @@ def test_iac_multiturn_with_transition(dummy_tokenizer, tiny_model_a):
         external_transition=_external_transition,
         args=args,
     )
-    assert len(trainer.agent_models) == 1
+    assert len(trainer.agents) == 1
 
 
 def test_iac_multiturn_num_generations_mismatch(dummy_tokenizer, tiny_model_a):
@@ -258,8 +258,8 @@ def test_maac_valid(dummy_tokenizer, tiny_model_a, tiny_model_b):
         reward_func=_reward_func,
         args=args,
     )
-    assert len(trainer.agent_models) == 2
-    assert trainer.critic_model is not None
+    assert len(trainer.agents) == 2
+    assert len(trainer.critics) == 1
 
 
 def test_maac_multiturn_with_transition(dummy_tokenizer, tiny_model_a):
@@ -272,8 +272,8 @@ def test_maac_multiturn_with_transition(dummy_tokenizer, tiny_model_a):
         external_transition=_external_transition,
         args=args,
     )
-    assert len(trainer.agent_models) == 1
-    assert trainer.critic_model is not None
+    assert len(trainer.agents) == 1
+    assert len(trainer.critics) == 1
 
 
 def test_maac_multiturn_num_generations_mismatch(dummy_tokenizer, tiny_model_a):

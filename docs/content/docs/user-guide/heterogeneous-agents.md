@@ -8,6 +8,8 @@ CoMLRL supports training teams where each agent uses a different base model. Spe
 
 If you also set `agent_model.name`, it is treated as the homogeneous default. When **both** are provided, they must be consistent (all entries in `agents` equal to `agent_model.name`), otherwise CoMLRL raises an error.
 
+Internally, trainers always work with `agents`/`critics` lists. `agent_model` and `critic_model` are convenience shorthands that get expanded during initialization.
+
 {{% hint warning %}}
 Tokenizers are loaded per agent by default. If your models use incompatible vocabularies, training may fail (e.g., in shared-critic settings). Prefer models from the same family or ensure tokenizer compatibility.
 {{% /hint %}}
