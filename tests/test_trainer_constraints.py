@@ -288,20 +288,24 @@ def test_maac_multiturn_num_generations_mismatch(dummy_tokenizer, tiny_model_a):
         )
 
 
-def test_magrpo_requires_transition_for_multiturn(tiny_model_a, tiny_model_b):
+def test_magrpo_requires_transition_for_multiturn(
+    dummy_tokenizer, tiny_model_a, tiny_model_b
+):
     args = MAGRPOConfig(num_agents=2, num_turns=2, num_generations=2)
     with pytest.raises(ValueError, match="external_transition"):
         MAGRPOTrainer(
             agents=[tiny_model_a, tiny_model_b],
+            tokenizer=dummy_tokenizer,
             reward_func=_reward_func,
             args=args,
         )
 
 
-def test_magrpo_multiturn_with_transition(tiny_model_a, tiny_model_b):
+def test_magrpo_multiturn_with_transition(dummy_tokenizer, tiny_model_a, tiny_model_b):
     args = MAGRPOConfig(num_agents=2, num_turns=2, num_generations=2)
     trainer = MAGRPOTrainer(
         agents=[tiny_model_a, tiny_model_b],
+        tokenizer=dummy_tokenizer,
         reward_func=_reward_func,
         external_transition=_external_transition,
         args=args,
