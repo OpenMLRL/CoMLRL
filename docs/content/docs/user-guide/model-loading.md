@@ -15,7 +15,11 @@ Users can set `agent_model.name` to a single model identifier while keeping `age
 For example, to load 3 _Qwen/Qwen2.5-1.5B_ agents:
 
 ```python
-trainer = MAGRPOTrainer(...)
+trainer = MAGRPOTrainer(
+    agent_model="Qwen/Qwen2.5-1.5B",
+    agents=None,
+    num_agents=3,
+)
 ```
 
 ## Heterogeneous Agents
@@ -24,31 +28,59 @@ Although homogeneous LLM agents can be specified into different roles by prompti
 Users can load a list of heterogeneous agents in `agents`, where the length of the list should match `num_agents`. Each entry should specify a model identifier and optional tokenizer/model kwargs.
 When `agents` is provided, `agent_model` should be set to null or ignored; if both are provided, they must match (same names, correct length) or training will raise an error.
 
-## Critics
+For example, to load a _Qwen/Qwen2.5-Coder-3B_ and a _Qwen/Qwen2.5-Coder-7B_:
+
+```python
+trainer = MAGRPOTrainer(
+    agent_model=None,
+    agents=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen2.5-Coder-7B"],
+    num_agents=2,
+)
+```
+
+## Loading LLM Critics
 
 The loading of critics depends on the algorithm and the `use_separate_critic` setting.
 In Multi-Agent Actor-Critic (MAAC), a single separated centralized critic is used, so one model should be provided in `critic_model` or `critics` without any constraints on model types.
 
-For example, to load a _Qwen/Qwen2.5-Coder-3B_ and a _Qwen/Qwen2.5-Coder-1.5B_ agent with a centralized _Qwen/Qwen2.5-Coder-7B_ critic:
+For example, to load a _Qwen/Qwen2.5-Coder-3B_ and a _Qwen/Qwen2.5-Coder-1.5B_ with a centralized _Qwen/Qwen2.5-Coder-7B_ critic:
 
 ```python
-trainer = MAACTrainer(...)
+trainer = MAACTrainer(
+    agent_model=None,
+    agents=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen2.5-Coder-1.5B"],
+    critic_model="Qwen/Qwen2.5-Coder-7B",
+    critics=None,
+    num_agents=2,
+)
 ```
 
 In Independent Actor-Critic (IAC), each agent can have its own critic. When `use_separate_critic=true`, users should provide `critic_model.name` or `critics` with length `num_agents` to load separate critics for each agent.
 When `use_separate_critic=false`, each agent shares its LLM agent backbone with its critic, and the critic is loaded at the same time as the agent. In this case, `critic_model` and `critics` should not be provided and set to null or None.
 Similarly to agents, if both `critic_model` and `critics` are provided, they must match (same names, correct length) or training will raise an error.
 
-For example, to load a _Qwen/Qwen2.5-Coder-3B_ and a _Qwen/Qwen3-4B-Instruct-2507_ agent with separate critics of the same models:
+For example, to load a _Qwen/Qwen2.5-Coder-3B_ and a _Qwen/Qwen3-Coder-Next_ with separate critics of the same models:
 
 ```python
-trainer = IACTrainer(...)
+trainer = IACTrainer(
+    agent_model=None,
+    agents=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen3-Coder-Next"],
+    critic_model=None,
+    critics=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen3-Coder-Next"],
+    num_agents=2,
+)
 ```
 
 Or actor can share the same model with its critic:
 
 ```python
-trainer = IACTrainer(...)
+trainer = IACTrainer(
+    agent_model=None,
+    agents=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen3-Coder-Next"],
+    critic_model=None,
+    critics=None,
+    num_agents=2,
+)
 ```
 
 {{% hint warning %}}
