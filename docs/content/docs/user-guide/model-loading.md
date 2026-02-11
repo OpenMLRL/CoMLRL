@@ -7,27 +7,49 @@ weight: 2
 CoMLRL supports both homogeneous and heterogeneous models.
 Users can assign `agent_model`/`critic_model` with [HuggingFace model identifiers](https://huggingface.co/models) for homogeneous setups, or provide `agents`/`critics` lists for heterogeneous setups.
 
-## Loading Homogeneous Agents
+## Homogeneous Agents
 
-Users can set `agent_model.name` to a single model identifier while keeping `agents: null`. This loads `num_agents` instances of the same model.
-Training with both `agent_model` and `agents` is allowed, but all entries in `agents` must match `agent_model.name` to avoid conflicts.
+The easiest way to start the journey of CoMLRL is to load `num_agents` homogeneous agents with a single model identifier.
+Users can set `agent_model.name` to a single model identifier while keeping `agents: null`.
 
-For example,
+For example, to load 3 _Qwen/Qwen2.5-1.5B_ agents:
 
-## Loading Heterogeneous Agents
+```python
+trainer = MAGRPOTrainer(...)
+```
 
-Provide a list of model identifiers in `agents` with length equal to `num_agents`. Set `agent_model.name: null` to avoid conflicts. Generation settings in `agent_model` still apply as defaults for all agents.
+## Heterogeneous Agents
 
-## Loading Critics
+Although homogeneous LLM agents can be specified into different roles by prompting, using heterogeneous LLMs with different skills can further unleash the potential of multi-agent collaboration.
+Users can load a list of heterogeneous agents in `agents`, where the length of the list should match `num_agents`. Each entry should specify a model identifier and optional tokenizer/model kwargs.
+When `agents` is provided, `agent_model` should be set to null or ignored; if both are provided, they must match (same names, correct length) or training will raise an error.
 
-Critic loading depends on the algorithm and `use_separate_critic`:
+## Critics
 
-- **MAAC**: Provide `critic_model.name` (single model) or `critics` with one entry.
-- **IAC with `use_separate_critic=true`**: Provide `critic_model.name` or `critics` with length `num_agents`.
-- **IAC with `use_separate_critic=false`**: Do not provide critic models. Set `critic_model.name: null` and `critics: null`.
-- **REINFORCE/MAGRPO**: No critics are used; keep `critic_model`/`critics` null.
+The loading of critics depends on the algorithm and the `use_separate_critic` setting.
+In Multi-Agent Actor-Critic (MAAC), a single separated centralized critic is used, so one model should be provided in `critic_model` or `critics` without any constraints on model types.
 
-If both `critic_model` and `critics` are provided, they must match (same names, correct length) or training will error.
+For example, to load a _Qwen/Qwen2.5-Coder-3B_ and a _Qwen/Qwen2.5-Coder-1.5B_ agent with a centralized _Qwen/Qwen2.5-Coder-7B_ critic:
+
+```python
+trainer = MAACTrainer(...)
+```
+
+In Independent Actor-Critic (IAC), each agent can have its own critic. When `use_separate_critic=true`, users should provide `critic_model.name` or `critics` with length `num_agents` to load separate critics for each agent.
+When `use_separate_critic=false`, each agent shares its LLM agent backbone with its critic, and the critic is loaded at the same time as the agent. In this case, `critic_model` and `critics` should not be provided and set to null or None.
+Similarly to agents, if both `critic_model` and `critics` are provided, they must match (same names, correct length) or training will raise an error.
+
+For example, to load a _Qwen/Qwen2.5-Coder-3B_ and a _Qwen/Qwen3-4B-Instruct-2507_ agent with separate critics of the same models:
+
+```python
+trainer = IACTrainer(...)
+```
+
+Or actor can share the same model with its critic:
+
+```python
+trainer = IACTrainer(...)
+```
 
 {{% hint warning %}}
 Internally, trainers always work with `agents`/`critics` lists. `agent_model` and `critic_model` are convenience shortcuts for homogeneous settings; if both are provided, they must be consistent.
