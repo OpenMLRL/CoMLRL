@@ -5,11 +5,11 @@ weight: 5
 math: true
 ---
 
-Many complex problems cannot be solved in a single turn. Agents need to interact with the environment to obtain useful feedback from other models or tools involved in the system, enabling iterative refinement and exploration of multiple solution paths.
+Many complex problems cannot be solved in a single turn. LLM agents need to interact with the environment to obtain useful feedback from other models or tools involved in the system.
 
 ## Multi-Turn MAGRPO
 
-MAGRPO in the multi-turn setting (**MAGRPO-MT**) forms a tree-structured rollout expansion where branches represent different joint responses ([TreeRPO](https://arxiv.org/abs/2506.05183)).
+MAGRPO in the multi-turn setting forms a tree-structured rollout expansion where branches represent different joint responses ([TreeRPO](https://arxiv.org/abs/2506.05183)).
 
 <p align="center">
     <img src="/img/joint-tree.svg" width="450px;" alt=""/>
@@ -37,9 +37,19 @@ MAGRPO supports two modes for forming joint responses at each turn:
 Note that only responses originating from the same rollout can be combined, as rollouts evolve independently.
 {{% /hint %}}
 
+## Multi-Turn MAAC/IAC
+
+Different from MAGRPO rollout tree that generates numerous samples in each episode, MAAC/IAC with multi-turn training only generates one sample per agent at each turn in the multi-turning setting, and the episode continues for multiple turns until termination.
+Since the value estimation in MAAC/IAC is updated based on temporal difference error, the agents don't need to wait until the end of the episode to update their policies, and can learn online. This feature is especially useful in the coordination optimization in long-horizon settings.
+The external feedback mechanism controls how environment observations are incorporated into prompts for subsequent turns, which is usually implemented in CoMLRL's downstreaming environments.
+
+<p align="center">
+    <img src="/img/ac.svg" width="400px;" alt=""/></br>
+</p>
+
 ## Environment Transition
 
-External feedback mechanisms control how environment observations are incorporated into prompts for subsequent turns.
+External feedback mechanisms control how environment observations are incorporated into prompts for subsequent turns, this is usually implemented in CoMLRL's downstreaming environments.
 
 ### Custom External Feedback
 
