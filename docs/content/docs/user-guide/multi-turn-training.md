@@ -44,7 +44,7 @@ Since the value estimation in MAAC/IAC is updated based on temporal difference e
 The external feedback mechanism controls how environment observations are incorporated into prompts for subsequent turns, which is usually implemented in CoMLRL's downstreaming environments.
 
 <p align="center">
-    <img src="/img/ac.svg" width="400px;" alt=""/></br>
+    <img src="/img/ac.svg" width="480px;" alt=""/></br>
 </p>
 
 ## Environment Transition

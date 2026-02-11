@@ -94,6 +94,7 @@ config = MAGRPOConfig(
     agent_learning_rate=5e-5,
     logging_steps=10,
     num_generations=8,
+    num_turns=1,
     max_new_tokens=128,
 )
 ```
@@ -104,8 +105,8 @@ We instantiate the MAGRPO trainer with our agents, reward function, and configur
 
 ```python
 wandb_config = {
-    "project": <your-project-name>,
-    "entity": <your-entity-name>,
+    "project": "your-project-name",
+    "entity": "your-entity-name",
     "name": "length-ratio-demo",
 }
 
