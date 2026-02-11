@@ -8,7 +8,7 @@ $menu-item-color: #545b74;    /* darker by 10 each channel */
 $menu-brand-color: #202532;   /* darker by 10 each channel */
 
 /* Single source of truth for sidebar width */
-$sidebar-width: 17rem;
+$sidebar-width: 18rem;
 
 /* Article text color (derived from sidebar) */
 $article-text-color: $menu-item-color; /* keep variable for potential reuse */
@@ -17,8 +17,8 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
   background: $menu-bg;
   border-right: 1px solid $menu-border;
   color: $menu-text;
-  flex: 0 0 17rem; /* slightly wider */
-  width: 17rem;   /* match flex-basis */
+  flex: 0 0 $sidebar-width; /* slightly wider */
+  width: $sidebar-width;   /* match flex-basis */
   position: sticky;
   top: 0;
   height: 100vh;
@@ -57,7 +57,7 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
 .book-brand,
 .book-brand a {
   font-weight: 700;
-  font-size: 1.5rem;
+  font-size: 1.6rem;
   color: $menu-brand-color;
 }
 
@@ -70,7 +70,7 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
   font-weight: 700 !important;
   pointer-events: none;
   cursor: default;
-  font-size: 1rem; /* section name size */
+  font-size: 1.05rem; /* section name size */
   color: $menu-section-color;
 }
 .book-menu li.book-section > label,
@@ -78,7 +78,7 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
 .book-menu .book-menu-content > ul > li > label,
 .book-menu .book-menu-content > ul > li > summary {
   font-weight: 700 !important;
-  font-size: 1rem; /* section name size */
+  font-size: 1.05rem; /* section name size */
   color: $menu-section-color;
 }
 
@@ -95,7 +95,7 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
   pointer-events: auto;
   cursor: pointer;
   padding-left: 1.5rem; /* adjusted indent for child items */
-  font-size: 0.9rem; /* file (page) link size */
+  font-size: 0.95rem; /* file (page) link size */
   color: $menu-item-color;
 }
 
@@ -122,7 +122,7 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
 .book-menu li.book-section-flat ul label,
 .book-menu .book-menu-content > ul > li ul label {
   padding-left: 1.5rem;
-  font-size: 0.95rem;
+  font-size: 1rem;
 }
 
 /* Article typography: updated sizes and weights */
@@ -131,8 +131,8 @@ $article-text-color: $menu-item-color; /* keep variable for potential reuse */
   color: $menu-item-color !important;
   margin-left: auto;
   margin-right: auto;
-  width: 80%;
-  margin-left: 2rem;
+  width: 90%;
+  margin-left: 1.5rem;
   margin-right: 0rem;
 }
 .book-article h1 {

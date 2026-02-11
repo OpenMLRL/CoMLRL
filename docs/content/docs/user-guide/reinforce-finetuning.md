@@ -40,48 +40,46 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t  \sim \bol
 {{% hint info %}}
 **MAGRPOConfig** parameters:
 
-- `num_agents`: Number of agents (default: 2)
-- `num_turns`: Number of turns per episode (default: 2)
-- `num_train_epochs`: Number of training epochs (default: 20)
-- `agent_learning_rate`: Learning rate (default: 5e-6)
-- `logging_steps`: Log every N steps (default: 50)
-- `num_generations`: Number of generations to sample per prompt for each agent (default: 4)
-- `max_new_tokens`: Maximum number of new tokens to generate (default: 256)
-- `temperature`: Temperature for sampling (default: 0.6)
-- `top_p`: Top-p for sampling (default: 0.6)
-- `top_k`: Top-k for sampling (default: 50)
-- `discount`: Discount factor gamma over turns for returns (default: 0.9)
-- `joint_mode`: Joint action composition
-  - `'aligned'` (index-aligned, default)
-  - `'cross'` (Cartesian product)
-- `early_termination_threshold`: Stop rollouts with mean reward exceeds a threshold (default: -0.2)
-- `rollout_buffer_size`: Number of node samples to buffer before update (default: 2)
-- `train_batch_size`: Mini-batch size within each update (default: rollout_buffer_size)
-- `advantage_normalization`: Whether to normalize advantages (default: true)
-- `eval_interval`: Run evaluation every N training batches (default: 16)
-- `eval_num_samples`: Number of samples to evaluate per evaluation run (default: 4)
-- `eval_batch_size`: Eval dataloader batch size (default: 1)
-- `external_prompt_passthrough`: Use external prompts directly in multi-turn (default: false)
-- `advantage_mode`: Baseline mode (`mean`, `max`, `rloo`, `raw`) (default: mean)
+- `num_agents`: Number of agents
+- `num_turns`: Number of turns per episode
+- `num_train_epochs`: Number of training epochs
+- `agent_learning_rate`: Learning rate
+- `logging_steps`: Log every N steps
+- `num_generations`: Number of generations to sample per prompt for each agent
+- `max_new_tokens`: Maximum number of new tokens to generate
+- `temperature`: Temperature for sampling
+- `top_p`: Top-p for sampling
+- `top_k`: Top-k for sampling
+- `discount`: Discount factor gamma over turns for returns
+- `joint_mode`: Joint action composition (`aligned` for index-aligned, `cross` for Cartesian product)
+- `early_termination_threshold`: Stop rollouts with mean reward exceeds a threshold
+- `rollout_buffer_size`: Number of node samples to buffer before update
+- `train_batch_size`: Mini-batch size within each update
+- `advantage_normalization`: Whether to normalize advantages
+- `eval_interval`: Run evaluation every N training batches
+- `eval_num_samples`: Number of samples to evaluate per evaluation run
+- `eval_batch_size`: Eval dataloader batch size
+- `external_prompt_passthrough`: Use external prompts directly in multi-turn
+- `advantage_mode`: Baseline mode (`mean`, `max`, `rloo`, `raw`)
 {{% /hint %}}
 
 {{% hint info %}}
-**MAGRPOTrainer** accepts either an `agent_model` string for homogeneous agents or a list of `agents` for heterogeneous setups. When both provided, `agents` overrides `agent_model` and must be a list of model identifiers (e.g., Hugging Face model names).
+**MAGRPOTrainer** setup:
 
 - `agent_model` or `agents`: Model identifier string for homogeneous agents, or list of agent models (multi-agent `agent_model` must be a string)
-- `num_agents`: Number of agents (default: 2)
+- `num_agents`: Number of agents
 - `tokenizer`: The tokenizer (required)
-- `train_dataset`: Training dataset (required)
 - `reward_func`: Callable that returns a list of floats (required)
 - `reward_processor`: Optional processor to apply to rewards (e.g., scaling)
 - `formatters`: Single callable or list of callables for each agent to format prompts
-- `external_transition`: Function providing transitions between turns
+- `args`: Instance of `MAGRPOConfig` (optional)
+- `train_dataset`: Training dataset (required)
 - `eval_dataset`: Evaluation dataset (optional)
+- `model_config`: Model configuration dict (optional)
+- `wandb_config`: Configuration for Weights & Biases logging (optional)
+- `external_transition`: Function providing transitions between turns
 - `eval_logger`: Evaluation logger function (optional)
 - `eval_aggregator`: Evaluation aggregator function (optional)
-- `wandb_config`: Configuration for Weights & Biases logging (optional)
-- `model_config`: Model configuration dict (optional)
-- `args`: Instance of `MAGRPOConfig` (optional)
 {{% /hint %}}
 
 {{% hint warning %}}

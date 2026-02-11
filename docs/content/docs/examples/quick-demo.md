@@ -1,5 +1,5 @@
 ---
-title: CoMLRL Quick Demo
+title: CoMLRL Quick Start
 weight: 1
 ---
 
