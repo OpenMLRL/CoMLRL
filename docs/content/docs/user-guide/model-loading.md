@@ -59,14 +59,14 @@ In Independent Actor-Critic (IAC), each agent can have its own critic. When `use
 When `use_separate_critic=false`, each agent shares its LLM agent backbone with its critic, and the critic is loaded at the same time as the agent. In this case, `critic_model` and `critics` should not be provided and set to null or None.
 Similarly to agents, if both `critic_model` and `critics` are provided, they must match (same names, correct length) or training will raise an error.
 
-For example, to load a _Qwen/Qwen2.5-Coder-3B_ and a _Qwen/Qwen3-Coder-Next_ with separate critics of the same models:
+For example, to load a _Qwen/Qwen2.5-Coder-3B_ and a _Qwen/Qwen2.5-Coder-7B_ with separate critics of the same models:
 
 ```python
 trainer = IACTrainer(
     agent_model=None,
-    agents=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen3-Coder-Next"],
+    agents=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen2.5-Coder-7B"],
     critic_model=None,
-    critics=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen3-Coder-Next"],
+    critics=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen2.5-Coder-7B"],
     num_agents=2,
 )
 ```
@@ -76,7 +76,7 @@ Or actor can share the same model with its critic:
 ```python
 trainer = IACTrainer(
     agent_model=None,
-    agents=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen3-Coder-Next"],
+    agents=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen2.5-Coder-7B"],
     critic_model=None,
     critics=None,
     num_agents=2,
