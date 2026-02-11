@@ -1,6 +1,6 @@
 ---
 title: Multi-Agent REINFORCE
-weight: 2
+weight: 3
 math: true
 ---
 

@@ -1,6 +1,6 @@
 ---
 title: Multi-Agent Actor-Critic
-weight: 3
+weight: 4
 math: true
 ---
 

@@ -21,16 +21,20 @@ If you are stuck with a problem using CoMLRL, please follow this procedure:
 
 ## Citation
 
-Please cite our paper if you find this library useful in your research:
+Please cite the following papers if you find this library useful in your research:
 
 ```bibtex
-@misc{liu2025comlrl,
-      title={LLM Collaboration With Multi-Agent Reinforcement Learning},
-      author={Shuo Liu and Tianle Chen and Zeyu Liang and Xueguang Lyu and Christopher Amato},
-      year={2025},
-      eprint={2508.04652},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2508.04652},
+@inproceedings{liu2025llmcollabmarl,
+  title     = {LLM Collaboration With Multi-Agent Reinforcement Learning},
+  author    = {Liu, Shuo and Liang, Zeyu and Lyu, Xueguang and Amato, Christopher},
+  booktitle = {Proceedings of the 40th Annual AAAI Conference on Artificial Intelligence},
+  year      = {2026}
+}
+
+@article{liu2026learndecllmcollabmaac,
+  title   = {Learning Decentralized LLM Collaboration with Multi-Agent Actor Critic},
+  author  = {Liu, Shuo and Chen, Tianle and Amiri, Ryan and Amato, Christopher},
+  journal = {arXiv preprint arXiv:2601.21972},
+  year    = {2026}
 }
 ```

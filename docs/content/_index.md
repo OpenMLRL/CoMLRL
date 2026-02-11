@@ -24,7 +24,7 @@ Compare with other multi-LLM training frameworks, agents can either be trained c
 
 <em style="font-weight: 600; color: #9555af; margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support self-play/self-improvement/self-evolving by MARL?"</em>
 
-<strong>Yes!</strong> Although we focus on LLM collaboration formalized as <a href="https://www.fransoliehoek.net/docs/OliehoekAmato16book.pdf">Dec-POMDP</a>, users can still customize the interactions with environment to implement pipeline like self-play (<a href="https://github.com/spiral-rl/spiral">Spiral</a>) and self-improvement (<a href="https://github.com/vsubramaniam851/multiagent-ft/tree/main">MAFT</a>). Users can refer to our <a href="docs/user-guide/multi-turn">multi-turn training</a> for more details.
+<strong>Yes!</strong> Although we focus on LLM collaboration formalized as <a href="https://www.fransoliehoek.net/docs/OliehoekAmato16book.pdf">Dec-POMDP</a>, users can still customize the interactions with environment to implement pipeline like self-play (<a href="https://github.com/spiral-rl/spiral">Spiral</a>) and self-improvement (<a href="https://github.com/vsubramaniam851/multiagent-ft/tree/main">MAFT</a>). Users can refer to our <a href="docs/user-guide/multi-turn-training">multi-turn training</a> for more details.
 
 <em style="font-weight: 600; color: #9555af; margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support distributed training?"</em>
 
