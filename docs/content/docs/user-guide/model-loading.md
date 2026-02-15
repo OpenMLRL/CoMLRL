@@ -18,7 +18,7 @@ For example, to load 3 _Qwen/Qwen2.5-1.5B_ agents:
 trainer = MAGRPOTrainer(
     agent_model="Qwen/Qwen2.5-1.5B",
     agents=None,
-    num_agents=3,
+    args=MAGRPOConfig(num_agents=3, temperature=0.7, top_p=0.9, top_k=None),
 )
 ```
 
@@ -34,7 +34,7 @@ For example, to load a _Qwen/Qwen2.5-Coder-3B_ and a _Qwen/Qwen2.5-Coder-7B_:
 trainer = MAGRPOTrainer(
     agent_model=None,
     agents=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen2.5-Coder-7B"],
-    num_agents=2,
+    args=MAGRPOConfig(num_agents=2, temperature=0.7, top_p=0.9, top_k=None),
 )
 ```
 
@@ -51,7 +51,7 @@ trainer = MAACTrainer(
     agents=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen2.5-Coder-1.5B"],
     critic_model="Qwen/Qwen2.5-Coder-7B",
     critics=None,
-    num_agents=2,
+    args=MAACConfig(num_agents=2, temperature=0.7, top_p=0.9, top_k=None),
 )
 ```
 
@@ -67,7 +67,13 @@ trainer = IACTrainer(
     agents=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen2.5-Coder-7B"],
     critic_model=None,
     critics=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen2.5-Coder-7B"],
-    num_agents=2,
+    args=IACConfig(
+        num_agents=2,
+        use_separate_critic=True,
+        temperature=0.7,
+        top_p=0.9,
+        top_k=None,
+    ),
 )
 ```
 
@@ -79,7 +85,13 @@ trainer = IACTrainer(
     agents=["Qwen/Qwen2.5-Coder-3B", "Qwen/Qwen2.5-Coder-7B"],
     critic_model=None,
     critics=None,
-    num_agents=2,
+    args=IACConfig(
+        num_agents=2,
+        use_separate_critic=False,
+        temperature=0.7,
+        top_p=0.9,
+        top_k=None,
+    ),
 )
 ```
 
