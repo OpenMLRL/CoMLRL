@@ -21,14 +21,14 @@ class TorchrunScheduler:
     def resolve_mode(cls, requested_mode: Optional[str]) -> str:
         mode = str(requested_mode or "auto").strip().lower()
         if mode not in cls._VALID_MODES:
-            raise ValueError("parallel_mode must be one of: auto, ddp, scheduler.")
+            raise ValueError("parallel_training must be one of: auto, ddp, scheduler.")
 
         world_size = cls.world_size_from_env()
         if mode == "auto":
             return "ddp" if world_size > 1 else "scheduler"
         if mode == "scheduler" and world_size > 1:
             raise ValueError(
-                "parallel_mode='scheduler' requires WORLD_SIZE=1 (single process)."
+                "parallel_training='scheduler' requires WORLD_SIZE=1 (single process)."
             )
         return mode
 

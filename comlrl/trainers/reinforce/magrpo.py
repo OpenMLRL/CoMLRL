@@ -37,7 +37,7 @@ class MAGRPOConfig:
     agent_learning_rate: float = 5.0e-6
     logging_steps: int = 50
     num_agents: int = 2
-    parallel_mode: str = "auto"
+    parallel_training: str = "auto"
     agent_devices: Optional[Union[str, Sequence[str]]] = None
 
     # Sampling/generation
@@ -87,9 +87,9 @@ class MAGRPOConfig:
             self.train_batch_size = self.rollout_buffer_size
         if self.train_batch_size < 1:
             raise ValueError("train_batch_size must be >= 1.")
-        mode = str(self.parallel_mode or "auto").lower()
+        mode = str(self.parallel_training or "auto").lower()
         if mode not in {"auto", "ddp", "scheduler"}:
-            raise ValueError("parallel_mode must be one of: auto, ddp, scheduler.")
+            raise ValueError("parallel_training must be one of: auto, ddp, scheduler.")
 
 
 @dataclass
@@ -156,13 +156,13 @@ class MAGRPOTrainer:
         args: Optional[MAGRPOConfig] = None,
     ):
         self.args = args if args is not None else self.default_config_cls()
-        self.parallel_mode = TorchrunScheduler.resolve_mode(
-            getattr(self.args, "parallel_mode", "auto")
+        self.parallel_training = TorchrunScheduler.resolve_mode(
+            getattr(self.args, "parallel_training", "auto")
         )
-        if self.parallel_mode == "ddp":
+        if self.parallel_training == "ddp":
             if getattr(self.args, "agent_devices", None) is not None:
                 raise ValueError(
-                    "agent_devices is only valid in parallel_mode='scheduler'."
+                    "agent_devices is only valid in parallel_training='scheduler'."
                 )
             self.dist_env = TorchrunScheduler.ddp_context()
             self.device = self.dist_env.device
@@ -214,7 +214,7 @@ class MAGRPOTrainer:
 
         self.num_agents = expected_count
         self.model_name = model_name
-        if self.parallel_mode == "ddp":
+        if self.parallel_training == "ddp":
             self.agent_devices = [self.device] * self.num_agents
         else:
             self.agent_devices = DeviceScheduler.resolve_devices(

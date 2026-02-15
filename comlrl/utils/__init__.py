@@ -9,9 +9,7 @@ from .distributed import (
     init_distributed,
     is_main_process,
     local_context,
-    resolve_parallel_mode,
     unwrap_model,
-    world_size_from_env,
     wrap_ddp,
 )
 from .tokenizer_utils import (
@@ -36,8 +34,6 @@ __all__ = [
     "normalize_reward_lengths",
     "DistributedContext",
     "init_distributed",
-    "resolve_parallel_mode",
-    "world_size_from_env",
     "local_context",
     "wrap_ddp",
     "unwrap_model",

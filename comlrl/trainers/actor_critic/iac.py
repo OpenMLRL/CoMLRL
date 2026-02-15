@@ -50,7 +50,7 @@ class IACConfig:
     value_head_hidden_dim: Optional[int] = None
     num_agents: int = 2
     num_turns: int = 2
-    parallel_mode: str = "auto"
+    parallel_training: str = "auto"
     agent_devices: Optional[Union[str, Sequence[str]]] = None
     critic_devices: Optional[Union[str, Sequence[str]]] = None
     external_prompt_passthrough: bool = False
@@ -90,9 +90,9 @@ class IACConfig:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
-        mode = str(self.parallel_mode or "auto").lower()
+        mode = str(self.parallel_training or "auto").lower()
         if mode not in {"auto", "ddp", "scheduler"}:
-            raise ValueError("parallel_mode must be one of: auto, ddp, scheduler.")
+            raise ValueError("parallel_training must be one of: auto, ddp, scheduler.")
 
 
 @dataclass
@@ -172,16 +172,16 @@ class IACTrainer(ActorCriticTrainerBase):
         self.metrics_callback = metrics_callback
         self.model_config = model_config or {}
         self.critic_type = (self.args.critic_type or "v").lower()
-        self.parallel_mode = TorchrunScheduler.resolve_mode(
-            getattr(self.args, "parallel_mode", "auto")
+        self.parallel_training = TorchrunScheduler.resolve_mode(
+            getattr(self.args, "parallel_training", "auto")
         )
-        if self.parallel_mode == "ddp":
+        if self.parallel_training == "ddp":
             if (
                 getattr(self.args, "agent_devices", None) is not None
                 or getattr(self.args, "critic_devices", None) is not None
             ):
                 raise ValueError(
-                    "agent_devices/critic_devices are only valid in parallel_mode='scheduler'."
+                    "agent_devices/critic_devices are only valid in parallel_training='scheduler'."
                 )
             self.dist_env = TorchrunScheduler.ddp_context()
             self.device = self.dist_env.device

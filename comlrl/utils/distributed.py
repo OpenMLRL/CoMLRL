@@ -19,20 +19,6 @@ class DistributedContext:
     device: torch.device
 
 
-def world_size_from_env() -> int:
-    # Backward-compatible shim; prefer comlrl.schedulers.TorchrunScheduler.
-    from comlrl.schedulers import TorchrunScheduler
-
-    return TorchrunScheduler.world_size_from_env()
-
-
-def resolve_parallel_mode(requested_mode: Optional[str]) -> str:
-    # Backward-compatible shim; prefer comlrl.schedulers.TorchrunScheduler.
-    from comlrl.schedulers import TorchrunScheduler
-
-    return TorchrunScheduler.resolve_mode(requested_mode)
-
-
 def local_context(device: Optional[torch.device] = None) -> DistributedContext:
     if device is None:
         if torch.cuda.is_available():
