@@ -11,6 +11,7 @@ from datasets import Dataset, IterableDataset
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 import wandb
 from comlrl.models.actor_critic import CausalLMWithValueHead
+from comlrl.utils.distributed import init_distributed, unwrap_model, wrap_ddp
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_sources
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
@@ -135,7 +136,8 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.metrics_callback = metrics_callback
         self.model_config = model_config or {}
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dist_env = init_distributed()
+        self.device = self.dist_env.device
 
         tokenizers = resolve_tokenizers(agent_model, tokenizer, agents)
         if isinstance(tokenizers, list):
@@ -234,6 +236,11 @@ class MAACTrainer(ActorCriticTrainerBase):
             apply_tokenizer_specials(self.tokenizers[0], [self.critics[0]])
         else:
             apply_tokenizer_specials(self.tokenizer, [*self.agents, self.critics[0]])
+
+        if self.dist_env.enabled:
+            self.agents = [wrap_ddp(agent, self.dist_env) for agent in self.agents]
+            self.critics = [wrap_ddp(self.critics[0], self.dist_env)]
+
         self.formatters = build_formatters(formatters, self.args.num_agents)
         try:
             self._reward_signature = inspect.signature(reward_func)
@@ -258,7 +265,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.wandb_initialized = False
         self.env_step = 0
         self._last_train_log_step = -1
-        if wandb_config is not None:
+        if wandb_config is not None and self.dist_env.is_main:
             self._init_wandb()
         self.verbose = True
         if isinstance(self.wandb_config, dict):
@@ -269,6 +276,8 @@ class MAACTrainer(ActorCriticTrainerBase):
                     self.verbose = bool(out.get("verbose"))
 
     def _init_wandb(self) -> None:
+        if not self.dist_env.is_main:
+            return
         if self.wandb_config is None:
             self.wandb_config = {}
         wandb_project = self.wandb_config.get("project", "comlrl")
@@ -948,22 +957,26 @@ class MAACTrainer(ActorCriticTrainerBase):
             self._log_metrics(epoch_log)
 
         summary = self._summarize_epoch_metrics(epoch_metrics)
-        if summary and getattr(self, "verbose", True):
+        if summary and getattr(self, "verbose", True) and self.dist_env.is_main:
             to_print = epoch_log if epoch_log else summary
             print(f"Epoch {epoch + 1}/{total_epochs} metrics: {to_print}")
 
     def save_model(self, output_dir: str) -> None:
+        if self.dist_env.enabled and not self.dist_env.is_main:
+            return
         os.makedirs(output_dir, exist_ok=True)
         for agent_idx, actor in enumerate(self.agents):
+            actor = unwrap_model(actor)
             agent_dir = os.path.join(output_dir, f"agent_{agent_idx}")
             os.makedirs(agent_dir, exist_ok=True)
             actor.model.save_pretrained(agent_dir)
         critic_dir = os.path.join(output_dir, "critic")
         os.makedirs(critic_dir, exist_ok=True)
-        self.critics[0].model.save_pretrained(critic_dir)
-        if self.critics[0].value_head is not None:
+        critic = unwrap_model(self.critics[0])
+        critic.model.save_pretrained(critic_dir)
+        if critic.value_head is not None:
             torch.save(
-                self.critics[0].value_head.state_dict(),
+                critic.value_head.state_dict(),
                 os.path.join(critic_dir, "value_head.pt"),
             )
         if self.tokenizers:

@@ -10,9 +10,11 @@ import torch
 import wandb
 from datasets import Dataset, IterableDataset
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm  # type: ignore
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
+from comlrl.utils.distributed import init_distributed, unwrap_model, wrap_ddp
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import infer_model_name, resolve_model_sources
 from comlrl.utils.reward_utils import call_reward_function
@@ -144,7 +146,8 @@ class MAGRPOTrainer:
         eval_aggregator: Optional[Callable] = None,
         args: Optional[MAGRPOConfig] = None,
     ):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dist_env = init_distributed()
+        self.device = self.dist_env.device
 
         self.args = args if args is not None else self.default_config_cls()
         if agent_model is None and agents is None:
@@ -249,6 +252,9 @@ class MAGRPOTrainer:
         self.eval_aggregator = eval_aggregator
         self.external_transition = external_transition
 
+        if self.dist_env.enabled:
+            self.agents = [wrap_ddp(agent, self.dist_env) for agent in self.agents]
+
         self.optimizers = [
             torch.optim.AdamW(
                 agent.parameters(),
@@ -259,7 +265,7 @@ class MAGRPOTrainer:
 
         self.wandb_config = wandb_config
         self.wandb_initialized = False
-        if self.wandb_config is not None:
+        if self.wandb_config is not None and self.dist_env.is_main:
             self._init_wandb()
 
         self.dataset_type = dataset_type or None
@@ -285,6 +291,8 @@ class MAGRPOTrainer:
 
     def _init_wandb(self):
         """Initialize Weights & Biases for tracking with multi-turn config."""
+        if not self.dist_env.is_main:
+            return
         if not self.wandb_initialized:
             if self.wandb_config is None:
                 self.wandb_config = {}
@@ -398,12 +406,23 @@ class MAGRPOTrainer:
         """Returns the training DataLoader."""
         if self.train_dataset is None:
             raise ValueError("Trainer: training requires a train_dataset.")
+        sampler = None
+        if self.dist_env.enabled and not isinstance(
+            self.train_dataset, IterableDataset
+        ):
+            sampler = DistributedSampler(
+                self.train_dataset,
+                num_replicas=self.dist_env.world_size,
+                rank=self.dist_env.rank,
+                shuffle=False,
+            )
 
         return DataLoader(
             self.train_dataset,
             batch_size=1,
             collate_fn=lambda examples: examples,
             shuffle=False,
+            sampler=sampler,
             drop_last=False,
             num_workers=0,
         )
@@ -432,6 +451,8 @@ class MAGRPOTrainer:
         Returns:
             Dictionary containing evaluation metrics
         """
+        if self.dist_env.enabled and not self.dist_env.is_main:
+            return {}
         if self.eval_dataset is None:
             return {}
 
@@ -667,7 +688,10 @@ class MAGRPOTrainer:
             ]  # immediate rewards
             epoch_turn_returns = [[] for _ in range(self.args.num_turns)]  # returns
             dl = self.get_train_dataloader()
-            if getattr(self, "verbose", True):
+            sampler = getattr(dl, "sampler", None)
+            if isinstance(sampler, DistributedSampler):
+                sampler.set_epoch(epoch)
+            if getattr(self, "verbose", True) and self.dist_env.is_main:
                 it = enumerate(
                     tqdm(
                         dl,
@@ -1041,7 +1065,8 @@ class MAGRPOTrainer:
         Returns:
             Dict: A dictionary containing generated completions and associated data
         """
-        device = agent.device
+        agent_module = unwrap_model(agent)
+        device = next(agent_module.parameters()).device
 
         # Apply the appropriate formatter to create prompts from batch items
         if prompts_override is not None:
@@ -1070,7 +1095,7 @@ class MAGRPOTrainer:
         if self.tokenizer is None:
             raise ValueError("Tokenizer is required for generating completions")
         tokenizer = self.tokenizers[agent_idx]
-        apply_tokenizer_specials(tokenizer, [agent])
+        apply_tokenizer_specials(tokenizer, [agent_module])
         pad_id = tokenizer.pad_token_id
 
         prompt_encodings = tokenizer(
@@ -1499,9 +1524,12 @@ class MAGRPOTrainer:
         Args:
             output_dir: Directory to save the models to
         """
+        if self.dist_env.enabled and not self.dist_env.is_main:
+            return
         os.makedirs(output_dir, exist_ok=True)
 
         for agent_idx, agent in enumerate(self.agents):
+            agent = unwrap_model(agent)
             agent_dir = f"{output_dir}/agent_{agent_idx}"
             os.makedirs(agent_dir, exist_ok=True)
 

@@ -5,6 +5,12 @@ import torch
 import wandb
 from tqdm import tqdm  # type: ignore
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+
+try:
+    from datasets import IterableDataset as HFIterableDataset
+except Exception:  # pragma: no cover
+    HFIterableDataset = None
 
 
 class ActorCriticTrainerBase:
@@ -139,7 +145,9 @@ class ActorCriticTrainerBase:
         return metrics
 
     def _iter_dataloader(self, dataloader, epoch: int, total_epochs: int):
-        if getattr(self, "verbose", True):
+        dist_env = getattr(self, "dist_env", None)
+        is_main = bool(getattr(dist_env, "is_main", True))
+        if getattr(self, "verbose", True) and is_main:
             return enumerate(
                 tqdm(
                     dataloader,
@@ -165,7 +173,12 @@ class ActorCriticTrainerBase:
         epoch_metrics: Dict[str, List[float]],
     ) -> None:
         summary = self._summarize_epoch_metrics(epoch_metrics)
-        if summary and getattr(self, "verbose", True):
+        dist_env = getattr(self, "dist_env", None)
+        if (
+            summary
+            and getattr(self, "verbose", True)
+            and getattr(dist_env, "is_main", True)
+        ):
             print(f"Epoch {epoch + 1}/{total_epochs} metrics: {summary}")
 
     def _tag_metrics(
@@ -176,6 +189,9 @@ class ActorCriticTrainerBase:
 
     def _log_metrics(self, metrics: Dict[str, float]) -> None:
         if not metrics:
+            return
+        dist_env = getattr(self, "dist_env", None)
+        if dist_env is not None and dist_env.enabled and not dist_env.is_main:
             return
         if self.wandb_initialized and wandb is not None:
             wandb.log(metrics, step=self.env_step)
@@ -246,10 +262,27 @@ class ActorCriticTrainerBase:
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
             raise ValueError("Training requires a dataset.")
+        dist_env = getattr(self, "dist_env", None)
+        sampler = None
+        if (
+            dist_env is not None
+            and dist_env.enabled
+            and (
+                HFIterableDataset is None
+                or not isinstance(self.train_dataset, HFIterableDataset)
+            )
+        ):
+            sampler = DistributedSampler(
+                self.train_dataset,
+                num_replicas=dist_env.world_size,
+                rank=dist_env.rank,
+                shuffle=False,
+            )
         return DataLoader(
             self.train_dataset,
             batch_size=1,
             shuffle=False,
+            sampler=sampler,
             collate_fn=lambda batch: batch,
         )
 
@@ -264,6 +297,9 @@ class ActorCriticTrainerBase:
         )
 
     def evaluate(self) -> Dict[str, float]:
+        dist_env = getattr(self, "dist_env", None)
+        if dist_env is not None and dist_env.enabled and not dist_env.is_main:
+            return {}
         if self.eval_dataset is None:
             return {}
 
@@ -304,6 +340,9 @@ class ActorCriticTrainerBase:
         for epoch in range(total_epochs):
             epoch_metrics = defaultdict(list)
             dataloader = self.get_train_dataloader()
+            sampler = getattr(dataloader, "sampler", None)
+            if isinstance(sampler, DistributedSampler):
+                sampler.set_epoch(epoch)
             it = self._iter_dataloader(dataloader, epoch, total_epochs)
             for batch_idx, batch in it:
                 if (

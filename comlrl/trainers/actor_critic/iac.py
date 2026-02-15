@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from datasets import Dataset, IterableDataset
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 from comlrl.models.actor_critic import CausalLMWithValueHead
+from comlrl.utils.distributed import init_distributed, unwrap_model, wrap_ddp
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_sources
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
@@ -161,8 +162,8 @@ class IACTrainer(ActorCriticTrainerBase):
         self.metrics_callback = metrics_callback
         self.model_config = model_config or {}
         self.critic_type = (self.args.critic_type or "v").lower()
-
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dist_env = init_distributed()
+        self.device = self.dist_env.device
 
         self.agents: List[CausalLMWithValueHead] = []
         self.critics: List[CausalLMWithValueHead] = []
@@ -274,6 +275,11 @@ class IACTrainer(ActorCriticTrainerBase):
                 apply_tokenizer_specials(tok, models)
         else:
             apply_tokenizer_specials(self.tokenizer, [*self.agents, *self.critics])
+
+        if self.dist_env.enabled:
+            self.agents = [wrap_ddp(agent, self.dist_env) for agent in self.agents]
+            self.critics = [wrap_ddp(critic, self.dist_env) for critic in self.critics]
+
         self.agent_optimizers = []
         self.critic_optimizers = []
 
@@ -297,7 +303,7 @@ class IACTrainer(ActorCriticTrainerBase):
         self.wandb_config = wandb_config
         self.wandb_initialized = False
         self._last_train_log_step = -1
-        if wandb_config is not None:
+        if wandb_config is not None and self.dist_env.is_main:
             self._init_wandb()
         self.verbose = True
         if isinstance(self.wandb_config, dict):
@@ -308,6 +314,8 @@ class IACTrainer(ActorCriticTrainerBase):
                     self.verbose = bool(out.get("verbose"))
 
     def _init_wandb(self) -> None:
+        if not self.dist_env.is_main:
+            return
         if self.wandb_initialized:
             return
         if wandb is None:
@@ -1025,16 +1033,18 @@ class IACTrainer(ActorCriticTrainerBase):
         return averaged
 
     def save_model(self, output_dir: str) -> None:
+        if self.dist_env.enabled and not self.dist_env.is_main:
+            return
         os.makedirs(output_dir, exist_ok=True)
         if self.args.num_agents == 1:
-            actor = self.agents[0]
+            actor = unwrap_model(self.agents[0])
             actor.model.save_pretrained(output_dir)
             if actor.value_head is not None:
                 torch.save(
                     actor.value_head.state_dict(),
                     os.path.join(output_dir, "value_head.pt"),
                 )
-            critic = self.critics[0] if self.critics else None
+            critic = unwrap_model(self.critics[0]) if self.critics else None
             if critic is not None:
                 critic_dir = os.path.join(output_dir, "critic")
                 os.makedirs(critic_dir, exist_ok=True)
@@ -1046,6 +1056,7 @@ class IACTrainer(ActorCriticTrainerBase):
                     )
         else:
             for agent_idx, actor in enumerate(self.agents):
+                actor = unwrap_model(actor)
                 agent_dir = os.path.join(output_dir, f"agent_{agent_idx}")
                 os.makedirs(agent_dir, exist_ok=True)
                 actor.model.save_pretrained(agent_dir)
@@ -1056,7 +1067,7 @@ class IACTrainer(ActorCriticTrainerBase):
                     )
                 if not self.critics or agent_idx >= len(self.critics):
                     continue
-                critic = self.critics[agent_idx]
+                critic = unwrap_model(self.critics[agent_idx])
                 critic_dir = os.path.join(agent_dir, "critic")
                 os.makedirs(critic_dir, exist_ok=True)
                 critic.model.save_pretrained(critic_dir)

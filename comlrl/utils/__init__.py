@@ -2,6 +2,15 @@ from .formatters import build_formatters
 from .model_loading import infer_model_name, resolve_model_sources
 from .reward_processor import RewardProcessors
 from .reward_utils import call_reward_function, normalize_reward_lengths
+from .distributed import (
+    DistributedContext,
+    all_gather_objects,
+    barrier,
+    init_distributed,
+    is_main_process,
+    unwrap_model,
+    wrap_ddp,
+)
 from .tokenizer_utils import (
     apply_tokenizer_specials,
     ensure_pad_token,
@@ -22,4 +31,11 @@ __all__ = [
     "RewardProcessors",
     "call_reward_function",
     "normalize_reward_lengths",
+    "DistributedContext",
+    "init_distributed",
+    "wrap_ddp",
+    "unwrap_model",
+    "is_main_process",
+    "barrier",
+    "all_gather_objects",
 ]
