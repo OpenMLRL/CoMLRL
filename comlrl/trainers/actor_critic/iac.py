@@ -10,7 +10,11 @@ import torch.nn.functional as F
 from datasets import Dataset, IterableDataset
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 from comlrl.models.actor_critic import CausalLMWithValueHead
-from comlrl.utils.distributed import init_distributed, unwrap_model, wrap_ddp
+from comlrl.schedulers import DeviceScheduler, TorchrunScheduler
+from comlrl.utils.distributed import (
+    unwrap_model,
+    wrap_ddp,
+)
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_sources
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
@@ -46,6 +50,9 @@ class IACConfig:
     value_head_hidden_dim: Optional[int] = None
     num_agents: int = 2
     num_turns: int = 2
+    parallel_mode: str = "auto"
+    agent_devices: Optional[Union[str, Sequence[str]]] = None
+    critic_devices: Optional[Union[str, Sequence[str]]] = None
     external_prompt_passthrough: bool = False
     discount: float = 0.9
     num_generations: int = 1
@@ -83,6 +90,9 @@ class IACConfig:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
+        mode = str(self.parallel_mode or "auto").lower()
+        if mode not in {"auto", "ddp", "scheduler"}:
+            raise ValueError("parallel_mode must be one of: auto, ddp, scheduler.")
 
 
 @dataclass
@@ -162,8 +172,30 @@ class IACTrainer(ActorCriticTrainerBase):
         self.metrics_callback = metrics_callback
         self.model_config = model_config or {}
         self.critic_type = (self.args.critic_type or "v").lower()
-        self.dist_env = init_distributed()
-        self.device = self.dist_env.device
+        self.parallel_mode = TorchrunScheduler.resolve_mode(
+            getattr(self.args, "parallel_mode", "auto")
+        )
+        if self.parallel_mode == "ddp":
+            if (
+                getattr(self.args, "agent_devices", None) is not None
+                or getattr(self.args, "critic_devices", None) is not None
+            ):
+                raise ValueError(
+                    "agent_devices/critic_devices are only valid in parallel_mode='scheduler'."
+                )
+            self.dist_env = TorchrunScheduler.ddp_context()
+            self.device = self.dist_env.device
+            self.agent_devices = [self.device] * self.args.num_agents
+            self.critic_devices = [self.device] * self.args.num_agents
+        else:
+            self.agent_devices, self.critic_devices = DeviceScheduler.assign_devices(
+                self.args.num_agents,
+                getattr(self.args, "agent_devices", None),
+                getattr(self.args, "critic_devices", None),
+                use_separate_critic=self.args.use_separate_critic,
+            )
+            self.device = self.agent_devices[0]
+            self.dist_env = TorchrunScheduler.scheduler_context(self.device)
 
         self.agents: List[CausalLMWithValueHead] = []
         self.critics: List[CausalLMWithValueHead] = []
@@ -189,7 +221,7 @@ class IACTrainer(ActorCriticTrainerBase):
             expected_count=self.args.num_agents,
             model_label="agent_model",
         )
-        for actor_source in actor_sources:
+        for idx, actor_source in enumerate(actor_sources):
             if actor_source is None:
                 raise ValueError("A policy model identifier or instance is required.")
             if isinstance(actor_source, CausalLMWithValueHead):
@@ -220,7 +252,7 @@ class IACTrainer(ActorCriticTrainerBase):
                     value_head_hidden_dim=self.args.value_head_hidden_dim,
                     attach_value_head=attach_value,
                 )
-            agent_model.to(self.device)
+            agent_model.to(self.agent_devices[idx])
             self.agents.append(agent_model)
 
         if self.args.use_separate_critic:
@@ -235,7 +267,7 @@ class IACTrainer(ActorCriticTrainerBase):
                 expected_count=self.args.num_agents,
                 model_label="critic_model",
             )
-            for critic_source in critic_sources:
+            for idx, critic_source in enumerate(critic_sources):
                 if isinstance(critic_source, CausalLMWithValueHead):
                     critic_model = critic_source
                 elif isinstance(critic_source, PreTrainedModel):
@@ -262,7 +294,7 @@ class IACTrainer(ActorCriticTrainerBase):
                         value_head_hidden_dim=self.args.critic_value_head_hidden_dim,
                         attach_value_head=True,
                     )
-                critic_model.to(self.device)
+                critic_model.to(self.critic_devices[idx])
                 self.critics.append(critic_model)
         else:
             self.critics = []
@@ -312,6 +344,14 @@ class IACTrainer(ActorCriticTrainerBase):
                 out = sections.get("output", {})
                 if isinstance(out, dict) and "verbose" in out:
                     self.verbose = bool(out.get("verbose"))
+
+    def _agent_device(self, agent_idx: int) -> torch.device:
+        return self.agent_devices[agent_idx]
+
+    def _critic_device(self, agent_idx: int) -> torch.device:
+        if self.args.use_separate_critic:
+            return self.critic_devices[agent_idx]
+        return self.agent_devices[agent_idx]
 
     def _init_wandb(self) -> None:
         if not self.dist_env.is_main:
@@ -424,7 +464,10 @@ class IACTrainer(ActorCriticTrainerBase):
         agent_idx: int,
         num_ret: int,
     ) -> Dict[str, Any]:
-        encoded_prompt = self._encode_prompt(prompt, agent_idx=agent_idx)
+        agent_device = self._agent_device(agent_idx)
+        encoded_prompt = self._encode_prompt(
+            prompt, agent_idx=agent_idx, device=agent_device
+        )
         prompt_input_ids = encoded_prompt["input_ids"]
         prompt_attention_mask = encoded_prompt["attention_mask"]
         prompt_len = prompt_input_ids.size(1)
@@ -461,17 +504,20 @@ class IACTrainer(ActorCriticTrainerBase):
                 tokenizer.decode(seq[:resp_len], skip_special_tokens=True)
             )
 
-        full_attention_mask = torch.ones_like(sequences, device=self.device)
+        full_attention_mask = torch.ones_like(sequences, device=agent_device)
 
         with torch.no_grad():
             if self.args.use_separate_critic:
                 critic_model = self.critics[agent_idx]
                 if critic_model is None:
                     raise RuntimeError("Critic model missing for agent.")
+                critic_device = self._critic_device(agent_idx)
+                critic_sequences = sequences.to(critic_device)
+                critic_mask = full_attention_mask.to(critic_device)
                 value = self._value_for_critic_type(
                     critic_model,
-                    sequences,
-                    full_attention_mask,
+                    critic_sequences,
+                    critic_mask,
                     prompt_len,
                     response_lens,
                 )
@@ -564,7 +610,7 @@ class IACTrainer(ActorCriticTrainerBase):
                 value = data["values"][i]
                 reward = float(rewards_matrix[agent_idx][i])
                 reward_tensor = torch.tensor(
-                    [reward], device=self.device, dtype=torch.float32
+                    [reward], device=self._agent_device(agent_idx), dtype=torch.float32
                 )
                 returns = reward_tensor.clone()
                 advantage = returns - value
@@ -675,7 +721,9 @@ class IACTrainer(ActorCriticTrainerBase):
                 value = data["values"][0]
                 reward_val = float(rewards_matrix[agent_idx][0])
                 reward_tensor = torch.tensor(
-                    [reward_val], device=self.device, dtype=torch.float32
+                    [reward_val],
+                    device=self._agent_device(agent_idx),
+                    dtype=torch.float32,
                 )
 
                 completion_text = data["completions"][0]
@@ -727,7 +775,9 @@ class IACTrainer(ActorCriticTrainerBase):
                 immediate = float(sample.reward.view(-1)[0].item())
                 future = immediate + gamma * future
                 sample.returns = (
-                    torch.tensor([future], device=self.device).detach().cpu()
+                    torch.tensor([future], device=self._agent_device(agent_idx))
+                    .detach()
+                    .cpu()
                 )
                 sample.advantage = torch.zeros_like(sample.returns)
                 sample.normalized_advantage = None
@@ -887,10 +937,12 @@ class IACTrainer(ActorCriticTrainerBase):
 
         actor_losses: List[torch.Tensor] = []
         value_losses: List[torch.Tensor] = []
+        agent_device = self._agent_device(agent_idx)
+        critic_device = self._critic_device(agent_idx)
 
         for sample in batch:
-            sequences = sample.full_input_ids.to(self.device).unsqueeze(0)
-            attention_mask = sample.attention_mask.to(self.device).unsqueeze(0)
+            sequences = sample.full_input_ids.to(agent_device).unsqueeze(0)
+            attention_mask = sample.attention_mask.to(agent_device).unsqueeze(0)
 
             # Policy log-prob uses full sequence; value uses prompt-only baseline.
             logprob, _ = self._policy_eval(
@@ -904,10 +956,12 @@ class IACTrainer(ActorCriticTrainerBase):
             if self.args.use_separate_critic:
                 if critic_model is None:
                     raise RuntimeError("Critic model not initialised.")
+                critic_sequences = sequences.to(critic_device)
+                critic_attention_mask = attention_mask.to(critic_device)
                 value = self._critic_eval(
                     critic_model,
-                    sequences,
-                    attention_mask,
+                    critic_sequences,
+                    critic_attention_mask,
                     sample.prompt_len,
                     sample.response_len,
                 )
@@ -920,10 +974,13 @@ class IACTrainer(ActorCriticTrainerBase):
                     [sample.response_len],
                 )
 
-            old_value = sample.old_value.to(self.device, dtype=value.dtype)
-            old_logprob = sample.old_logprob.to(self.device)
-            advantage = sample.normalized_advantage.to(self.device, dtype=value.dtype)
-            returns = sample.returns.to(self.device, dtype=value.dtype)
+            value_device = value.device
+            old_value = sample.old_value.to(value_device, dtype=value.dtype)
+            old_logprob = sample.old_logprob.to(agent_device)
+            policy_advantage = sample.normalized_advantage.to(
+                agent_device, dtype=logprob.dtype
+            )
+            returns = sample.returns.to(value_device, dtype=value.dtype)
 
             if (
                 not torch.isfinite(logprob).all()
@@ -932,17 +989,17 @@ class IACTrainer(ActorCriticTrainerBase):
                 raise FloatingPointError(
                     "Encountered non-finite logprob during AC step."
                 )
-            if not torch.isfinite(advantage).all():
+            if not torch.isfinite(policy_advantage).all():
                 raise FloatingPointError("Advantage contains non-finite values.")
             if not torch.isfinite(returns).all():
                 raise FloatingPointError("Returns contain non-finite values.")
 
-            policy_loss = -(logprob * advantage)
+            policy_loss = -(logprob * policy_advantage)
 
             value_target = sample.metadata.get("value_target")
             if value_target is None:
                 raise RuntimeError("value_target missing for critic update.")
-            value_target = value_target.to(self.device, dtype=value.dtype)
+            value_target = value_target.to(value_device, dtype=value.dtype)
             if (
                 self.args.value_clip_range is not None
                 and not self.args.use_separate_critic

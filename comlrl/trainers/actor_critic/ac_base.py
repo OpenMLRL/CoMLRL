@@ -70,6 +70,7 @@ class ActorCriticTrainerBase:
         prompt: str,
         agent_idx: Optional[int] = None,
         tokenizer: Optional[Any] = None,
+        device: Optional[torch.device] = None,
     ) -> Dict[str, torch.Tensor]:
         tokenizer = tokenizer or self._get_tokenizer(agent_idx)
         encoded = tokenizer(
@@ -77,9 +78,10 @@ class ActorCriticTrainerBase:
             return_tensors="pt",
             truncation=True,
         )
+        target_device = device or self.device
         return {
-            "input_ids": encoded["input_ids"].to(self.device),
-            "attention_mask": encoded["attention_mask"].to(self.device),
+            "input_ids": encoded["input_ids"].to(target_device),
+            "attention_mask": encoded["attention_mask"].to(target_device),
         }
 
     def _prepare_advantages(self, rollouts: List[Any]) -> None:

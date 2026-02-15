@@ -11,7 +11,11 @@ from datasets import Dataset, IterableDataset
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 import wandb
 from comlrl.models.actor_critic import CausalLMWithValueHead
-from comlrl.utils.distributed import init_distributed, unwrap_model, wrap_ddp
+from comlrl.schedulers import DeviceScheduler, TorchrunScheduler
+from comlrl.utils.distributed import (
+    unwrap_model,
+    wrap_ddp,
+)
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_sources
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
@@ -42,6 +46,9 @@ class MAACConfig:
     num_agents: int = 2
     num_generations: int = 1
     num_turns: int = 2
+    parallel_mode: str = "auto"
+    agent_devices: Optional[Union[str, Sequence[str]]] = None
+    critic_devices: Optional[Union[str, Sequence[str]]] = None
     external_prompt_passthrough: bool = False
     discount: float = 0.9
     critic_type: str = "v"  # "v" (V(s)) or "q" (Q(s,a))
@@ -77,6 +84,9 @@ class MAACConfig:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
+        mode = str(self.parallel_mode or "auto").lower()
+        if mode not in {"auto", "ddp", "scheduler"}:
+            raise ValueError("parallel_mode must be one of: auto, ddp, scheduler.")
 
 
 class MAACTrainer(ActorCriticTrainerBase):
@@ -135,9 +145,32 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.eval_dataset = eval_dataset
         self.metrics_callback = metrics_callback
         self.model_config = model_config or {}
-
-        self.dist_env = init_distributed()
-        self.device = self.dist_env.device
+        self.parallel_mode = TorchrunScheduler.resolve_mode(
+            getattr(self.args, "parallel_mode", "auto")
+        )
+        if self.parallel_mode == "ddp":
+            if (
+                getattr(self.args, "agent_devices", None) is not None
+                or getattr(self.args, "critic_devices", None) is not None
+            ):
+                raise ValueError(
+                    "agent_devices/critic_devices are only valid in parallel_mode='scheduler'."
+                )
+            self.dist_env = TorchrunScheduler.ddp_context()
+            self.device = self.dist_env.device
+            self.agent_devices = [self.device] * self.args.num_agents
+            self.critic_device = self.device
+        else:
+            self.agent_devices = DeviceScheduler.resolve_devices(
+                getattr(self.args, "agent_devices", None),
+                self.args.num_agents,
+                kind="agent_devices",
+            )
+            self.critic_device = DeviceScheduler.assign_shared_critic_device(
+                self.agent_devices, getattr(self.args, "critic_devices", None)
+            )
+            self.device = self.agent_devices[0]
+            self.dist_env = TorchrunScheduler.scheduler_context(self.device)
 
         tokenizers = resolve_tokenizers(agent_model, tokenizer, agents)
         if isinstance(tokenizers, list):
@@ -156,7 +189,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             expected_count=self.args.num_agents,
             model_label="agent_model",
         )
-        for actor_source in actor_sources:
+        for idx, actor_source in enumerate(actor_sources):
             if actor_source is None:
                 raise ValueError("agent_model must be provided for MAAC.")
             if isinstance(actor_source, CausalLMWithValueHead):
@@ -185,7 +218,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                     attach_value_head=False,
                     value_head_hidden_dim=None,
                 )
-            agent_model.to(self.device)
+            agent_model.to(self.agent_devices[idx])
             self.agents.append(agent_model)
 
         critic_sources, _critic_name = resolve_model_sources(
@@ -227,7 +260,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                     "critic_value_head_hidden_dim"
                 ),
             )
-        critic_model_instance.to(self.device)
+        critic_model_instance.to(self.critic_device)
         self.critics: List[CausalLMWithValueHead] = [critic_model_instance]
 
         if self.tokenizers and len(self.tokenizers) == len(self.agents):
@@ -274,6 +307,9 @@ class MAACTrainer(ActorCriticTrainerBase):
                 out = sections.get("output", {})
                 if isinstance(out, dict) and "verbose" in out:
                     self.verbose = bool(out.get("verbose"))
+
+    def _agent_device(self, agent_idx: int) -> torch.device:
+        return self.agent_devices[agent_idx]
 
     def _init_wandb(self) -> None:
         if not self.dist_env.is_main:
@@ -386,7 +422,11 @@ class MAACTrainer(ActorCriticTrainerBase):
         return base + "\n\n" + "\n\n".join(action_lines)
 
     def _critic_value_from_text(self, critic_input: str) -> Dict[str, Any]:
-        encoded = self._encode_prompt(critic_input, tokenizer=self._get_tokenizer(0))
+        encoded = self._encode_prompt(
+            critic_input,
+            tokenizer=self._get_tokenizer(0),
+            device=self.critic_device,
+        )
         ids = encoded["input_ids"]
         mask = encoded["attention_mask"]
         prompt_len = ids.size(1)
@@ -400,7 +440,10 @@ class MAACTrainer(ActorCriticTrainerBase):
         }
 
     def _generate(self, agent_model, prompt: str, agent_idx: int) -> Dict[str, Any]:
-        encoded_prompt = self._encode_prompt(prompt, agent_idx=agent_idx)
+        agent_device = self._agent_device(agent_idx)
+        encoded_prompt = self._encode_prompt(
+            prompt, agent_idx=agent_idx, device=agent_device
+        )
         prompt_input_ids = encoded_prompt["input_ids"]
         prompt_attention_mask = encoded_prompt["attention_mask"]
         prompt_len = prompt_input_ids.size(1)
@@ -442,7 +485,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             "prompt": prompt,
             "prompt_len": prompt_len,
             "sequences": sequences,
-            "attention_mask": torch.ones_like(sequences, device=self.device),
+            "attention_mask": torch.ones_like(sequences, device=agent_device),
             "response_lens": response_lens,
             "completions": completion_texts,
         }
@@ -525,7 +568,9 @@ class MAACTrainer(ActorCriticTrainerBase):
                 attn = data["attention_mask"][i]
                 resp_len = data["response_lens"][i]
                 reward = float(rewards_matrix[agent_idx][i])
-                reward_tensor = torch.tensor([reward], device=self.device)
+                reward_tensor = torch.tensor(
+                    [reward], device=self._agent_device(agent_idx)
+                )
 
                 logprob, _ = self._policy_eval(
                     self.agents[agent_idx],
@@ -680,7 +725,9 @@ class MAACTrainer(ActorCriticTrainerBase):
                 attn = data["attention_mask"][0]
                 resp_len = data["response_lens"][0]
                 reward_val = float(rewards_matrix[agent_idx][0])
-                reward_tensor = torch.tensor([reward_val], device=self.device)
+                reward_tensor = torch.tensor(
+                    [reward_val], device=self._agent_device(agent_idx)
+                )
 
                 logprob, _ = self._policy_eval(
                     self.agents[agent_idx],
@@ -743,7 +790,9 @@ class MAACTrainer(ActorCriticTrainerBase):
                 immediate = float(sample.reward.view(-1)[0].item())
                 future = immediate + gamma * future
                 sample.returns = (
-                    torch.tensor([future], device=self.device).detach().cpu()
+                    torch.tensor([future], device=self._agent_device(agent_idx))
+                    .detach()
+                    .cpu()
                 )
                 sample.advantage = torch.zeros_like(sample.returns)
                 sample.normalized_advantage = None
@@ -844,10 +893,12 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         actor_losses: List[torch.Tensor] = []
         value_losses: List[torch.Tensor] = []
+        agent_device = self._agent_device(agent_idx)
+        critic_device = self.critic_device
 
         for sample in batch:
-            sequences = sample.full_input_ids.to(self.device).unsqueeze(0)
-            attention_mask = sample.attention_mask.to(self.device).unsqueeze(0)
+            sequences = sample.full_input_ids.to(agent_device).unsqueeze(0)
+            attention_mask = sample.attention_mask.to(agent_device).unsqueeze(0)
 
             logprob, _ = self._policy_eval(
                 agent_model,
@@ -858,30 +909,33 @@ class MAACTrainer(ActorCriticTrainerBase):
                 output_values=False,
             )
 
-            joint_ids = sample.metadata["joint_input_ids"].to(self.device)
-            joint_mask = sample.metadata["joint_attention_mask"].to(self.device)
+            joint_ids = sample.metadata["joint_input_ids"].to(critic_device)
+            joint_mask = sample.metadata["joint_attention_mask"].to(critic_device)
             joint_len = int(sample.metadata["joint_prompt_len"])
             value = self._value_on_prompt_only(
                 self.critics[0], joint_ids, joint_mask, joint_len
             )
 
-            old_value = sample.old_value.to(self.device, dtype=value.dtype)
-            advantage = sample.normalized_advantage.to(self.device, dtype=value.dtype)
+            value_device = value.device
+            old_value = sample.old_value.to(value_device, dtype=value.dtype)
+            policy_advantage = sample.normalized_advantage.to(
+                agent_device, dtype=logprob.dtype
+            )
             value_target = sample.metadata.get("value_target")
             if value_target is None:
                 raise RuntimeError("value_target missing for critic update.")
-            returns = value_target.to(self.device, dtype=value.dtype)
+            returns = value_target.to(value_device, dtype=value.dtype)
 
             if not torch.isfinite(logprob).all():
                 raise FloatingPointError(
                     "Encountered non-finite logprob during AC step."
                 )
-            if not torch.isfinite(advantage).all():
+            if not torch.isfinite(policy_advantage).all():
                 raise FloatingPointError("Advantage contains non-finite values.")
             if not torch.isfinite(returns).all():
                 raise FloatingPointError("Returns contain non-finite values.")
 
-            policy_loss = -(logprob * advantage)
+            policy_loss = -(logprob * policy_advantage)
             value_error = (returns - value) ** 2
 
             actor_losses.append(policy_loss)

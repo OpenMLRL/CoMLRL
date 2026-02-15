@@ -14,7 +14,11 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm  # type: ignore
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-from comlrl.utils.distributed import init_distributed, unwrap_model, wrap_ddp
+from comlrl.schedulers import DeviceScheduler, TorchrunScheduler
+from comlrl.utils.distributed import (
+    unwrap_model,
+    wrap_ddp,
+)
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import infer_model_name, resolve_model_sources
 from comlrl.utils.reward_utils import call_reward_function
@@ -33,6 +37,8 @@ class MAGRPOConfig:
     agent_learning_rate: float = 5.0e-6
     logging_steps: int = 50
     num_agents: int = 2
+    parallel_mode: str = "auto"
+    agent_devices: Optional[Union[str, Sequence[str]]] = None
 
     # Sampling/generation
     num_generations: int = 4
@@ -81,6 +87,9 @@ class MAGRPOConfig:
             self.train_batch_size = self.rollout_buffer_size
         if self.train_batch_size < 1:
             raise ValueError("train_batch_size must be >= 1.")
+        mode = str(self.parallel_mode or "auto").lower()
+        if mode not in {"auto", "ddp", "scheduler"}:
+            raise ValueError("parallel_mode must be one of: auto, ddp, scheduler.")
 
 
 @dataclass
@@ -146,10 +155,21 @@ class MAGRPOTrainer:
         eval_aggregator: Optional[Callable] = None,
         args: Optional[MAGRPOConfig] = None,
     ):
-        self.dist_env = init_distributed()
-        self.device = self.dist_env.device
-
         self.args = args if args is not None else self.default_config_cls()
+        self.parallel_mode = TorchrunScheduler.resolve_mode(
+            getattr(self.args, "parallel_mode", "auto")
+        )
+        if self.parallel_mode == "ddp":
+            if getattr(self.args, "agent_devices", None) is not None:
+                raise ValueError(
+                    "agent_devices is only valid in parallel_mode='scheduler'."
+                )
+            self.dist_env = TorchrunScheduler.ddp_context()
+            self.device = self.dist_env.device
+        else:
+            self.dist_env = TorchrunScheduler.scheduler_context()
+            self.device = self.dist_env.device
+
         if agent_model is None and agents is None:
             raise ValueError("Either agent_model or agents must be provided.")
         if (
@@ -194,6 +214,16 @@ class MAGRPOTrainer:
 
         self.num_agents = expected_count
         self.model_name = model_name
+        if self.parallel_mode == "ddp":
+            self.agent_devices = [self.device] * self.num_agents
+        else:
+            self.agent_devices = DeviceScheduler.resolve_devices(
+                getattr(self.args, "agent_devices", None),
+                self.num_agents,
+                kind="agent_devices",
+            )
+            self.device = self.agent_devices[0]
+            self.dist_env = TorchrunScheduler.scheduler_context(self.device)
         if actor_sources and all(isinstance(src, str) for src in actor_sources):
             from transformers import AutoModelForCausalLM
 
@@ -212,6 +242,9 @@ class MAGRPOTrainer:
         else:
             self.agents = list(actor_sources)
         self.critics = []
+
+        for idx, agent in enumerate(self.agents):
+            agent.to(self.agent_devices[idx])
 
         tokenizers = resolve_tokenizers(agent_model, tokenizer, actor_sources)
         if isinstance(tokenizers, list):
@@ -673,9 +706,8 @@ class MAGRPOTrainer:
         if self.wandb_config is not None and not self.wandb_initialized:
             self._init_wandb()
 
-        device = self.device
-        for agent in self.agents:
-            agent.to(device)
+        for agent_idx, agent in enumerate(self.agents):
+            agent.to(self.agent_devices[agent_idx])
             agent.train()
 
         # Create the data pipeline for generating examples
@@ -1429,7 +1461,8 @@ class MAGRPOTrainer:
         Returns:
             torch.Tensor: The computed loss with gradients attached
         """
-        device = agent.device
+        agent_module = unwrap_model(agent)
+        device = next(agent_module.parameters()).device
 
         # Make sure we have the correct number of rewards
         if len(returns) == 0:
