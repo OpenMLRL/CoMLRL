@@ -1,6 +1,6 @@
 ---
-title: Multi-Turn Training
-linkTitle: Multi-Turn Training
+title: Multi-Turn Environment
+linkTitle: Multi-Turn Environment
 weight: 5
 math: true
 ---

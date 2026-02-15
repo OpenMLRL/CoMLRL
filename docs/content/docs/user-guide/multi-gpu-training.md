@@ -1,13 +1,23 @@
 ---
-title: Multi-GPU Training
+title: Training Parallelization
+linkTitle: Training Parallelization
 weight: 6
 ---
 
 When multiple GPUs are available, CoMLRL can improve training throughput and reduce training time.
 
-CoMLRL supports two ways to leverage multiple GPUs: Model Parallel scheduling (**MP**) for agent/critic deployment and PyTorch Distributed Data Parallel (**DDP**) across multiple processes.
+CoMLRL supports two schedulers for leveraging multiple GPUs: Model Parallelization (**MP**) for agent/critic deployment and PyTorch Distributed Data Parallelization (**DDP**) across multiple processes.
 
-## Model Parallel Scheduler
+## Concepts
+
+- `CUDA_VISIBLE_DEVICES`: The GPUs visible to the current process.
+- `WORLD_SIZE`: Total number of distributed processes participating in one training job.
+- `RANK`: Global process index in `[0, WORLD_SIZE-1]`.
+- `LOCAL_RANK`: Process index on the current node; used to select the node-local GPU.
+- `MASTER_ADDR`: Address of the process-group rendezvous host (usually rank 0 node).
+- `MASTER_PORT`: Port on `MASTER_ADDR` used to initialize distributed communication.
+
+## Model Parallelization
 
 When `parallel_training=mp`, CoMLRL deploys the agents and critics across the specified devices via `agent_devices` / `critic_devices`.
 The training and inference for each model (agent/critic) are running separately on its assigned device.
@@ -23,14 +33,14 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python train.py
     iac.critic_devices='["cuda:2","cuda:3"]'
 ```
 
-## Distributed Data Parallel Scheduler
+## Distributed Data Parallelization
 
 When `parallel_training=ddp`, CoMLRL launches multiple processes (one per GPU) and synchronizes gradients across them. Each process runs the full training loop across multiple models, but only on its assigned GPU. The model parameters are kept in sync across processes using PyTorch's DDP.
 DDP improves the training throughput, but requires more GPU memory since each process holds a full copy of the models. DDP also requires more careful setup (e.g., environment variables, process launching) and may not be compatible with all reward functions.
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 train.py \
-  --config configs/iac_xxx.yaml \
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 train.py
+  --config configs/iac_xxx.yaml
   --override iac.parallel_training=ddp
 ```
 
