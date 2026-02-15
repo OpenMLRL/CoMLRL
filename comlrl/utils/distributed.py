@@ -43,8 +43,17 @@ def init_distributed(backend: Optional[str] = None) -> DistributedContext:
 
     if torch.cuda.is_available():
         if enabled:
-            device_count = max(1, torch.cuda.device_count())
-            local_rank = local_rank % device_count
+            device_count = torch.cuda.device_count()
+            if device_count < 1:
+                raise RuntimeError(
+                    "DDP requested but no CUDA devices are visible to this process."
+                )
+            if local_rank < 0 or local_rank >= device_count:
+                raise ValueError(
+                    "Invalid distributed GPU mapping: "
+                    f"LOCAL_RANK={local_rank}, visible_cuda_devices={device_count}. "
+                    "Make sure nproc_per_node does not exceed visible GPUs."
+                )
             torch.cuda.set_device(local_rank)
         device = torch.device(f"cuda:{local_rank}" if enabled else "cuda")
     else:
