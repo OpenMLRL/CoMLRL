@@ -11,7 +11,7 @@ from comlrl.utils.distributed import DistributedContext, init_distributed, local
 class TorchrunScheduler:
     """Resolve and initialize process-level parallel execution mode."""
 
-    _VALID_MODES = {"auto", "ddp", "scheduler"}
+    _VALID_MODES = {"auto", "ddp", "mp"}
 
     @staticmethod
     def world_size_from_env() -> int:
@@ -21,14 +21,14 @@ class TorchrunScheduler:
     def resolve_mode(cls, requested_mode: Optional[str]) -> str:
         mode = str(requested_mode or "auto").strip().lower()
         if mode not in cls._VALID_MODES:
-            raise ValueError("parallel_training must be one of: auto, ddp, scheduler.")
+            raise ValueError("parallel_training must be one of: auto, ddp, mp.")
 
         world_size = cls.world_size_from_env()
         if mode == "auto":
-            return "ddp" if world_size > 1 else "scheduler"
-        if mode == "scheduler" and world_size > 1:
+            return "ddp" if world_size > 1 else "mp"
+        if mode == "mp" and world_size > 1:
             raise ValueError(
-                "parallel_training='scheduler' requires WORLD_SIZE=1 (single process)."
+                "parallel_training='mp' requires WORLD_SIZE=1 (single process)."
             )
         return mode
 
@@ -37,7 +37,7 @@ class TorchrunScheduler:
         return init_distributed()
 
     @staticmethod
-    def scheduler_context(
+    def mp_context(
         device: Optional[torch.device] = None,
     ) -> DistributedContext:
         return local_context(device)

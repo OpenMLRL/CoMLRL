@@ -88,8 +88,8 @@ class MAGRPOConfig:
         if self.train_batch_size < 1:
             raise ValueError("train_batch_size must be >= 1.")
         mode = str(self.parallel_training or "auto").lower()
-        if mode not in {"auto", "ddp", "scheduler"}:
-            raise ValueError("parallel_training must be one of: auto, ddp, scheduler.")
+        if mode not in {"auto", "ddp", "mp"}:
+            raise ValueError("parallel_training must be one of: auto, ddp, mp.")
 
 
 @dataclass
@@ -162,12 +162,12 @@ class MAGRPOTrainer:
         if self.parallel_training == "ddp":
             if getattr(self.args, "agent_devices", None) is not None:
                 raise ValueError(
-                    "agent_devices is only valid in parallel_training='scheduler'."
+                    "agent_devices is only valid in parallel_training='mp'."
                 )
             self.dist_env = TorchrunScheduler.ddp_context()
             self.device = self.dist_env.device
         else:
-            self.dist_env = TorchrunScheduler.scheduler_context()
+            self.dist_env = TorchrunScheduler.mp_context()
             self.device = self.dist_env.device
 
         if agent_model is None and agents is None:
@@ -223,7 +223,7 @@ class MAGRPOTrainer:
                 kind="agent_devices",
             )
             self.device = self.agent_devices[0]
-            self.dist_env = TorchrunScheduler.scheduler_context(self.device)
+            self.dist_env = TorchrunScheduler.mp_context(self.device)
         if actor_sources and all(isinstance(src, str) for src in actor_sources):
             from transformers import AutoModelForCausalLM
 

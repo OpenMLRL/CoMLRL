@@ -91,8 +91,8 @@ class IACConfig:
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
         mode = str(self.parallel_training or "auto").lower()
-        if mode not in {"auto", "ddp", "scheduler"}:
-            raise ValueError("parallel_training must be one of: auto, ddp, scheduler.")
+        if mode not in {"auto", "ddp", "mp"}:
+            raise ValueError("parallel_training must be one of: auto, ddp, mp.")
 
 
 @dataclass
@@ -181,7 +181,7 @@ class IACTrainer(ActorCriticTrainerBase):
                 or getattr(self.args, "critic_devices", None) is not None
             ):
                 raise ValueError(
-                    "agent_devices/critic_devices are only valid in parallel_training='scheduler'."
+                    "agent_devices/critic_devices are only valid in parallel_training='mp'."
                 )
             self.dist_env = TorchrunScheduler.ddp_context()
             self.device = self.dist_env.device
@@ -195,7 +195,7 @@ class IACTrainer(ActorCriticTrainerBase):
                 use_separate_critic=self.args.use_separate_critic,
             )
             self.device = self.agent_devices[0]
-            self.dist_env = TorchrunScheduler.scheduler_context(self.device)
+            self.dist_env = TorchrunScheduler.mp_context(self.device)
 
         self.agents: List[CausalLMWithValueHead] = []
         self.critics: List[CausalLMWithValueHead] = []
