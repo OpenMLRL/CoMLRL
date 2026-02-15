@@ -1193,7 +1193,7 @@ class MAGRPOTrainer:
 
             kwargs.pop("do_sample", None)
             generation_kwargs.update(kwargs)
-            generation_output = agent.generate(**generation_kwargs)
+            generation_output = agent_module.generate(**generation_kwargs)
         except Exception as e:
             raise ValueError(f"Generation failed: {str(e)}")
 

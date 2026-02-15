@@ -485,7 +485,8 @@ class IACTrainer(ActorCriticTrainerBase):
         if self.args.top_k is not None:
             generation_kwargs["top_k"] = self.args.top_k
 
-        sequences = agent_model.generate(**generation_kwargs)
+        generation_model = unwrap_model(agent_model)
+        sequences = generation_model.generate(**generation_kwargs)
         if sequences.size(1) <= prompt_len:
             raise RuntimeError("Model produced an empty completion during rollout.")
 
