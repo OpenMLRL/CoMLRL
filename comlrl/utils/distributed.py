@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -113,3 +113,48 @@ def all_gather_objects(obj: Any, ctx: Optional[DistributedContext]) -> List[Any]
     gathered: List[Any] = [None for _ in range(ctx.world_size)]
     dist.all_gather_object(gathered, obj)
     return gathered
+
+
+def reduce_metrics_dict(
+    metrics: Dict[str, float],
+    ctx: Optional[DistributedContext],
+) -> Dict[str, float]:
+    """Average scalar metrics across distributed ranks.
+
+    This helper must be called by all ranks in the same order.
+    """
+    if ctx is None or not ctx.enabled:
+        return dict(metrics)
+    if not metrics:
+        return {}
+
+    keys = sorted(metrics.keys())
+    gathered_keys = all_gather_objects(keys, ctx)
+    same_keyset = all(k == keys for k in gathered_keys)
+
+    if same_keyset:
+        values = torch.tensor(
+            [float(metrics[k]) for k in keys], device=ctx.device, dtype=torch.float64
+        )
+        dist.all_reduce(values, op=dist.ReduceOp.SUM)
+        values /= float(ctx.world_size)
+        reduced = {k: float(values[i].item()) for i, k in enumerate(keys)}
+        return reduced if ctx.is_main else {}
+
+    union_keys = sorted({k for key_list in gathered_keys for k in key_list})
+    value_tensor = torch.tensor(
+        [float(metrics.get(k, 0.0)) for k in union_keys],
+        device=ctx.device,
+        dtype=torch.float64,
+    )
+    count_tensor = torch.tensor(
+        [1.0 if k in metrics else 0.0 for k in union_keys],
+        device=ctx.device,
+        dtype=torch.float64,
+    )
+    dist.all_reduce(value_tensor, op=dist.ReduceOp.SUM)
+    dist.all_reduce(count_tensor, op=dist.ReduceOp.SUM)
+    count_tensor = torch.clamp(count_tensor, min=1.0)
+    averaged = value_tensor / count_tensor
+    reduced = {k: float(averaged[i].item()) for i, k in enumerate(union_keys)}
+    return reduced if ctx.is_main else {}

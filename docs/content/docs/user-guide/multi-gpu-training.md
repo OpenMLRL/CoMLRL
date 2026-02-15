@@ -23,7 +23,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python train.py
     iac.critic_devices='["cuda:2","cuda:3"]'
 ```
 
-## Distributed Data Parallel
+## Distributed Data Parallel Scheduler
 
 When `parallel_training=ddp`, CoMLRL launches multiple processes (one per GPU) and synchronizes gradients across them. Each process runs the full training loop across multiple models, but only on its assigned GPU. The model parameters are kept in sync across processes using PyTorch's DDP.
 DDP improves the training throughput, but requires more GPU memory since each process holds a full copy of the models. DDP also requires more careful setup (e.g., environment variables, process launching) and may not be compatible with all reward functions.
@@ -39,5 +39,5 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 train.py \
 The `parallel_training` field is set to `auto` by default.
 When users have `WORLD_SIZE=1` and `CUDA_VISIBLE_DEVICES=0`, CoMLRL trainers fall back to single-gpu training on `cuda:0` without launching multiple processes.
 When users have multiple GPUs available, and `WORLD_SIZE=1`, CoMLRL trainers use MP to deploy models across the visible GPUs.
-When users have multiple GPUs and `WORLD_SIZE > 1`, CoMLRL trainers use DDP to synchronize training across processes.
+When users have multiple GPUs and complete torchrun distributed env vars (`WORLD_SIZE/RANK/LOCAL_RANK/MASTER_ADDR/MASTER_PORT`), CoMLRL trainers use DDP to synchronize training across processes.
 These two modes are mutually exclusive.

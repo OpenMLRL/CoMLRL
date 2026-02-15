@@ -15,7 +15,15 @@ class TorchrunScheduler:
 
     @staticmethod
     def world_size_from_env() -> int:
-        return int(os.environ.get("WORLD_SIZE", "1"))
+        try:
+            return int(os.environ.get("WORLD_SIZE", "1"))
+        except (TypeError, ValueError):
+            return 1
+
+    @staticmethod
+    def _missing_ddp_env_vars() -> list[str]:
+        required = ("WORLD_SIZE", "RANK", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT")
+        return [k for k in required if str(os.environ.get(k, "")).strip() == ""]
 
     @classmethod
     def resolve_mode(cls, requested_mode: Optional[str]) -> str:
@@ -25,7 +33,23 @@ class TorchrunScheduler:
 
         world_size = cls.world_size_from_env()
         if mode == "auto":
-            return "ddp" if world_size > 1 else "mp"
+            if world_size <= 1:
+                return "mp"
+            # In shared cluster environments WORLD_SIZE may be exported globally.
+            # Only switch to DDP when torchrun-style variables are complete.
+            return "ddp" if not cls._missing_ddp_env_vars() else "mp"
+        if mode == "ddp":
+            if world_size <= 1:
+                raise ValueError(
+                    "parallel_training='ddp' requires WORLD_SIZE>1. "
+                    "Use torchrun --nproc_per_node=... to launch."
+                )
+            missing = cls._missing_ddp_env_vars()
+            if missing:
+                raise ValueError(
+                    "parallel_training='ddp' requires torchrun environment variables. "
+                    f"Missing: {', '.join(missing)}."
+                )
         if mode == "mp" and world_size > 1:
             raise ValueError(
                 "parallel_training='mp' requires WORLD_SIZE=1 (single process)."

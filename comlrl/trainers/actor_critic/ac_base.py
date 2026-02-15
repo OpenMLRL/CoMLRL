@@ -6,6 +6,8 @@ import wandb
 from tqdm import tqdm  # type: ignore
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
+from comlrl.utils.distributed import barrier as dist_barrier
+from comlrl.utils.distributed import reduce_metrics_dict
 
 try:
     from datasets import IterableDataset as HFIterableDataset
@@ -189,14 +191,23 @@ class ActorCriticTrainerBase:
         prefix = f"turn_{turn_idx + 1}/"
         return {prefix + key: value for key, value in metrics.items()}
 
-    def _log_metrics(self, metrics: Dict[str, float]) -> None:
+    def _log_metrics(
+        self, metrics: Dict[str, float], *, synchronize: bool = True
+    ) -> None:
         if not metrics:
             return
         dist_env = getattr(self, "dist_env", None)
-        if dist_env is not None and dist_env.enabled and not dist_env.is_main:
+        metrics_to_log = metrics
+        if dist_env is not None and dist_env.enabled and synchronize:
+            metrics_to_log = reduce_metrics_dict(metrics, dist_env)
+            if not dist_env.is_main:
+                return
+        elif dist_env is not None and dist_env.enabled and not dist_env.is_main:
+            return
+        if not metrics_to_log:
             return
         if self.wandb_initialized and wandb is not None:
-            wandb.log(metrics, step=self.env_step)
+            wandb.log(metrics_to_log, step=self.env_step)
 
     def _should_log_train(self) -> bool:
         interval = int(getattr(self.args, "logging_steps", 1))
@@ -333,7 +344,7 @@ class ActorCriticTrainerBase:
                 eval_log[f"eval/turn_{turn_idx + 1}/{key}"] = value
 
         if eval_log:
-            self._log_metrics(eval_log)
+            self._log_metrics(eval_log, synchronize=False)
         return eval_log
 
     def train(self) -> None:
@@ -352,7 +363,15 @@ class ActorCriticTrainerBase:
                     and self.args.eval_interval > 0
                     and batch_idx % int(self.args.eval_interval) == 0
                 ):
-                    self.evaluate()
+                    dist_env = getattr(self, "dist_env", None)
+                    if dist_env is not None and dist_env.enabled:
+                        # Keep all ranks step-aligned to avoid DDP hangs during eval windows.
+                        dist_barrier(dist_env)
+                        if dist_env.is_main:
+                            self.evaluate()
+                        dist_barrier(dist_env)
+                    else:
+                        self.evaluate()
                 self._run_batch(batch, epoch_metrics)
 
             self._flush_buffers(epoch_metrics)

@@ -16,6 +16,8 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from comlrl.schedulers import DeviceScheduler, TorchrunScheduler
 from comlrl.utils.distributed import (
+    barrier as dist_barrier,
+    reduce_metrics_dict,
     unwrap_model,
     wrap_ddp,
 )
@@ -738,8 +740,19 @@ class MAGRPOTrainer:
                 if int(self.args.eval_interval) > 0 and (
                     batch_idx % int(self.args.eval_interval) == 0
                 ):
-                    # evaluate() already logs its metrics; avoid duplicate logging here
-                    _ = self.evaluate(num_eval_samples=int(self.args.eval_num_samples))
+                    if self.dist_env.enabled:
+                        # Keep all ranks synchronized around evaluation windows.
+                        dist_barrier(self.dist_env)
+                        if self.dist_env.is_main:
+                            # evaluate() already logs its metrics.
+                            _ = self.evaluate(
+                                num_eval_samples=int(self.args.eval_num_samples)
+                            )
+                        dist_barrier(self.dist_env)
+                    else:
+                        _ = self.evaluate(
+                            num_eval_samples=int(self.args.eval_num_samples)
+                        )
 
                 # Process single batch item (batch_size=1 enforced)
                 batch_item = batch[0]
@@ -756,20 +769,29 @@ class MAGRPOTrainer:
                     self._process_buffer(agent_idx, buffer)
 
             # Log per-turn epoch averages inline (avoid custom system/* metrics)
-            if self.wandb_initialized and wandb.run is not None:
-                epoch_log: Dict[str, Any] = {}
-                n_turns = max(1, int(self.args.num_turns))
-                for turn_idx in range(n_turns):
-                    if epoch_turn_rewards and epoch_turn_rewards[turn_idx]:
-                        epoch_log[f"turn_{turn_idx + 1}/epoch_reward_mean"] = float(
-                            np.mean(epoch_turn_rewards[turn_idx])
-                        )
-                    if epoch_turn_returns and epoch_turn_returns[turn_idx]:
-                        epoch_log[f"turn_{turn_idx + 1}/epoch_avg_return"] = float(
-                            np.mean(epoch_turn_returns[turn_idx])
-                        )
-                if epoch_log:
-                    wandb.log(epoch_log, step=self.env_step)
+            epoch_log: Dict[str, Any] = {}
+            n_turns = max(1, int(self.args.num_turns))
+            for turn_idx in range(n_turns):
+                if epoch_turn_rewards and epoch_turn_rewards[turn_idx]:
+                    epoch_log[f"turn_{turn_idx + 1}/epoch_reward_mean"] = float(
+                        np.mean(epoch_turn_rewards[turn_idx])
+                    )
+                if epoch_turn_returns and epoch_turn_returns[turn_idx]:
+                    epoch_log[f"turn_{turn_idx + 1}/epoch_avg_return"] = float(
+                        np.mean(epoch_turn_returns[turn_idx])
+                    )
+
+            if self.dist_env.enabled:
+                reduced_epoch_log = reduce_metrics_dict(epoch_log, self.dist_env)
+                if (
+                    self.dist_env.is_main
+                    and reduced_epoch_log
+                    and self.wandb_initialized
+                    and wandb.run is not None
+                ):
+                    wandb.log(reduced_epoch_log, step=self.env_step)
+            elif epoch_log and self.wandb_initialized and wandb.run is not None:
+                wandb.log(epoch_log, step=self.env_step)
 
     def _train_step_returns(
         self,
