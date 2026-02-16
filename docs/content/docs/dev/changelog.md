@@ -7,7 +7,7 @@ weight: 3
 
 ## Version 1.3.7
 
-- Remove the redundant sampling hyperparameters in algorithms, change the sampling logics.
+- Remove the redundant sampling hyperparameters in algorithms.
 - Allow multi-gpu training with MP and DDP.
 
 ## Version 1.3.6

@@ -3,6 +3,7 @@ import os
 import random
 from dataclasses import dataclass
 import itertools
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional, Union, Tuple, Type, Sequence
 
 import numpy as np
@@ -324,6 +325,48 @@ class MAGRPOTrainer:
                 if isinstance(out, dict) and "verbose" in out:
                     self.verbose = bool(out.get("verbose"))
 
+    def _parallel_agent_mode_enabled(self) -> bool:
+        if str(getattr(self, "parallel_training", "")).lower() != "mp":
+            return False
+        if int(getattr(self, "num_agents", 0) or 0) <= 1:
+            return False
+        devices = getattr(self, "agent_devices", None)
+        if not devices:
+            return True
+        unique = {str(device) for device in devices}
+        return len(unique) > 1
+
+    def _run_agent_tasks(
+        self,
+        fn,
+        *,
+        agent_indices: Optional[List[int]] = None,
+        parallel: Optional[bool] = None,
+    ) -> List[Any]:
+        indices = (
+            list(agent_indices)
+            if agent_indices is not None
+            else list(range(self.num_agents))
+        )
+        if not indices:
+            return []
+        use_parallel = (
+            self._parallel_agent_mode_enabled() if parallel is None else bool(parallel)
+        )
+        if not use_parallel or len(indices) <= 1:
+            return [fn(agent_idx) for agent_idx in indices]
+
+        results: Dict[int, Any] = {}
+        max_workers = min(len(indices), max(1, len(indices)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(fn, agent_idx): agent_idx for agent_idx in indices
+            }
+            for future in as_completed(futures):
+                agent_idx = futures[future]
+                results[agent_idx] = future.result()
+        return [results[agent_idx] for agent_idx in indices]
+
     def _init_wandb(self):
         """Initialize Weights & Biases for tracking with multi-turn config."""
         if not self.dist_env.is_main:
@@ -617,8 +660,10 @@ class MAGRPOTrainer:
                             "External transition must return a list or tuple of external prompts for each agent"
                         )
 
-            # Generate and extract one completion from each agent for evaluation
-            for agent_idx in range(self.num_agents):
+            # Generate and extract one completion from each agent for evaluation.
+            # In MP mode this executes generation concurrently, while keeping
+            # synchronous consumption order by agent index.
+            def _generate_eval_agent(agent_idx: int) -> Dict[str, Any]:
                 agent_completions = self._generate_completions_with_external_prompts(
                     self.agents[agent_idx],
                     [batch_item],
@@ -627,12 +672,17 @@ class MAGRPOTrainer:
                     max_new_tokens=self.args.max_new_tokens,
                     external_prompts=agent_external_prompts[agent_idx],
                 )
-                # Extract the completion directly
-                completion = agent_completions["completions"][0][0]
-                # Record prompt used this turn
-                used_prompt = agent_completions["prompts"][0]
-                eval_prompt_history[agent_idx].append(used_prompt)
-                agent_sample_completions[agent_idx].append(completion)
+                return {
+                    "agent_idx": agent_idx,
+                    "completion": agent_completions["completions"][0][0],
+                    "used_prompt": agent_completions["prompts"][0],
+                }
+
+            eval_outputs = self._run_agent_tasks(_generate_eval_agent)
+            for output in eval_outputs:
+                agent_idx = int(output["agent_idx"])
+                eval_prompt_history[agent_idx].append(output["used_prompt"])
+                agent_sample_completions[agent_idx].append(output["completion"])
 
             # Compute immediate reward at this turn (single joint sample)
             agent_completions_for_reward = [
@@ -764,9 +814,12 @@ class MAGRPOTrainer:
                     **kwargs,
                 )
 
-            for agent_idx, buffer in enumerate(self.rollout_buffers):
-                if buffer:
-                    self._process_buffer(agent_idx, buffer)
+            ready_agents = [
+                agent_idx
+                for agent_idx, buffer in enumerate(self.rollout_buffers)
+                if buffer
+            ]
+            self._drain_ready_buffers(ready_agents)
 
             # Log per-turn epoch averages inline (avoid custom system/* metrics)
             epoch_log: Dict[str, Any] = {}
@@ -824,9 +877,8 @@ class MAGRPOTrainer:
             prompt_history_per_agent: Optional[List[List[str]]] = None,
             response_history_per_agent: Optional[List[List[str]]] = None,
         ):
-            comps_per_agent = []
-            for agent_idx in range(self.num_agents):
-                comps = self._generate_completions_with_external_prompts(
+            def _generate_agent_node(agent_idx: int) -> Dict[str, Any]:
+                return self._generate_completions_with_external_prompts(
                     self.agents[agent_idx],
                     [batch_item],
                     agent_idx=agent_idx,
@@ -837,7 +889,8 @@ class MAGRPOTrainer:
                     ),
                     **kwargs,
                 )
-                comps_per_agent.append(comps)
+
+            comps_per_agent = self._run_agent_tasks(_generate_agent_node)
 
             agent_completions_list = [
                 comps_per_agent[i]["completions"][0] for i in range(self.num_agents)
@@ -1073,10 +1126,22 @@ class MAGRPOTrainer:
 
         post_order_update(root)
 
+        grouped_pending: Dict[int, List[Tuple[int, NodeSample]]] = {}
         for agent_idx, samples in enumerate(pending_samples):
             samples.sort(key=lambda s: s.node_env_step)
             for sample in samples:
-                self._append_to_buffer(agent_idx, sample)
+                step = int(sample.node_env_step)
+                grouped_pending.setdefault(step, []).append((agent_idx, sample))
+
+        for step in sorted(grouped_pending.keys()):
+            ready_agents: List[int] = []
+            step_samples = sorted(grouped_pending[step], key=lambda x: x[0])
+            for agent_idx, sample in step_samples:
+                buffer = self.rollout_buffers[agent_idx]
+                buffer.append(sample)
+                if len(buffer) >= int(self.args.rollout_buffer_size):
+                    ready_agents.append(agent_idx)
+            self._drain_ready_buffers(ready_agents)
 
         # Build per-turn batch summary
         batch_loss = float(np.mean(np.abs(root.get("returns") or [0.0])))
@@ -1392,12 +1457,6 @@ class MAGRPOTrainer:
             "completion_input_ids": packed_completion_ids,
         }
 
-    def _append_to_buffer(self, agent_idx: int, sample: NodeSample) -> None:
-        buffer = self.rollout_buffers[agent_idx]
-        buffer.append(sample)
-        if len(buffer) >= int(self.args.rollout_buffer_size):
-            self._process_buffer(agent_idx, buffer)
-
     def _should_log_train(self, step: int) -> bool:
         interval = int(getattr(self.args, "logging_steps", 1))
         if interval <= 1:
@@ -1411,18 +1470,22 @@ class MAGRPOTrainer:
             return True
         return False
 
-    def _process_buffer(self, agent_idx: int, buffer: List[NodeSample]) -> None:
+    def _process_buffer(
+        self, agent_idx: int, buffer: List[NodeSample]
+    ) -> Dict[str, Any]:
         if not buffer:
-            return
+            return {"log_entries": []}
         turn_groups: Dict[int, List[NodeSample]] = {}
         for sample in buffer:
             t_idx = int(sample.turn_idx)
             turn_groups.setdefault(t_idx, []).append(sample)
         buffer.clear()
+
+        log_entries: List[Dict[str, Any]] = []
         for t_idx in sorted(turn_groups.keys()):
             samples = turn_groups[t_idx]
             self._update_from_samples(agent_idx, samples)
-            if self.wandb_initialized and wandb.run is not None and samples:
+            if samples:
                 batch_log: Dict[str, Any] = {}
                 prefix = f"turn_{t_idx + 1}/"
                 batch_log[prefix + "reward_mean"] = float(
@@ -1432,8 +1495,48 @@ class MAGRPOTrainer:
                     np.mean([s.node_mean_return for s in samples])
                 )
                 step = max(s.node_env_step for s in samples)
-                if self._should_log_train(step):
-                    wandb.log(batch_log, step=step)
+                log_entries.append(
+                    {
+                        "agent_idx": int(agent_idx),
+                        "step": int(step),
+                        "metrics": batch_log,
+                    }
+                )
+        return {"log_entries": log_entries}
+
+    def _drain_ready_buffers(self, ready_agents: List[int]) -> None:
+        if not ready_agents:
+            return
+        unique_ready = sorted({int(idx) for idx in ready_agents})
+        run_parallel = self._parallel_agent_mode_enabled()
+
+        def _process(agent_idx: int) -> Dict[str, Any]:
+            return self._process_buffer(agent_idx, self.rollout_buffers[agent_idx])
+
+        results = self._run_agent_tasks(
+            _process,
+            agent_indices=unique_ready,
+            parallel=run_parallel,
+        )
+
+        if not (self.wandb_initialized and wandb.run is not None):
+            return
+
+        all_log_entries: List[Dict[str, Any]] = []
+        for result in results:
+            all_log_entries.extend(result.get("log_entries", []))
+
+        all_log_entries.sort(
+            key=lambda entry: (
+                int(entry.get("step", 0)),
+                int(entry.get("agent_idx", 0)),
+            )
+        )
+        for entry in all_log_entries:
+            step = int(entry.get("step", self.env_step))
+            metrics = entry.get("metrics") or {}
+            if metrics and self._should_log_train(step):
+                wandb.log(metrics, step=step)
 
     def _update_from_samples(self, agent_idx: int, samples: List[NodeSample]) -> None:
         if not samples:

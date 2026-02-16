@@ -171,6 +171,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             )
             self.device = self.agent_devices[0]
             self.dist_env = TorchrunScheduler.mp_context(self.device)
+        self._parallel_update_enabled = False
 
         tokenizers = resolve_tokenizers(agent_model, tokenizer, agents)
         if isinstance(tokenizers, list):
@@ -496,26 +497,31 @@ class MAACTrainer(ActorCriticTrainerBase):
         if num_turns > 1:
             return self._collect_rollouts_multi_turn(item, num_turns)
 
-        prompts: List[str] = []
-        completions_per_agent: List[List[str]] = []
-        rollout_data: List[Dict[str, Any]] = []
         num_ret = int(self.args.num_generations)
+        turn_prompts = [
+            self._resolve_turn_prompt(item, agent_idx)
+            for agent_idx in range(self.args.num_agents)
+        ]
 
-        for agent_idx, agent_model in enumerate(self.agents):
-            prompt = self._resolve_turn_prompt(item, agent_idx)
+        def _generate_agent(agent_idx: int) -> Dict[str, Any]:
+            agent_model = self.agents[agent_idx]
+            prompt = turn_prompts[agent_idx]
             gen = self._generate(agent_model, prompt, agent_idx)
-            prompts.append(prompt)
-            completions_per_agent.append(gen["completions"])
-            rollout_data.append(
-                {
-                    "agent_idx": agent_idx,
-                    "prompt": prompt,
-                    "prompt_len": gen["prompt_len"],
-                    "sequences": gen["sequences"],
-                    "attention_mask": gen["attention_mask"],
-                    "response_lens": gen["response_lens"],
-                }
-            )
+            return {
+                "agent_idx": agent_idx,
+                "prompt": prompt,
+                "prompt_len": gen["prompt_len"],
+                "sequences": gen["sequences"],
+                "attention_mask": gen["attention_mask"],
+                "response_lens": gen["response_lens"],
+                "completion_texts": gen["completions"],
+            }
+
+        rollout_data = self._run_agent_tasks(_generate_agent)
+        prompts: List[str] = [entry["prompt"] for entry in rollout_data]
+        completions_per_agent: List[List[str]] = [
+            entry["completion_texts"] for entry in rollout_data
+        ]
 
         rewards = call_reward_function(
             self.reward_func,
@@ -676,23 +682,27 @@ class MAACTrainer(ActorCriticTrainerBase):
                 ]
 
             completions_per_agent: List[List[str]] = []
-            rollout_data: List[Dict[str, Any]] = []
-            for agent_idx, agent_model in enumerate(self.agents):
+            for agent_idx, prompt in enumerate(turn_prompts):
+                prompt_history[agent_idx].append(prompt)
+
+            def _generate_agent_turn(agent_idx: int) -> Dict[str, Any]:
+                agent_model = self.agents[agent_idx]
                 prompt = turn_prompts[agent_idx]
                 gen = self._generate(agent_model, prompt, agent_idx)
-                completions_per_agent.append(gen["completions"])
-                rollout_data.append(
-                    {
-                        "agent_idx": agent_idx,
-                        "prompt": prompt,
-                        "prompt_len": gen["prompt_len"],
-                        "sequences": gen["sequences"],
-                        "attention_mask": gen["attention_mask"],
-                        "response_lens": gen["response_lens"],
-                        "completion_texts": gen["completions"],
-                    }
-                )
-                prompt_history[agent_idx].append(prompt)
+                return {
+                    "agent_idx": agent_idx,
+                    "prompt": prompt,
+                    "prompt_len": gen["prompt_len"],
+                    "sequences": gen["sequences"],
+                    "attention_mask": gen["attention_mask"],
+                    "response_lens": gen["response_lens"],
+                    "completion_texts": gen["completions"],
+                }
+
+            rollout_data = self._run_agent_tasks(_generate_agent_turn)
+            completions_per_agent = [
+                entry["completion_texts"] for entry in rollout_data
+            ]
 
             rewards = call_reward_function(
                 self.reward_func,

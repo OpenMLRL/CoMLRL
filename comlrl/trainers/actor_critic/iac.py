@@ -572,17 +572,23 @@ class IACTrainer(ActorCriticTrainerBase):
         if num_turns > 1:
             return self._collect_rollouts_multi_turn(item, num_turns)
 
-        prompts: List[str] = []
-        completions_per_agent: List[List[str]] = []
-        rollout_data: List[Dict[str, Any]] = []
         num_ret = int(getattr(self.args, "num_generations", 1))
+        turn_prompts = [
+            self._resolve_turn_prompt(item, agent_idx)
+            for agent_idx in range(self.args.num_agents)
+        ]
 
-        for agent_idx, agent_model in enumerate(self.agents):
-            prompt = self._resolve_turn_prompt(item, agent_idx)
+        def _generate_agent(agent_idx: int) -> Dict[str, Any]:
+            agent_model = self.agents[agent_idx]
+            prompt = turn_prompts[agent_idx]
             gen = self._generate_rollout(agent_model, prompt, agent_idx, num_ret)
-            completions_per_agent.append(gen["completions"])
-            rollout_data.append({"agent_idx": agent_idx, **gen})
-            prompts.append(prompt)
+            return {"agent_idx": agent_idx, **gen}
+
+        rollout_data = self._run_agent_tasks(_generate_agent)
+        prompts: List[str] = [entry["prompt"] for entry in rollout_data]
+        completions_per_agent: List[List[str]] = [
+            entry["completions"] for entry in rollout_data
+        ]
 
         rewards = call_reward_function(
             self.reward_func,
@@ -689,13 +695,17 @@ class IACTrainer(ActorCriticTrainerBase):
                 ]
 
             completions_per_agent: List[List[str]] = []
-            rollout_data: List[Dict[str, Any]] = []
-            for agent_idx, agent_model in enumerate(self.agents):
+            for agent_idx, prompt in enumerate(turn_prompts):
+                prompt_history[agent_idx].append(prompt)
+
+            def _generate_agent_turn(agent_idx: int) -> Dict[str, Any]:
+                agent_model = self.agents[agent_idx]
                 prompt = turn_prompts[agent_idx]
                 gen = self._generate_rollout(agent_model, prompt, agent_idx, num_ret=1)
-                completions_per_agent.append(gen["completions"])
-                rollout_data.append({"agent_idx": agent_idx, **gen})
-                prompt_history[agent_idx].append(prompt)
+                return {"agent_idx": agent_idx, **gen}
+
+            rollout_data = self._run_agent_tasks(_generate_agent_turn)
+            completions_per_agent = [entry["completions"] for entry in rollout_data]
 
             rewards = call_reward_function(
                 self.reward_func,

@@ -1,5 +1,6 @@
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import torch
 import wandb
@@ -17,6 +18,51 @@ except Exception:  # pragma: no cover
 
 class ActorCriticTrainerBase:
     """Shared training utilities for actor-critic style trainers."""
+
+    def _parallel_agent_mode_enabled(self) -> bool:
+        if str(getattr(self, "parallel_training", "")).lower() != "mp":
+            return False
+        num_agents = int(getattr(getattr(self, "args", None), "num_agents", 0) or 0)
+        if num_agents <= 1:
+            return False
+        devices = getattr(self, "agent_devices", None)
+        if not devices:
+            return True
+        unique = {str(device) for device in devices}
+        return len(unique) > 1
+
+    def _run_agent_tasks(
+        self,
+        fn,
+        *,
+        agent_indices: Optional[List[int]] = None,
+        parallel: Optional[bool] = None,
+    ) -> List[Any]:
+        num_agents = int(getattr(getattr(self, "args", None), "num_agents", 0) or 0)
+        indices = (
+            list(agent_indices)
+            if agent_indices is not None
+            else list(range(max(num_agents, 0)))
+        )
+        if not indices:
+            return []
+
+        use_parallel = (
+            self._parallel_agent_mode_enabled() if parallel is None else bool(parallel)
+        )
+        if not use_parallel or len(indices) <= 1:
+            return [fn(agent_idx) for agent_idx in indices]
+
+        results: Dict[int, Any] = {}
+        max_workers = min(len(indices), max(1, len(indices)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(fn, agent_idx): agent_idx for agent_idx in indices
+            }
+            for future in as_completed(futures):
+                agent_idx = futures[future]
+                results[agent_idx] = future.result()
+        return [results[agent_idx] for agent_idx in indices]
 
     def _filter_model_kwargs(self, cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         torch_dtype = None
@@ -226,10 +272,9 @@ class ActorCriticTrainerBase:
         self,
         agent_idx: int,
         buffer: List[Any],
-        epoch_metrics: Dict[str, List[float]],
-    ) -> None:
+    ) -> Dict[str, Any]:
         if not buffer:
-            return
+            return {"metric_values": {}, "log_metrics": {}}
 
         has_turn_idx = any(
             "turn_idx" in (getattr(s, "metadata", {}) or {}) for s in buffer
@@ -242,13 +287,49 @@ class ActorCriticTrainerBase:
         buffer.clear()
 
         combined_log: Dict[str, float] = {}
+        metric_values: Dict[str, List[float]] = {}
         for t_idx in sorted(turn_groups.keys()):
             samples = turn_groups[t_idx]
             metrics = self._update(agent_idx, samples)
             tagged = self._tag_metrics(metrics, agent_idx, turn_idx=t_idx)
             combined_log.update(tagged)
             for key, value in tagged.items():
-                epoch_metrics[key].append(value)
+                metric_values.setdefault(key, []).append(value)
+        return {"metric_values": metric_values, "log_metrics": combined_log}
+
+    def _drain_ready_agent_buffers(
+        self,
+        ready_agents: List[int],
+        epoch_metrics: Dict[str, List[float]],
+    ) -> None:
+        if not ready_agents:
+            return
+
+        unique_ready = sorted({int(idx) for idx in ready_agents})
+        run_parallel = bool(
+            getattr(
+                self,
+                "_parallel_update_enabled",
+                self._parallel_agent_mode_enabled(),
+            )
+        )
+
+        def _process(agent_idx: int) -> Dict[str, Any]:
+            return self._process_buffer(agent_idx, self.rollout_buffers[agent_idx])
+
+        results = self._run_agent_tasks(
+            _process,
+            agent_indices=unique_ready,
+            parallel=run_parallel,
+        )
+
+        combined_log: Dict[str, float] = {}
+        for result in results:
+            metric_values = result.get("metric_values", {})
+            for key, values in metric_values.items():
+                for value in values:
+                    epoch_metrics[key].append(value)
+            combined_log.update(result.get("log_metrics", {}))
 
         if combined_log and self._should_log_train():
             self._log_metrics(combined_log)
@@ -256,21 +337,24 @@ class ActorCriticTrainerBase:
     def _run_batch(self, batch, epoch_metrics: Dict[str, List[float]]) -> None:
         for item in batch:
             rollouts = self._collect_rollouts(item)
+            ready_agents: List[int] = []
             for sample in rollouts:
                 agent_idx = sample.agent_idx
                 buffer = self.rollout_buffers[agent_idx]
                 buffer.append(sample)
                 if len(buffer) >= self.args.rollout_buffer_size:
-                    self._process_buffer(agent_idx, buffer, epoch_metrics)
+                    ready_agents.append(agent_idx)
+            if ready_agents:
+                self._drain_ready_agent_buffers(ready_agents, epoch_metrics)
             if self.args.num_agents > 0:
                 # Count joint-action reward evaluations (one per agent group).
                 self.env_step += len(rollouts) // self.args.num_agents
 
     def _flush_buffers(self, epoch_metrics: Dict[str, List[float]]) -> None:
-        for agent_idx, buffer in enumerate(self.rollout_buffers):
-            if not buffer:
-                continue
-            self._process_buffer(agent_idx, buffer, epoch_metrics)
+        ready_agents = [
+            agent_idx for agent_idx, buffer in enumerate(self.rollout_buffers) if buffer
+        ]
+        self._drain_ready_agent_buffers(ready_agents, epoch_metrics)
 
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
