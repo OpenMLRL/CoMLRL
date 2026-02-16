@@ -627,7 +627,7 @@ class IACTrainer(ActorCriticTrainerBase):
                 value = data["values"][i]
                 reward = float(rewards_matrix[agent_idx][i])
                 reward_tensor = torch.tensor(
-                    [reward], device=self._agent_device(agent_idx), dtype=torch.float32
+                    [reward], device=value.device, dtype=torch.float32
                 )
                 returns = reward_tensor.clone()
                 advantage = returns - value
