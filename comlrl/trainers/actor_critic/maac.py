@@ -11,11 +11,8 @@ from datasets import Dataset, IterableDataset
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 import wandb
 from comlrl.models.actor_critic import CausalLMWithValueHead
-from comlrl.schedulers import DeviceScheduler, TorchrunScheduler
-from comlrl.utils.distributed import (
-    unwrap_model,
-    wrap_ddp,
-)
+from comlrl.schedulers import DeviceScheduler
+from comlrl.utils.distributed import local_context, unwrap_model
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_sources
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
@@ -46,7 +43,7 @@ class MAACConfig:
     num_agents: int = 2
     num_generations: int = 1
     num_turns: int = 2
-    parallel_training: str = "auto"
+    parallel_training: str = "mp"
     agent_devices: Optional[Union[str, Sequence[str]]] = None
     critic_devices: Optional[Union[str, Sequence[str]]] = None
     external_prompt_passthrough: bool = False
@@ -84,9 +81,9 @@ class MAACConfig:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
-        mode = str(self.parallel_training or "auto").lower()
-        if mode not in {"auto", "ddp", "mp"}:
-            raise ValueError("parallel_training must be one of: auto, ddp, mp.")
+        mode = str(self.parallel_training or "mp").lower()
+        if mode != "mp":
+            raise ValueError("parallel_training only supports: mp.")
 
 
 class MAACTrainer(ActorCriticTrainerBase):
@@ -145,32 +142,21 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.eval_dataset = eval_dataset
         self.metrics_callback = metrics_callback
         self.model_config = model_config or {}
-        self.parallel_training = TorchrunScheduler.resolve_mode(
-            getattr(self.args, "parallel_training", "auto")
+        self.parallel_training = (
+            str(getattr(self.args, "parallel_training", "mp")).strip().lower()
         )
-        if self.parallel_training == "ddp":
-            if (
-                getattr(self.args, "agent_devices", None) is not None
-                or getattr(self.args, "critic_devices", None) is not None
-            ):
-                raise ValueError(
-                    "agent_devices/critic_devices are only valid in parallel_training='mp'."
-                )
-            self.dist_env = TorchrunScheduler.ddp_context()
-            self.device = self.dist_env.device
-            self.agent_devices = [self.device] * self.args.num_agents
-            self.critic_device = self.device
-        else:
-            self.agent_devices = DeviceScheduler.resolve_devices(
-                getattr(self.args, "agent_devices", None),
-                self.args.num_agents,
-                kind="agent_devices",
-            )
-            self.critic_device = DeviceScheduler.assign_shared_critic_device(
-                self.agent_devices, getattr(self.args, "critic_devices", None)
-            )
-            self.device = self.agent_devices[0]
-            self.dist_env = TorchrunScheduler.mp_context(self.device)
+        if self.parallel_training != "mp":
+            raise ValueError("parallel_training only supports: mp.")
+        self.agent_devices = DeviceScheduler.resolve_devices(
+            getattr(self.args, "agent_devices", None),
+            self.args.num_agents,
+            kind="agent_devices",
+        )
+        self.critic_device = DeviceScheduler.assign_shared_critic_device(
+            self.agent_devices, getattr(self.args, "critic_devices", None)
+        )
+        self.device = self.agent_devices[0]
+        self.dist_env = local_context(self.device)
         self._parallel_update_enabled = False
 
         tokenizers = resolve_tokenizers(agent_model, tokenizer, agents)
@@ -270,10 +256,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             apply_tokenizer_specials(self.tokenizers[0], [self.critics[0]])
         else:
             apply_tokenizer_specials(self.tokenizer, [*self.agents, self.critics[0]])
-
-        if self.dist_env.enabled:
-            self.agents = [wrap_ddp(agent, self.dist_env) for agent in self.agents]
-            self.critics = [wrap_ddp(self.critics[0], self.dist_env)]
 
         self.formatters = build_formatters(formatters, self.args.num_agents)
         try:
@@ -1027,7 +1009,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             print(f"Epoch {epoch + 1}/{total_epochs} metrics: {to_print}")
 
     def save_model(self, output_dir: str) -> None:
-        if self.dist_env.enabled and not self.dist_env.is_main:
+        if not self.dist_env.is_main:
             return
         os.makedirs(output_dir, exist_ok=True)
         for agent_idx, actor in enumerate(self.agents):

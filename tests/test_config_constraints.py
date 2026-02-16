@@ -32,6 +32,7 @@ def test_iac_config_constraints():
     _assert_invalid(IACConfig, "num_generations", 0)
     _assert_invalid(IACConfig, "critic_type", "x")
     _assert_invalid(IACConfig, "parallel_training", "invalid")
+    _assert_invalid(IACConfig, "parallel_training", "auto")
     with pytest.raises(ValueError, match="num_generations"):
         IACConfig(num_turns=2, num_generations=2)
 
@@ -57,6 +58,7 @@ def test_maac_config_constraints():
     _assert_invalid_fields(MAACConfig, ["eval_interval", "eval_num_samples"], -1)
     _assert_invalid(MAACConfig, "critic_type", "x")
     _assert_invalid(MAACConfig, "parallel_training", "invalid")
+    _assert_invalid(MAACConfig, "parallel_training", "auto")
     with pytest.raises(ValueError, match="num_generations"):
         MAACConfig(num_turns=2, num_generations=2)
 
@@ -82,6 +84,7 @@ def test_magrpo_config_constraints():
     _assert_invalid_fields(MAGRPOConfig, ["eval_interval", "eval_num_samples"], -1)
     _assert_invalid(MAGRPOConfig, "num_generations", 1)
     _assert_invalid(MAGRPOConfig, "parallel_training", "invalid")
+    _assert_invalid(MAGRPOConfig, "parallel_training", "auto")
 
     MAGRPOConfig()
     MAGRPOConfig(num_generations=2)

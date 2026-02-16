@@ -6,14 +6,6 @@ import torch
 import wandb
 from tqdm import tqdm  # type: ignore
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
-from comlrl.utils.distributed import barrier as dist_barrier
-from comlrl.utils.distributed import reduce_metrics_dict
-
-try:
-    from datasets import IterableDataset as HFIterableDataset
-except Exception:  # pragma: no cover
-    HFIterableDataset = None
 
 
 class ActorCriticTrainerBase:
@@ -54,7 +46,7 @@ class ActorCriticTrainerBase:
             return [fn(agent_idx) for agent_idx in indices]
 
         results: Dict[int, Any] = {}
-        max_workers = min(len(indices), max(1, len(indices)))
+        max_workers = len(indices)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(fn, agent_idx): agent_idx for agent_idx in indices
@@ -237,23 +229,11 @@ class ActorCriticTrainerBase:
         prefix = f"turn_{turn_idx + 1}/"
         return {prefix + key: value for key, value in metrics.items()}
 
-    def _log_metrics(
-        self, metrics: Dict[str, float], *, synchronize: bool = True
-    ) -> None:
+    def _log_metrics(self, metrics: Dict[str, float]) -> None:
         if not metrics:
             return
-        dist_env = getattr(self, "dist_env", None)
-        metrics_to_log = metrics
-        if dist_env is not None and dist_env.enabled and synchronize:
-            metrics_to_log = reduce_metrics_dict(metrics, dist_env)
-            if not dist_env.is_main:
-                return
-        elif dist_env is not None and dist_env.enabled and not dist_env.is_main:
-            return
-        if not metrics_to_log:
-            return
         if self.wandb_initialized and wandb is not None:
-            wandb.log(metrics_to_log, step=self.env_step)
+            wandb.log(metrics, step=self.env_step)
 
     def _should_log_train(self) -> bool:
         interval = int(getattr(self.args, "logging_steps", 1))
@@ -359,27 +339,10 @@ class ActorCriticTrainerBase:
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
             raise ValueError("Training requires a dataset.")
-        dist_env = getattr(self, "dist_env", None)
-        sampler = None
-        if (
-            dist_env is not None
-            and dist_env.enabled
-            and (
-                HFIterableDataset is None
-                or not isinstance(self.train_dataset, HFIterableDataset)
-            )
-        ):
-            sampler = DistributedSampler(
-                self.train_dataset,
-                num_replicas=dist_env.world_size,
-                rank=dist_env.rank,
-                shuffle=False,
-            )
         return DataLoader(
             self.train_dataset,
             batch_size=1,
             shuffle=False,
-            sampler=sampler,
             collate_fn=lambda batch: batch,
         )
 
@@ -394,9 +357,6 @@ class ActorCriticTrainerBase:
         )
 
     def evaluate(self) -> Dict[str, float]:
-        dist_env = getattr(self, "dist_env", None)
-        if dist_env is not None and dist_env.enabled and not dist_env.is_main:
-            return {}
         if self.eval_dataset is None:
             return {}
 
@@ -428,7 +388,7 @@ class ActorCriticTrainerBase:
                 eval_log[f"eval/turn_{turn_idx + 1}/{key}"] = value
 
         if eval_log:
-            self._log_metrics(eval_log, synchronize=False)
+            self._log_metrics(eval_log)
         return eval_log
 
     def train(self) -> None:
@@ -437,9 +397,6 @@ class ActorCriticTrainerBase:
         for epoch in range(total_epochs):
             epoch_metrics = defaultdict(list)
             dataloader = self.get_train_dataloader()
-            sampler = getattr(dataloader, "sampler", None)
-            if isinstance(sampler, DistributedSampler):
-                sampler.set_epoch(epoch)
             it = self._iter_dataloader(dataloader, epoch, total_epochs)
             for batch_idx, batch in it:
                 if (
@@ -447,15 +404,7 @@ class ActorCriticTrainerBase:
                     and self.args.eval_interval > 0
                     and batch_idx % int(self.args.eval_interval) == 0
                 ):
-                    dist_env = getattr(self, "dist_env", None)
-                    if dist_env is not None and dist_env.enabled:
-                        # Keep all ranks step-aligned to avoid DDP hangs during eval windows.
-                        dist_barrier(dist_env)
-                        if dist_env.is_main:
-                            self.evaluate()
-                        dist_barrier(dist_env)
-                    else:
-                        self.evaluate()
+                    self.evaluate()
                 self._run_batch(batch, epoch_metrics)
 
             self._flush_buffers(epoch_metrics)

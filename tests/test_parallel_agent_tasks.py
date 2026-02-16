@@ -30,7 +30,7 @@ def test_ac_run_agent_tasks_keeps_index_order_in_mp():
 
 
 def test_ac_run_agent_tasks_is_sequential_when_mp_disabled():
-    trainer = _DummyACTrainer(parallel_training="ddp", num_agents=2)
+    trainer = _DummyACTrainer(parallel_training="none", num_agents=2)
     completion_order = []
 
     def _task(agent_idx: int) -> int:
@@ -46,7 +46,7 @@ def test_iac_parallel_updates_enabled_only_for_mp_mode():
     trainer = IACTrainer.__new__(IACTrainer)
     trainer.args = SimpleNamespace(num_agents=2)
     trainer.agent_devices = ["cuda:0", "cuda:1"]
-    trainer.parallel_training = "ddp"
+    trainer.parallel_training = "none"
     assert trainer._parallel_agent_mode_enabled() is False
     trainer.parallel_training = "mp"
     assert trainer._parallel_agent_mode_enabled() is True

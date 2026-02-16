@@ -6,11 +6,9 @@ from .distributed import (
     DistributedContext,
     all_gather_objects,
     barrier,
-    init_distributed,
     is_main_process,
     local_context,
     unwrap_model,
-    wrap_ddp,
 )
 from .tokenizer_utils import (
     apply_tokenizer_specials,
@@ -33,9 +31,7 @@ __all__ = [
     "call_reward_function",
     "normalize_reward_lengths",
     "DistributedContext",
-    "init_distributed",
     "local_context",
-    "wrap_ddp",
     "unwrap_model",
     "is_main_process",
     "barrier",

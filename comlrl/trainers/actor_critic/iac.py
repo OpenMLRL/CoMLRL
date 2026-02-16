@@ -10,11 +10,8 @@ import torch.nn.functional as F
 from datasets import Dataset, IterableDataset
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 from comlrl.models.actor_critic import CausalLMWithValueHead
-from comlrl.schedulers import DeviceScheduler, TorchrunScheduler
-from comlrl.utils.distributed import (
-    unwrap_model,
-    wrap_ddp,
-)
+from comlrl.schedulers import DeviceScheduler
+from comlrl.utils.distributed import local_context, unwrap_model
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_sources
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
@@ -50,7 +47,7 @@ class IACConfig:
     value_head_hidden_dim: Optional[int] = None
     num_agents: int = 2
     num_turns: int = 2
-    parallel_training: str = "auto"
+    parallel_training: str = "mp"
     agent_devices: Optional[Union[str, Sequence[str]]] = None
     critic_devices: Optional[Union[str, Sequence[str]]] = None
     external_prompt_passthrough: bool = False
@@ -90,9 +87,9 @@ class IACConfig:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
-        mode = str(self.parallel_training or "auto").lower()
-        if mode not in {"auto", "ddp", "mp"}:
-            raise ValueError("parallel_training must be one of: auto, ddp, mp.")
+        mode = str(self.parallel_training or "mp").lower()
+        if mode != "mp":
+            raise ValueError("parallel_training only supports: mp.")
 
 
 @dataclass
@@ -172,30 +169,19 @@ class IACTrainer(ActorCriticTrainerBase):
         self.metrics_callback = metrics_callback
         self.model_config = model_config or {}
         self.critic_type = (self.args.critic_type or "v").lower()
-        self.parallel_training = TorchrunScheduler.resolve_mode(
-            getattr(self.args, "parallel_training", "auto")
+        self.parallel_training = (
+            str(getattr(self.args, "parallel_training", "mp")).strip().lower()
         )
-        if self.parallel_training == "ddp":
-            if (
-                getattr(self.args, "agent_devices", None) is not None
-                or getattr(self.args, "critic_devices", None) is not None
-            ):
-                raise ValueError(
-                    "agent_devices/critic_devices are only valid in parallel_training='mp'."
-                )
-            self.dist_env = TorchrunScheduler.ddp_context()
-            self.device = self.dist_env.device
-            self.agent_devices = [self.device] * self.args.num_agents
-            self.critic_devices = [self.device] * self.args.num_agents
-        else:
-            self.agent_devices, self.critic_devices = DeviceScheduler.assign_devices(
-                self.args.num_agents,
-                getattr(self.args, "agent_devices", None),
-                getattr(self.args, "critic_devices", None),
-                use_separate_critic=self.args.use_separate_critic,
-            )
-            self.device = self.agent_devices[0]
-            self.dist_env = TorchrunScheduler.mp_context(self.device)
+        if self.parallel_training != "mp":
+            raise ValueError("parallel_training only supports: mp.")
+        self.agent_devices, self.critic_devices = DeviceScheduler.assign_devices(
+            self.args.num_agents,
+            getattr(self.args, "agent_devices", None),
+            getattr(self.args, "critic_devices", None),
+            use_separate_critic=self.args.use_separate_critic,
+        )
+        self.device = self.agent_devices[0]
+        self.dist_env = local_context(self.device)
 
         self.agents: List[CausalLMWithValueHead] = []
         self.critics: List[CausalLMWithValueHead] = []
@@ -307,10 +293,6 @@ class IACTrainer(ActorCriticTrainerBase):
                 apply_tokenizer_specials(tok, models)
         else:
             apply_tokenizer_specials(self.tokenizer, [*self.agents, *self.critics])
-
-        if self.dist_env.enabled:
-            self.agents = [wrap_ddp(agent, self.dist_env) for agent in self.agents]
-            self.critics = [wrap_ddp(critic, self.dist_env) for critic in self.critics]
 
         self.agent_optimizers = []
         self.critic_optimizers = []
@@ -1101,7 +1083,7 @@ class IACTrainer(ActorCriticTrainerBase):
         return averaged
 
     def save_model(self, output_dir: str) -> None:
-        if self.dist_env.enabled and not self.dist_env.is_main:
+        if not self.dist_env.is_main:
             return
         os.makedirs(output_dir, exist_ok=True)
         if self.args.num_agents == 1:

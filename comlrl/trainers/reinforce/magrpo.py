@@ -11,16 +11,13 @@ import torch
 import wandb
 from datasets import Dataset, IterableDataset
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm  # type: ignore
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-from comlrl.schedulers import DeviceScheduler, TorchrunScheduler
+from comlrl.schedulers import DeviceScheduler
 from comlrl.utils.distributed import (
-    barrier as dist_barrier,
-    reduce_metrics_dict,
+    local_context,
     unwrap_model,
-    wrap_ddp,
 )
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import infer_model_name, resolve_model_sources
@@ -40,7 +37,7 @@ class MAGRPOConfig:
     agent_learning_rate: float = 5.0e-6
     logging_steps: int = 50
     num_agents: int = 2
-    parallel_training: str = "auto"
+    parallel_training: str = "mp"
     agent_devices: Optional[Union[str, Sequence[str]]] = None
 
     # Sampling/generation
@@ -90,9 +87,9 @@ class MAGRPOConfig:
             self.train_batch_size = self.rollout_buffer_size
         if self.train_batch_size < 1:
             raise ValueError("train_batch_size must be >= 1.")
-        mode = str(self.parallel_training or "auto").lower()
-        if mode not in {"auto", "ddp", "mp"}:
-            raise ValueError("parallel_training must be one of: auto, ddp, mp.")
+        mode = str(self.parallel_training or "mp").lower()
+        if mode != "mp":
+            raise ValueError("parallel_training only supports: mp.")
 
 
 @dataclass
@@ -159,19 +156,13 @@ class MAGRPOTrainer:
         args: Optional[MAGRPOConfig] = None,
     ):
         self.args = args if args is not None else self.default_config_cls()
-        self.parallel_training = TorchrunScheduler.resolve_mode(
-            getattr(self.args, "parallel_training", "auto")
+        self.parallel_training = (
+            str(getattr(self.args, "parallel_training", "mp")).strip().lower()
         )
-        if self.parallel_training == "ddp":
-            if getattr(self.args, "agent_devices", None) is not None:
-                raise ValueError(
-                    "agent_devices is only valid in parallel_training='mp'."
-                )
-            self.dist_env = TorchrunScheduler.ddp_context()
-            self.device = self.dist_env.device
-        else:
-            self.dist_env = TorchrunScheduler.mp_context()
-            self.device = self.dist_env.device
+        if self.parallel_training != "mp":
+            raise ValueError("parallel_training only supports: mp.")
+        self.dist_env = local_context()
+        self.device = self.dist_env.device
 
         if agent_model is None and agents is None:
             raise ValueError("Either agent_model or agents must be provided.")
@@ -217,16 +208,13 @@ class MAGRPOTrainer:
 
         self.num_agents = expected_count
         self.model_name = model_name
-        if self.parallel_training == "ddp":
-            self.agent_devices = [self.device] * self.num_agents
-        else:
-            self.agent_devices = DeviceScheduler.resolve_devices(
-                getattr(self.args, "agent_devices", None),
-                self.num_agents,
-                kind="agent_devices",
-            )
-            self.device = self.agent_devices[0]
-            self.dist_env = TorchrunScheduler.mp_context(self.device)
+        self.agent_devices = DeviceScheduler.resolve_devices(
+            getattr(self.args, "agent_devices", None),
+            self.num_agents,
+            kind="agent_devices",
+        )
+        self.device = self.agent_devices[0]
+        self.dist_env = local_context(self.device)
         if actor_sources and all(isinstance(src, str) for src in actor_sources):
             from transformers import AutoModelForCausalLM
 
@@ -287,9 +275,6 @@ class MAGRPOTrainer:
         self.eval_logger = eval_logger
         self.eval_aggregator = eval_aggregator
         self.external_transition = external_transition
-
-        if self.dist_env.enabled:
-            self.agents = [wrap_ddp(agent, self.dist_env) for agent in self.agents]
 
         self.optimizers = [
             torch.optim.AdamW(
@@ -484,23 +469,12 @@ class MAGRPOTrainer:
         """Returns the training DataLoader."""
         if self.train_dataset is None:
             raise ValueError("Trainer: training requires a train_dataset.")
-        sampler = None
-        if self.dist_env.enabled and not isinstance(
-            self.train_dataset, IterableDataset
-        ):
-            sampler = DistributedSampler(
-                self.train_dataset,
-                num_replicas=self.dist_env.world_size,
-                rank=self.dist_env.rank,
-                shuffle=False,
-            )
 
         return DataLoader(
             self.train_dataset,
             batch_size=1,
             collate_fn=lambda examples: examples,
             shuffle=False,
-            sampler=sampler,
             drop_last=False,
             num_workers=0,
         )
@@ -529,8 +503,6 @@ class MAGRPOTrainer:
         Returns:
             Dictionary containing evaluation metrics
         """
-        if self.dist_env.enabled and not self.dist_env.is_main:
-            return {}
         if self.eval_dataset is None:
             return {}
 
@@ -772,10 +744,7 @@ class MAGRPOTrainer:
             ]  # immediate rewards
             epoch_turn_returns = [[] for _ in range(self.args.num_turns)]  # returns
             dl = self.get_train_dataloader()
-            sampler = getattr(dl, "sampler", None)
-            if isinstance(sampler, DistributedSampler):
-                sampler.set_epoch(epoch)
-            if getattr(self, "verbose", True) and self.dist_env.is_main:
+            if getattr(self, "verbose", True):
                 it = enumerate(
                     tqdm(
                         dl,
@@ -790,19 +759,7 @@ class MAGRPOTrainer:
                 if int(self.args.eval_interval) > 0 and (
                     batch_idx % int(self.args.eval_interval) == 0
                 ):
-                    if self.dist_env.enabled:
-                        # Keep all ranks synchronized around evaluation windows.
-                        dist_barrier(self.dist_env)
-                        if self.dist_env.is_main:
-                            # evaluate() already logs its metrics.
-                            _ = self.evaluate(
-                                num_eval_samples=int(self.args.eval_num_samples)
-                            )
-                        dist_barrier(self.dist_env)
-                    else:
-                        _ = self.evaluate(
-                            num_eval_samples=int(self.args.eval_num_samples)
-                        )
+                    _ = self.evaluate(num_eval_samples=int(self.args.eval_num_samples))
 
                 # Process single batch item (batch_size=1 enforced)
                 batch_item = batch[0]
@@ -834,16 +791,7 @@ class MAGRPOTrainer:
                         np.mean(epoch_turn_returns[turn_idx])
                     )
 
-            if self.dist_env.enabled:
-                reduced_epoch_log = reduce_metrics_dict(epoch_log, self.dist_env)
-                if (
-                    self.dist_env.is_main
-                    and reduced_epoch_log
-                    and self.wandb_initialized
-                    and wandb.run is not None
-                ):
-                    wandb.log(reduced_epoch_log, step=self.env_step)
-            elif epoch_log and self.wandb_initialized and wandb.run is not None:
+            if epoch_log and self.wandb_initialized and wandb.run is not None:
                 wandb.log(epoch_log, step=self.env_step)
 
     def _train_step_returns(
@@ -1682,8 +1630,6 @@ class MAGRPOTrainer:
         Args:
             output_dir: Directory to save the models to
         """
-        if self.dist_env.enabled and not self.dist_env.is_main:
-            return
         os.makedirs(output_dir, exist_ok=True)
 
         for agent_idx, agent in enumerate(self.agents):
