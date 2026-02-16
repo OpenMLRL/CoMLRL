@@ -495,18 +495,21 @@ class MAGRPOTrainer:
             num_workers=0,
         )
 
-    def evaluate(self, num_eval_samples: int = 4) -> Dict[str, float]:
+    def evaluate(self, num_eval_samples: Optional[int] = None) -> Dict[str, float]:
         """
         Unified evaluation that supports both single-turn and multi-turn.
 
         Args:
-            num_eval_samples: Number of samples to evaluate
+            num_eval_samples: Number of samples to evaluate. Defaults to args.eval_num_samples.
 
         Returns:
             Dictionary containing evaluation metrics
         """
         if self.eval_dataset is None:
             return {}
+        if num_eval_samples is None:
+            num_eval_samples = int(getattr(self.args, "eval_num_samples", 4))
+        num_eval_samples = int(num_eval_samples)
 
         # Storage for completions across turns for all agents
         all_agent_completions_turns = [[] for _ in range(self.num_agents)]

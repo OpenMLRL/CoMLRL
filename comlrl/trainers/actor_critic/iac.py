@@ -465,7 +465,9 @@ class IACTrainer(ActorCriticTrainerBase):
             "do_sample": True,
             "temperature": self.args.temperature,
             "top_p": self.args.top_p,
-            "num_return_sequences": num_ret,
+            "num_return_sequences": (
+                1 if bool(getattr(self, "_in_eval", False)) else num_ret
+            ),
             "num_beams": 1,
         }
         if self.args.top_k is not None:
@@ -558,7 +560,11 @@ class IACTrainer(ActorCriticTrainerBase):
         if num_turns > 1:
             return self._collect_rollouts_multi_turn(item, num_turns)
 
-        num_ret = int(getattr(self.args, "num_generations", 1))
+        num_ret = (
+            1
+            if bool(getattr(self, "_in_eval", False))
+            else int(getattr(self.args, "num_generations", 1))
+        )
         turn_prompts = [
             self._resolve_turn_prompt(item, agent_idx)
             for agent_idx in range(self.args.num_agents)

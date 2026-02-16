@@ -435,7 +435,11 @@ class MAACTrainer(ActorCriticTrainerBase):
         prompt_attention_mask = encoded_prompt["attention_mask"]
         prompt_len = prompt_input_ids.size(1)
 
-        num_ret = int(self.args.num_generations)
+        num_ret = (
+            1
+            if bool(getattr(self, "_in_eval", False))
+            else int(self.args.num_generations)
+        )
         generation_kwargs: Dict[str, Any] = {
             "input_ids": prompt_input_ids,
             "attention_mask": prompt_attention_mask,

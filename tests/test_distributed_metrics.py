@@ -57,3 +57,35 @@ def test_ac_base_log_metrics_logs_directly(monkeypatch):
     trainer._log_metrics({"loss": 1.0})
     trainer._log_metrics({"reward": 2.0})
     assert called["log"] == [{"loss": 1.0}, {"reward": 2.0}]
+
+
+def test_evaluate_calls_collect_rollouts_with_eval_flag():
+    class _EvalDummyTrainer(ActorCriticTrainerBase):
+        def __init__(self):
+            self.eval_dataset = [{"id": 0}, {"id": 1}]
+            self.args = SimpleNamespace(eval_batch_size=1, eval_num_samples=1)
+            self.wandb_initialized = False
+            self.env_step = 0
+            self.dist_env = _ctx()
+            self.verbose = False
+            self._collect_calls = 0
+            self.eval_flags = []
+
+        def _collect_rollouts(self, item):  # noqa: ARG002
+            self._collect_calls += 1
+            self.eval_flags.append(bool(getattr(self, "_in_eval", False)))
+            return [
+                SimpleNamespace(
+                    metadata={},
+                    reward=torch.tensor([1.0]),
+                    returns=torch.tensor([1.5]),
+                    old_value=torch.tensor([0.5]),
+                )
+            ]
+
+    trainer = _EvalDummyTrainer()
+    metrics = trainer.evaluate()
+    assert trainer._collect_calls == 1
+    assert trainer.eval_flags == [True]
+    assert trainer._in_eval is False
+    assert "eval/turn_1/reward_mean" in metrics

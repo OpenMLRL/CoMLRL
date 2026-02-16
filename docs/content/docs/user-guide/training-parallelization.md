@@ -32,3 +32,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python train_iac.py
     iac.agent_devices='["cuda:0","cuda:1"]'
     iac.critic_devices='["cuda:2","cuda:3"]'
 ```
+
+{{% hint note %}}
+Note that when `parallel_training=mp`, even if the same models with same sampling are used on the same seed, the training is not deterministic due to the non-deterministic GPU scheduling and aggregation on CPU.
+{{% /hint %}}

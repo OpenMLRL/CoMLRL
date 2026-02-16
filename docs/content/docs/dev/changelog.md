@@ -10,7 +10,7 @@ weight: 3
 - Remove the redundant sampling hyperparameters in algorithms.
 - Allow multi-gpu training with MP.
 
-## Version 1.3.6
+## Latest Changes
 
 - Fixed critical bug of loading heterogeneous models and reform the model loading logics.
 - Polish the docs.

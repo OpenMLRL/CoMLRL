@@ -368,18 +368,22 @@ class ActorCriticTrainerBase:
         turn_groups: Dict[int, List[Any]] = {}
         seen = 0
 
-        with torch.no_grad():
-            for batch in dataloader:
-                for item in batch:
-                    rollouts = self._collect_rollouts(item)
-                    for sample in rollouts:
-                        t_idx = int(sample.metadata.get("turn_idx", 0))
-                        turn_groups.setdefault(t_idx, []).append(sample)
-                    seen += 1
+        self._in_eval = True
+        try:
+            with torch.no_grad():
+                for batch in dataloader:
+                    for item in batch:
+                        rollouts = self._collect_rollouts(item)
+                        for sample in rollouts:
+                            t_idx = int(sample.metadata.get("turn_idx", 0))
+                            turn_groups.setdefault(t_idx, []).append(sample)
+                        seen += 1
+                        if seen >= num_samples:
+                            break
                     if seen >= num_samples:
                         break
-                if seen >= num_samples:
-                    break
+        finally:
+            self._in_eval = False
 
         eval_log: Dict[str, float] = {}
         for turn_idx, samples in sorted(turn_groups.items()):
