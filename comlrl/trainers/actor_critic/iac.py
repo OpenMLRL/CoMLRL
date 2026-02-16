@@ -47,7 +47,7 @@ class IACConfig:
     value_head_hidden_dim: Optional[int] = None
     num_agents: int = 2
     num_turns: int = 2
-    parallel_training: str = "mp"
+    parallel_training: str = "none"
     agent_devices: Optional[Union[str, Sequence[str]]] = None
     critic_devices: Optional[Union[str, Sequence[str]]] = None
     external_prompt_passthrough: bool = False
@@ -87,13 +87,21 @@ class IACConfig:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
-        mode = str(self.parallel_training or "mp").lower()
-        if mode != "mp":
-            raise ValueError("parallel_training only supports: mp.")
-        if self.agent_devices is None:
-            raise ValueError("parallel_training='mp' requires explicit agent_devices.")
-        if self.critic_devices is None:
-            raise ValueError("parallel_training='mp' requires explicit critic_devices.")
+        mode = str(self.parallel_training or "none").strip().lower()
+        if mode == "null":
+            mode = "none"
+        if mode not in {"none", "mp"}:
+            raise ValueError("parallel_training only supports: none, mp.")
+        if mode == "mp":
+            if self.agent_devices is None:
+                raise ValueError(
+                    "parallel_training='mp' requires explicit agent_devices."
+                )
+            if self.critic_devices is None:
+                raise ValueError(
+                    "parallel_training='mp' requires explicit critic_devices."
+                )
+        self.parallel_training = mode
 
 
 @dataclass
@@ -174,16 +182,26 @@ class IACTrainer(ActorCriticTrainerBase):
         self.model_config = model_config or {}
         self.critic_type = (self.args.critic_type or "v").lower()
         self.parallel_training = (
-            str(getattr(self.args, "parallel_training", "mp")).strip().lower()
+            str(getattr(self.args, "parallel_training", "none")).strip().lower()
         )
-        if self.parallel_training != "mp":
-            raise ValueError("parallel_training only supports: mp.")
-        self.agent_devices, self.critic_devices = DeviceScheduler.assign_devices(
-            self.args.num_agents,
-            getattr(self.args, "agent_devices", None),
-            getattr(self.args, "critic_devices", None),
-            use_separate_critic=self.args.use_separate_critic,
-        )
+        if self.parallel_training == "null":
+            self.parallel_training = "none"
+        if self.parallel_training not in {"none", "mp"}:
+            raise ValueError("parallel_training only supports: none, mp.")
+        if self.parallel_training == "mp":
+            self.agent_devices, self.critic_devices = DeviceScheduler.assign_devices(
+                self.args.num_agents,
+                getattr(self.args, "agent_devices", None),
+                getattr(self.args, "critic_devices", None),
+                use_separate_critic=self.args.use_separate_critic,
+            )
+        else:
+            single_device = DeviceScheduler.resolve_single_device(
+                getattr(self.args, "agent_devices", None),
+                getattr(self.args, "critic_devices", None),
+            )
+            self.agent_devices = [single_device] * self.args.num_agents
+            self.critic_devices = [single_device] * self.args.num_agents
         self.device = self.agent_devices[0]
         self.dist_env = local_context(self.device)
 

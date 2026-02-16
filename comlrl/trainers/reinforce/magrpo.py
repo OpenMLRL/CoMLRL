@@ -37,7 +37,7 @@ class MAGRPOConfig:
     agent_learning_rate: float = 5.0e-6
     logging_steps: int = 50
     num_agents: int = 2
-    parallel_training: str = "mp"
+    parallel_training: str = "none"
     agent_devices: Optional[Union[str, Sequence[str]]] = None
 
     # Sampling/generation
@@ -87,11 +87,14 @@ class MAGRPOConfig:
             self.train_batch_size = self.rollout_buffer_size
         if self.train_batch_size < 1:
             raise ValueError("train_batch_size must be >= 1.")
-        mode = str(self.parallel_training or "mp").lower()
-        if mode != "mp":
-            raise ValueError("parallel_training only supports: mp.")
-        if self.agent_devices is None:
+        mode = str(self.parallel_training or "none").strip().lower()
+        if mode == "null":
+            mode = "none"
+        if mode not in {"none", "mp"}:
+            raise ValueError("parallel_training only supports: none, mp.")
+        if mode == "mp" and self.agent_devices is None:
             raise ValueError("parallel_training='mp' requires explicit agent_devices.")
+        self.parallel_training = mode
 
 
 @dataclass
@@ -159,10 +162,12 @@ class MAGRPOTrainer:
     ):
         self.args = args if args is not None else self.default_config_cls()
         self.parallel_training = (
-            str(getattr(self.args, "parallel_training", "mp")).strip().lower()
+            str(getattr(self.args, "parallel_training", "none")).strip().lower()
         )
-        if self.parallel_training != "mp":
-            raise ValueError("parallel_training only supports: mp.")
+        if self.parallel_training == "null":
+            self.parallel_training = "none"
+        if self.parallel_training not in {"none", "mp"}:
+            raise ValueError("parallel_training only supports: none, mp.")
         self.dist_env = local_context()
         self.device = self.dist_env.device
 
@@ -210,11 +215,17 @@ class MAGRPOTrainer:
 
         self.num_agents = expected_count
         self.model_name = model_name
-        self.agent_devices = DeviceScheduler.resolve_devices(
-            getattr(self.args, "agent_devices", None),
-            self.num_agents,
-            kind="agent_devices",
-        )
+        if self.parallel_training == "mp":
+            self.agent_devices = DeviceScheduler.resolve_devices(
+                getattr(self.args, "agent_devices", None),
+                self.num_agents,
+                kind="agent_devices",
+            )
+        else:
+            single_device = DeviceScheduler.resolve_single_device(
+                getattr(self.args, "agent_devices", None)
+            )
+            self.agent_devices = [single_device] * self.num_agents
         self.device = self.agent_devices[0]
         self.dist_env = local_context(self.device)
         if actor_sources and all(isinstance(src, str) for src in actor_sources):

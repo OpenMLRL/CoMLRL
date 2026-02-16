@@ -71,6 +71,25 @@ class DeviceScheduler:
         raise ValueError(f"Unsupported {kind} spec: {spec!r}.")
 
     @staticmethod
+    def resolve_single_device(*specs: Optional[DeviceSpec]) -> torch.device:
+        for spec in specs:
+            if spec is None:
+                continue
+            if isinstance(spec, str):
+                if spec.lower() == "auto":
+                    return DeviceScheduler._auto_devices(1)[0]
+                return torch.device(spec)
+            if isinstance(spec, Sequence):
+                if len(spec) == 0:
+                    raise ValueError("Device spec list must be non-empty.")
+                first = spec[0]
+                if isinstance(first, str) and first.lower() == "auto":
+                    return DeviceScheduler._auto_devices(1)[0]
+                return torch.device(first)
+            raise ValueError(f"Unsupported device spec: {spec!r}.")
+        return DeviceScheduler._auto_devices(1)[0]
+
+    @staticmethod
     def devices_disjoint(device_groups: Iterable[Sequence[torch.device]]) -> bool:
         seen = set()
         for group in device_groups:

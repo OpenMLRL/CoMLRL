@@ -34,25 +34,19 @@ def test_iac_config_constraints():
     _assert_invalid(IACConfig, "parallel_training", "invalid")
     _assert_invalid(IACConfig, "parallel_training", "auto")
     with pytest.raises(ValueError, match="agent_devices"):
-        IACConfig(critic_devices="cpu")
+        IACConfig(parallel_training="mp", critic_devices="cpu")
     with pytest.raises(ValueError, match="critic_devices"):
-        IACConfig(agent_devices="cpu")
+        IACConfig(parallel_training="mp", agent_devices="cpu")
     with pytest.raises(ValueError, match="num_generations"):
-        IACConfig(
-            num_turns=2,
-            num_generations=2,
-            agent_devices="cpu",
-            critic_devices="cpu",
-        )
+        IACConfig(num_turns=2, num_generations=2)
 
+    IACConfig()
+    IACConfig(parallel_training="none")
+    IACConfig(parallel_training="null")
+    IACConfig(parallel_training="mp", agent_devices="cpu", critic_devices="cpu")
     IACConfig(agent_devices="cpu", critic_devices="cpu")
-    IACConfig(
-        num_turns=2,
-        num_generations=1,
-        agent_devices="cpu",
-        critic_devices="cpu",
-    )
-    IACConfig(critic_type="q", agent_devices="cpu", critic_devices="cpu")
+    IACConfig(num_turns=2, num_generations=1)
+    IACConfig(critic_type="q")
 
 
 def test_maac_config_constraints():
@@ -74,25 +68,19 @@ def test_maac_config_constraints():
     _assert_invalid(MAACConfig, "parallel_training", "invalid")
     _assert_invalid(MAACConfig, "parallel_training", "auto")
     with pytest.raises(ValueError, match="agent_devices"):
-        MAACConfig(critic_devices="cpu")
+        MAACConfig(parallel_training="mp", critic_devices="cpu")
     with pytest.raises(ValueError, match="critic_devices"):
-        MAACConfig(agent_devices="cpu")
+        MAACConfig(parallel_training="mp", agent_devices="cpu")
     with pytest.raises(ValueError, match="num_generations"):
-        MAACConfig(
-            num_turns=2,
-            num_generations=2,
-            agent_devices="cpu",
-            critic_devices="cpu",
-        )
+        MAACConfig(num_turns=2, num_generations=2)
 
+    MAACConfig()
+    MAACConfig(parallel_training="none")
+    MAACConfig(parallel_training="null")
+    MAACConfig(parallel_training="mp", agent_devices="cpu", critic_devices="cpu")
     MAACConfig(agent_devices="cpu", critic_devices="cpu")
-    MAACConfig(
-        num_turns=2,
-        num_generations=1,
-        agent_devices="cpu",
-        critic_devices="cpu",
-    )
-    MAACConfig(critic_type="q", agent_devices="cpu", critic_devices="cpu")
+    MAACConfig(num_turns=2, num_generations=1)
+    MAACConfig(critic_type="q")
 
 
 def test_magrpo_config_constraints():
@@ -114,7 +102,11 @@ def test_magrpo_config_constraints():
     _assert_invalid(MAGRPOConfig, "parallel_training", "invalid")
     _assert_invalid(MAGRPOConfig, "parallel_training", "auto")
     with pytest.raises(ValueError, match="agent_devices"):
-        MAGRPOConfig()
+        MAGRPOConfig(parallel_training="mp")
 
+    MAGRPOConfig()
+    MAGRPOConfig(parallel_training="none")
+    MAGRPOConfig(parallel_training="null")
+    MAGRPOConfig(parallel_training="mp", agent_devices="cpu")
     MAGRPOConfig(agent_devices="cpu")
-    MAGRPOConfig(num_generations=2, agent_devices="cpu")
+    MAGRPOConfig(num_generations=2)

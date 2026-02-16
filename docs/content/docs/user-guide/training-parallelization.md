@@ -5,12 +5,12 @@ weight: 6
 ---
 
 CoMLRL supports fine-tuning multi-LLM systems with larger models and more agents when multiple GPUs are available.
-Currently, CoMLRL supports one training parallelization mode `mp` (model parallelization).
+Users can configure the parallelization training with `iac.parallel_training`.
+Currently, `parallel_training` supports two modes: `none` or `null` is the default mode for single-device training; `mp`is the model parallel scheduling across explicit agent/critic devices.
 
 {{% hint success %}}
 We will support more parallelization modes (e.g., [data parallelization](https://docs.pytorch.org/docs/stable/elastic/run.html), [multi-node training](ray.io)) in the future.
 {{% /hint %}}
-
 
 ## Model Parallelization
 
@@ -34,5 +34,5 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python train_iac.py
 ```
 
 {{% hint note %}}
-Note that when `parallel_training=mp`, even if the same models with same sampling are used on the same seed, the training is not deterministic due to the non-deterministic GPU scheduling and aggregation on CPU.
+Note that when devices are changed, the training is not deterministic due to the non-deterministic GPU scheduling and aggregation on CPU.
 {{% /hint %}}
