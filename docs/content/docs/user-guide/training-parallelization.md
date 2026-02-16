@@ -5,12 +5,7 @@ weight: 6
 ---
 
 CoMLRL supports fine-tuning multi-LLM systems with larger models and more agents when multiple GPUs are available.
-Currently, CoMLRL supports two training parallelization mode: `auto` and `mp` (model parallelization).
-
-## Auto Parallelization
-
-The default parallelization mode for training is `parallel_training=auto`. If only one GPU is visible, CoMLRL fallbacks to single-GPU training.
-If multiple GPUs are visible, CoMLRL uses `parallel_training=mp` to deploy the agents and critics across the specified devices via `agent_devices` / `critic_devices`.
+Currently, CoMLRL supports one training parallelization mode `mp` (model parallelization).
 
 {{% hint success %}}
 We will support more parallelization modes (e.g., [data parallelization](https://docs.pytorch.org/docs/stable/elastic/run.html), [multi-node training](ray.io)) in the future.
