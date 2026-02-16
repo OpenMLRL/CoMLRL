@@ -84,6 +84,10 @@ class MAACConfig:
         mode = str(self.parallel_training or "mp").lower()
         if mode != "mp":
             raise ValueError("parallel_training only supports: mp.")
+        if self.agent_devices is None:
+            raise ValueError("parallel_training='mp' requires explicit agent_devices.")
+        if self.critic_devices is None:
+            raise ValueError("parallel_training='mp' requires explicit critic_devices.")
 
 
 class MAACTrainer(ActorCriticTrainerBase):

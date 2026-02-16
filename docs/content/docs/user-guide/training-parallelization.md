@@ -14,7 +14,7 @@ We will support more parallelization modes (e.g., [data parallelization](https:/
 
 ## Model Parallelization
 
-When `parallel_training=mp`, CoMLRL deploys the agents and critics across the specified devices via `agent_devices` / `critic_devices`.
+When `parallel_training=mp`, CoMLRL requires explicit `agent_devices` / `critic_devices` configuration and deploys the agents and critics accordingly.
 The training and inference for each model (agent/critic) are running separately on its assigned device.
 The responses are aggregated on the CPU and pass to the reward function. The reward is then broadcast back to all devices for training.
 MP supports training larger and more models than a single GPU can hold, but the training throughput is limited by the slowest model.
