@@ -626,11 +626,11 @@ class IACTrainer(ActorCriticTrainerBase):
                 logprob = data["logprobs"][i]
                 value = data["values"][i]
                 reward = float(rewards_matrix[agent_idx][i])
-                reward_tensor = torch.tensor(
-                    [reward], device=value.device, dtype=torch.float32
-                )
-                returns = reward_tensor.clone()
-                advantage = returns - value
+                reward_cpu = torch.tensor([reward], dtype=torch.float32)
+                value_cpu = value.detach().cpu()
+                returns_cpu = reward_cpu.clone()
+                advantage_cpu = returns_cpu - value_cpu.to(dtype=returns_cpu.dtype)
+                logprob_cpu = logprob.detach().cpu()
 
                 rollouts.append(
                     RolloutSample(
@@ -644,14 +644,14 @@ class IACTrainer(ActorCriticTrainerBase):
                         attention_mask=attn.detach().cpu(),
                         prompt_len=data["prompt_len"],
                         response_len=resp_len,
-                        old_logprob=logprob.detach().cpu(),
-                        old_value=value.detach().cpu(),
-                        reward=reward_tensor.detach().cpu(),
-                        returns=returns.detach().cpu(),
-                        advantage=advantage.detach().cpu(),
+                        old_logprob=logprob_cpu,
+                        old_value=value_cpu,
+                        reward=reward_cpu,
+                        returns=returns_cpu,
+                        advantage=advantage_cpu,
                         metadata={
                             "char_length": data["char_lengths"][i],
-                            "value_target": returns.detach().cpu(),
+                            "value_target": returns_cpu,
                         },
                     )
                 )
@@ -741,11 +741,9 @@ class IACTrainer(ActorCriticTrainerBase):
                 logprob = data["logprobs"][0]
                 value = data["values"][0]
                 reward_val = float(rewards_matrix[agent_idx][0])
-                reward_tensor = torch.tensor(
-                    [reward_val],
-                    device=self._agent_device(agent_idx),
-                    dtype=torch.float32,
-                )
+                reward_cpu = torch.tensor([reward_val], dtype=torch.float32)
+                value_cpu = value.detach().cpu()
+                logprob_cpu = logprob.detach().cpu()
 
                 completion_text = data["completions"][0]
                 sample = RolloutSample(
@@ -756,11 +754,11 @@ class IACTrainer(ActorCriticTrainerBase):
                     attention_mask=attn.detach().cpu(),
                     prompt_len=data["prompt_len"],
                     response_len=resp_len,
-                    old_logprob=logprob.detach().cpu(),
-                    old_value=value.detach().cpu(),
-                    reward=reward_tensor.detach().cpu(),
-                    returns=reward_tensor.detach().cpu(),
-                    advantage=torch.zeros_like(reward_tensor).detach().cpu(),
+                    old_logprob=logprob_cpu,
+                    old_value=value_cpu,
+                    reward=reward_cpu,
+                    returns=reward_cpu.clone(),
+                    advantage=torch.zeros_like(reward_cpu),
                     normalized_advantage=None,
                     metadata={
                         "char_length": data["char_lengths"][0],
@@ -787,19 +785,15 @@ class IACTrainer(ActorCriticTrainerBase):
                     target = r + gamma * next_v
                 else:
                     target = r
-                sample.metadata["adv_target"] = torch.tensor([target]).detach().cpu()
-                sample.metadata["value_target"] = torch.tensor([target]).detach().cpu()
+                sample.metadata["adv_target"] = torch.tensor([target]).cpu()
+                sample.metadata["value_target"] = torch.tensor([target]).cpu()
 
         for agent_idx in range(self.args.num_agents):
             future = 0.0
             for sample in reversed(per_agent_samples[agent_idx]):
                 immediate = float(sample.reward.view(-1)[0].item())
                 future = immediate + gamma * future
-                sample.returns = (
-                    torch.tensor([future], device=self._agent_device(agent_idx))
-                    .detach()
-                    .cpu()
-                )
+                sample.returns = torch.tensor([future], dtype=torch.float32)
                 sample.advantage = torch.zeros_like(sample.returns)
                 sample.normalized_advantage = None
 

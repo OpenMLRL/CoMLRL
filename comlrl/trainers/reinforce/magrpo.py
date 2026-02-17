@@ -1410,12 +1410,12 @@ class MAGRPOTrainer:
     def _pack_completions_for_buffer(
         self, completions_data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        prompt_ids = completions_data["prompt_input_ids"].detach().cpu()
+        prompt_ids = completions_data["prompt_input_ids"].cpu()
         completion_ids = completions_data["completion_input_ids"]
         if completion_ids and isinstance(completion_ids[0], list):
-            packed_completion_ids = [[t.detach().cpu() for t in completion_ids[0]]]
+            packed_completion_ids = [[t.cpu() for t in completion_ids[0]]]
         else:
-            packed_completion_ids = [[t.detach().cpu() for t in completion_ids]]
+            packed_completion_ids = [[t.cpu() for t in completion_ids]]
         return {
             "prompt_input_ids": prompt_ids,
             "completion_input_ids": packed_completion_ids,

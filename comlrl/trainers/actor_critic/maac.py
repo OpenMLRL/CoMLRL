@@ -583,9 +583,6 @@ class MAACTrainer(ActorCriticTrainerBase):
                 attn = data["attention_mask"][i]
                 resp_len = data["response_lens"][i]
                 reward = float(rewards_matrix[agent_idx][i])
-                reward_tensor = torch.tensor(
-                    [reward], device=self._agent_device(agent_idx)
-                )
 
                 logprob, _ = self._policy_eval(
                     self.agents[agent_idx],
@@ -605,6 +602,8 @@ class MAACTrainer(ActorCriticTrainerBase):
                 joint_mask = critic_pack["attention_mask"]
                 joint_len = int(critic_pack["prompt_len"])
                 value = critic_pack["value"].detach().cpu()
+                reward_cpu = torch.tensor([reward], dtype=torch.float32)
+                logprob_cpu = logprob.detach().cpu()
                 rollouts.append(
                     RolloutSample(
                         agent_idx=agent_idx,
@@ -617,25 +616,25 @@ class MAACTrainer(ActorCriticTrainerBase):
                         attention_mask=attn.detach().cpu(),
                         prompt_len=data["prompt_len"],
                         response_len=resp_len,
-                        old_logprob=logprob.detach().cpu(),
-                        old_value=value.detach().cpu(),
-                        reward=reward_tensor.detach().cpu(),
-                        returns=reward_tensor.detach().cpu(),
-                        advantage=torch.zeros_like(reward_tensor).detach().cpu(),
+                        old_logprob=logprob_cpu,
+                        old_value=value,
+                        reward=reward_cpu,
+                        returns=reward_cpu.clone(),
+                        advantage=torch.zeros_like(reward_cpu),
                         normalized_advantage=None,
                         metadata={
                             "joint_input_ids": joint_ids.detach().cpu(),
                             "joint_attention_mask": joint_mask.detach().cpu(),
                             "joint_prompt_len": joint_len,
                             "turn_idx": 0,
-                            "adv_target": reward_tensor.detach().cpu(),
+                            "adv_target": reward_cpu,
                         },
                     )
                 )
 
         for sample in rollouts:
             r = float(sample.reward.view(-1)[0].item())
-            sample.metadata["value_target"] = torch.tensor([r]).detach().cpu()
+            sample.metadata["value_target"] = torch.tensor([r]).cpu()
 
         if self.metrics_callback is not None:
             extra = self.metrics_callback(rollouts)
@@ -744,9 +743,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 attn = data["attention_mask"][0]
                 resp_len = data["response_lens"][0]
                 reward_val = float(rewards_matrix[agent_idx][0])
-                reward_tensor = torch.tensor(
-                    [reward_val], device=self._agent_device(agent_idx)
-                )
+                reward_cpu = torch.tensor([reward_val], dtype=torch.float32)
 
                 logprob, _ = self._policy_eval(
                     self.agents[agent_idx],
@@ -758,6 +755,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 )
 
                 value = joint_value.detach().cpu()
+                logprob_cpu = logprob.detach().cpu()
                 completion_text = data["completion_texts"][0]
                 sample = RolloutSample(
                     agent_idx=agent_idx,
@@ -767,11 +765,11 @@ class MAACTrainer(ActorCriticTrainerBase):
                     attention_mask=attn.detach().cpu(),
                     prompt_len=data["prompt_len"],
                     response_len=resp_len,
-                    old_logprob=logprob.detach().cpu(),
-                    old_value=value.detach().cpu(),
-                    reward=reward_tensor.detach().cpu(),
-                    returns=reward_tensor.detach().cpu(),
-                    advantage=torch.zeros_like(reward_tensor).detach().cpu(),
+                    old_logprob=logprob_cpu,
+                    old_value=value,
+                    reward=reward_cpu,
+                    returns=reward_cpu.clone(),
+                    advantage=torch.zeros_like(reward_cpu),
                     normalized_advantage=None,
                     metadata={
                         "joint_input_ids": joint_ids.detach().cpu(),
@@ -800,19 +798,15 @@ class MAACTrainer(ActorCriticTrainerBase):
                     target = r + gamma * next_v
                 else:
                     target = r
-                sample.metadata["adv_target"] = torch.tensor([target]).detach().cpu()
-                sample.metadata["value_target"] = torch.tensor([target]).detach().cpu()
+                sample.metadata["adv_target"] = torch.tensor([target]).cpu()
+                sample.metadata["value_target"] = torch.tensor([target]).cpu()
 
         for agent_idx in range(self.args.num_agents):
             future = 0.0
             for sample in reversed(per_agent_samples[agent_idx]):
                 immediate = float(sample.reward.view(-1)[0].item())
                 future = immediate + gamma * future
-                sample.returns = (
-                    torch.tensor([future], device=self._agent_device(agent_idx))
-                    .detach()
-                    .cpu()
-                )
+                sample.returns = torch.tensor([future], dtype=torch.float32)
                 sample.advantage = torch.zeros_like(sample.returns)
                 sample.normalized_advantage = None
 
