@@ -1,5 +1,12 @@
 from .formatters import build_formatters
 from .model_loading import infer_model_name, resolve_model_sources
+from .reference_kl import (
+    clone_reference_models,
+    reference_kl_coef,
+    reference_kl_enabled,
+    reference_kl_for_sequence,
+    validate_reference_kl_config,
+)
 from .reward_processor import RewardProcessors
 from .reward_utils import call_reward_function, normalize_reward_lengths
 from .distributed import (
@@ -27,6 +34,11 @@ __all__ = [
     "resolve_tokenizers",
     "infer_model_name",
     "resolve_model_sources",
+    "clone_reference_models",
+    "reference_kl_coef",
+    "reference_kl_enabled",
+    "reference_kl_for_sequence",
+    "validate_reference_kl_config",
     "RewardProcessors",
     "call_reward_function",
     "normalize_reward_lengths",
