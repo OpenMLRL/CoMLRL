@@ -17,6 +17,7 @@ from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_sources
 from comlrl.utils.reference_kl import (
     clone_reference_models,
+    load_reference_models_from_sources,
     reference_kl_coef,
     reference_kl_enabled,
     reference_kl_for_sequence,
@@ -210,6 +211,9 @@ class MAACTrainer(ActorCriticTrainerBase):
             expected_count=self.args.num_agents,
             model_label="agent_model",
         )
+        actor_model_kwargs = self._filter_model_kwargs(
+            self.model_config.get("model_kwargs", {})
+        )
         for idx, actor_source in enumerate(actor_sources):
             if actor_source is None:
                 raise ValueError("agent_model must be provided for MAAC.")
@@ -223,12 +227,9 @@ class MAACTrainer(ActorCriticTrainerBase):
                     value_head_hidden_dim=None,
                 )
             else:
-                model_kwargs = self._filter_model_kwargs(
-                    self.model_config.get("model_kwargs", {})
-                )
                 try:
                     base = AutoModelForCausalLM.from_pretrained(
-                        actor_source, **model_kwargs
+                        actor_source, **actor_model_kwargs
                     )
                 except (OSError, ValueError) as exc:
                     raise ValueError(
@@ -292,10 +293,17 @@ class MAACTrainer(ActorCriticTrainerBase):
                 self.agent_devices,
                 self.args.num_agents,
             )
-            self.reference_models = clone_reference_models(
-                self.agents,
-                devices=self.reference_devices,
-            )
+            if actor_sources and all(isinstance(src, str) for src in actor_sources):
+                self.reference_models = load_reference_models_from_sources(
+                    actor_sources,
+                    devices=self.reference_devices,
+                    model_kwargs=actor_model_kwargs,
+                )
+            else:
+                self.reference_models = clone_reference_models(
+                    self.agents,
+                    devices=self.reference_devices,
+                )
 
         if self.tokenizers and len(self.tokenizers) == len(self.agents):
             for idx, tok in enumerate(self.tokenizers):

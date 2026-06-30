@@ -23,6 +23,7 @@ from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import infer_model_name, resolve_model_sources
 from comlrl.utils.reference_kl import (
     clone_reference_models,
+    load_reference_models_from_sources,
     reference_kl_coef,
     reference_kl_enabled,
     reference_kl_for_sequence,
@@ -240,17 +241,17 @@ class MAGRPOTrainer:
             self.agent_devices = [single_device] * self.num_agents
         self.device = self.agent_devices[0]
         self.dist_env = local_context(self.device)
+        model_kwargs = {}
+        torch_dtype = None
+        if isinstance(self.model_config, dict):
+            torch_dtype = self.model_config.get("torch_dtype") or self.model_config.get(
+                "dtype"
+            )
+        if torch_dtype is not None:
+            model_kwargs["torch_dtype"] = torch_dtype
         if actor_sources and all(isinstance(src, str) for src in actor_sources):
             from transformers import AutoModelForCausalLM
 
-            model_kwargs = {}
-            torch_dtype = None
-            if isinstance(self.model_config, dict):
-                torch_dtype = self.model_config.get(
-                    "torch_dtype"
-                ) or self.model_config.get("dtype")
-            if torch_dtype is not None:
-                model_kwargs["torch_dtype"] = torch_dtype
             self.agents = [
                 AutoModelForCausalLM.from_pretrained(name, **model_kwargs)
                 for name in actor_sources
@@ -282,10 +283,17 @@ class MAGRPOTrainer:
                 self.agent_devices,
                 self.num_agents,
             )
-            self.reference_models = clone_reference_models(
-                self.agents,
-                devices=self.reference_devices,
-            )
+            if actor_sources and all(isinstance(src, str) for src in actor_sources):
+                self.reference_models = load_reference_models_from_sources(
+                    actor_sources,
+                    devices=self.reference_devices,
+                    model_kwargs=model_kwargs,
+                )
+            else:
+                self.reference_models = clone_reference_models(
+                    self.agents,
+                    devices=self.reference_devices,
+                )
             if self.tokenizers and len(self.tokenizers) == len(self.reference_models):
                 for idx, tok in enumerate(self.tokenizers):
                     apply_tokenizer_specials(tok, [self.reference_models[idx]])

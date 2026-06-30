@@ -101,6 +101,30 @@ def test_reference_kl_enabled_uses_self_reference_by_default():
     assert all(not p.requires_grad for p in trainer.reference_models[0].parameters())
 
 
+def test_reference_model_loads_from_actor_source(tmp_path):
+    model_dir = tmp_path / "tiny-model"
+    _tiny_model().save_pretrained(model_dir)
+
+    trainer = IACTrainer(
+        agent_model=str(model_dir),
+        tokenizer=_dummy_tokenizer(),
+        reward_func=_reward_func,
+        args=IACConfig(
+            num_agents=1,
+            num_turns=1,
+            use_separate_critic=False,
+            agent_devices="cpu",
+            reference_kl_enabled=True,
+            reference_devices="cpu",
+        ),
+    )
+
+    assert len(trainer.reference_models) == 1
+    assert isinstance(trainer.reference_models[0], GPT2LMHeadModel)
+    assert trainer.reference_models[0] is not trainer.agents[0]
+    assert all(not p.requires_grad for p in trainer.reference_models[0].parameters())
+
+
 def test_reference_kl_for_identical_model_is_zero():
     model = _tiny_model()
     sequences = torch.tensor([[2, 3, 4, 5]], dtype=torch.long)

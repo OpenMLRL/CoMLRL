@@ -2,6 +2,7 @@ from .formatters import build_formatters
 from .model_loading import infer_model_name, resolve_model_sources
 from .reference_kl import (
     clone_reference_models,
+    load_reference_models_from_sources,
     reference_kl_coef,
     reference_kl_enabled,
     reference_kl_for_sequence,
@@ -36,6 +37,7 @@ __all__ = [
     "infer_model_name",
     "resolve_model_sources",
     "clone_reference_models",
+    "load_reference_models_from_sources",
     "reference_kl_coef",
     "reference_kl_enabled",
     "reference_kl_for_sequence",
