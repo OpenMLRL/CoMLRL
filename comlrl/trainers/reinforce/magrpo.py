@@ -21,6 +21,15 @@ from comlrl.utils.distributed import (
 )
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import infer_model_name, resolve_model_sources
+from comlrl.utils.reference_kl import (
+    clone_reference_models,
+    load_reference_models_from_sources,
+    reference_kl_coef,
+    reference_kl_enabled,
+    reference_kl_for_sequence,
+    resolve_reference_devices,
+    validate_reference_kl_config,
+)
 from comlrl.utils.reward_utils import call_reward_function
 from comlrl.utils.tokenizer_utils import (
     apply_tokenizer_specials,
@@ -61,6 +70,9 @@ class MAGRPOConfig:
     train_batch_size: Optional[int] = None
     advantage_normalization: bool = True
     advantage_mode: str = "mean"
+    reference_kl_enabled: bool = False
+    reference_kl_coef: float = 0.1
+    reference_devices: Optional[Union[str, Sequence[str]]] = None
 
     def __post_init__(self) -> None:
         if self.num_train_epochs < 1:
@@ -95,6 +107,7 @@ class MAGRPOConfig:
         if mode == "mp" and self.agent_devices is None:
             raise ValueError("parallel_training='mp' requires explicit agent_devices.")
         self.parallel_training = mode
+        validate_reference_kl_config(self, self.num_agents)
 
 
 @dataclass
@@ -228,17 +241,17 @@ class MAGRPOTrainer:
             self.agent_devices = [single_device] * self.num_agents
         self.device = self.agent_devices[0]
         self.dist_env = local_context(self.device)
+        model_kwargs = {}
+        torch_dtype = None
+        if isinstance(self.model_config, dict):
+            torch_dtype = self.model_config.get("torch_dtype") or self.model_config.get(
+                "dtype"
+            )
+        if torch_dtype is not None:
+            model_kwargs["torch_dtype"] = torch_dtype
         if actor_sources and all(isinstance(src, str) for src in actor_sources):
             from transformers import AutoModelForCausalLM
 
-            model_kwargs = {}
-            torch_dtype = None
-            if isinstance(self.model_config, dict):
-                torch_dtype = self.model_config.get(
-                    "torch_dtype"
-                ) or self.model_config.get("dtype")
-            if torch_dtype is not None:
-                model_kwargs["torch_dtype"] = torch_dtype
             self.agents = [
                 AutoModelForCausalLM.from_pretrained(name, **model_kwargs)
                 for name in actor_sources
@@ -261,6 +274,31 @@ class MAGRPOTrainer:
         if special_tokens:
             for tok in self.tokenizers:
                 tok.add_special_tokens(special_tokens)
+
+        self.reference_models: List[Any] = []
+        self.reference_devices: List[torch.device] = []
+        if reference_kl_enabled(self.args):
+            self.reference_devices = resolve_reference_devices(
+                self.args,
+                self.agent_devices,
+                self.num_agents,
+            )
+            if actor_sources and all(isinstance(src, str) for src in actor_sources):
+                self.reference_models = load_reference_models_from_sources(
+                    actor_sources,
+                    devices=self.reference_devices,
+                    model_kwargs=model_kwargs,
+                )
+            else:
+                self.reference_models = clone_reference_models(
+                    self.agents,
+                    devices=self.reference_devices,
+                )
+            if self.tokenizers and len(self.tokenizers) == len(self.reference_models):
+                for idx, tok in enumerate(self.tokenizers):
+                    apply_tokenizer_specials(tok, [self.reference_models[idx]])
+            else:
+                apply_tokenizer_specials(self.tokenizer, self.reference_models)
 
         # Allow single-agent as a special case (GRPO)
         if self.num_agents < 1:
@@ -393,6 +431,9 @@ class MAGRPOTrainer:
                 "algorithm": self.algorithm_name,
                 "advantage_mode": self.advantage_mode,
                 "advantage_normalization": self.args.advantage_normalization,
+                "reference_kl_enabled": reference_kl_enabled(self.args),
+                "reference_kl_coef": reference_kl_coef(self.args),
+                "reference_devices": getattr(self.args, "reference_devices", None),
                 "agent_learning_rate": self.args.agent_learning_rate,
                 "num_train_epochs": self.args.num_train_epochs,
                 "num_generations": self.args.num_generations,
@@ -1245,15 +1286,23 @@ class MAGRPOTrainer:
 
         batch_completions = []
         batch_completion_tokens = []
+        batch_response_lens = []
 
         end_idx = min(num_return_sequences, total_sequences)
 
         for s in range(end_idx):
             completion_tokens = completion_input_ids[s, prompt_len:]
+            pad_positions = (completion_tokens == tokenizer.pad_token_id).nonzero()
+            response_len = (
+                pad_positions[0].item()
+                if pad_positions.shape[0] > 0
+                else completion_tokens.shape[0]
+            )
             batch_completion_tokens.append(completion_tokens)
+            batch_response_lens.append(int(response_len))
 
             completion_text = tokenizer.decode(
-                completion_tokens, skip_special_tokens=True
+                completion_tokens[:response_len], skip_special_tokens=True
             )
             batch_completions.append(completion_text)
 
@@ -1270,6 +1319,14 @@ class MAGRPOTrainer:
         logits = (
             generation_output.scores if hasattr(generation_output, "scores") else []
         )
+        reference_kls = self._reference_kl_values(
+            agent_idx,
+            agent_module,
+            completion_input_ids[:end_idx],
+            torch.ones_like(completion_input_ids[:end_idx], device=device),
+            prompt_len,
+            batch_response_lens,
+        )
 
         return {
             "prompts": prompts,
@@ -1279,6 +1336,8 @@ class MAGRPOTrainer:
             "completions": completions,
             "completion_input_ids": completion_tokens_list,
             "completion_attention_mask": completion_attention_masks,
+            "response_lens": batch_response_lens,
+            "reference_kls": reference_kls,
             "logits": logits,
         }
 
@@ -1419,7 +1478,55 @@ class MAGRPOTrainer:
         return {
             "prompt_input_ids": prompt_ids,
             "completion_input_ids": packed_completion_ids,
+            "reference_kls": list(completions_data.get("reference_kls") or []),
         }
+
+    def _reference_kl_values(
+        self,
+        agent_idx: int,
+        policy_model: Any,
+        sequences: torch.Tensor,
+        attention_mask: torch.Tensor,
+        prompt_len: int,
+        response_lens: Sequence[int],
+    ) -> List[float]:
+        if not reference_kl_enabled(self.args):
+            return []
+        if not getattr(self, "reference_models", None):
+            raise RuntimeError(
+                "Reference KL is enabled but reference models are missing."
+            )
+        reference_model = self.reference_models[agent_idx]
+        values: List[float] = []
+        for seq, attn, response_len in zip(sequences, attention_mask, response_lens):
+            kl_value = reference_kl_for_sequence(
+                policy_model,
+                reference_model,
+                seq.unsqueeze(0),
+                attn.unsqueeze(0),
+                prompt_len,
+                int(response_len),
+            )
+            values.append(float(kl_value.view(-1)[0].item()))
+        return values
+
+    def _apply_reference_kl_to_returns(
+        self, returns_tensor: torch.Tensor, completions_data: Dict[str, Any]
+    ) -> torch.Tensor:
+        if not reference_kl_enabled(self.args):
+            return returns_tensor
+        raw_kls = list(completions_data.get("reference_kls") or [])
+        if not raw_kls:
+            return returns_tensor
+        kls = torch.zeros_like(returns_tensor)
+        usable = min(len(raw_kls), returns_tensor.numel())
+        if usable > 0:
+            kls[:usable] = torch.tensor(
+                raw_kls[:usable],
+                dtype=returns_tensor.dtype,
+                device=returns_tensor.device,
+            )
+        return returns_tensor - reference_kl_coef(self.args) * kls
 
     def _should_log_train(self, step: int) -> bool:
         interval = int(getattr(self.args, "logging_steps", 1))
@@ -1458,6 +1565,18 @@ class MAGRPOTrainer:
                 batch_log[prefix + "expected_return"] = float(
                     np.mean([s.node_mean_return for s in samples])
                 )
+                reference_kls = [
+                    float(kl)
+                    for sample in samples
+                    for kl in sample.completions_data.get("reference_kls", [])
+                ]
+                if reference_kls:
+                    batch_log[prefix + "reference_kl_mean"] = float(
+                        np.mean(reference_kls)
+                    )
+                    batch_log[prefix + "reference_kl_penalty_mean"] = float(
+                        reference_kl_coef(self.args) * np.mean(reference_kls)
+                    )
                 step = max(s.node_env_step for s in samples)
                 log_entries.append(
                     {
@@ -1560,7 +1679,10 @@ class MAGRPOTrainer:
         # Convert returns to tensor
         returns_tensor = torch.tensor(returns, dtype=torch.float, device=device)
 
-        advantages = self._compute_advantages(returns_tensor)
+        effective_returns = self._apply_reference_kl_to_returns(
+            returns_tensor, completions_data
+        )
+        advantages = self._compute_advantages(effective_returns)
         if self.args.advantage_normalization and advantages.numel() > 1:
             mean = advantages.mean()
             std = advantages.std(unbiased=False).clamp(min=1e-6)

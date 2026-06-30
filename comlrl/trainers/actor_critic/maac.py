@@ -15,6 +15,15 @@ from comlrl.schedulers import DeviceScheduler
 from comlrl.utils.distributed import local_context, unwrap_model
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_sources
+from comlrl.utils.reference_kl import (
+    clone_reference_models,
+    load_reference_models_from_sources,
+    reference_kl_coef,
+    reference_kl_enabled,
+    reference_kl_for_sequence,
+    resolve_reference_devices,
+    validate_reference_kl_config,
+)
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizers
 from .ac_base import ActorCriticTrainerBase
@@ -54,6 +63,9 @@ class MAACConfig:
     eval_num_samples: int = 4
     eval_batch_size: int = 1
     logging_steps: int = 1
+    reference_kl_enabled: bool = False
+    reference_kl_coef: float = 0.1
+    reference_devices: Optional[Union[str, Sequence[str]]] = None
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
@@ -96,6 +108,7 @@ class MAACConfig:
                     "parallel_training='mp' requires explicit critic_devices."
                 )
         self.parallel_training = mode
+        validate_reference_kl_config(self, self.num_agents)
 
 
 class MAACTrainer(ActorCriticTrainerBase):
@@ -198,6 +211,9 @@ class MAACTrainer(ActorCriticTrainerBase):
             expected_count=self.args.num_agents,
             model_label="agent_model",
         )
+        actor_model_kwargs = self._filter_model_kwargs(
+            self.model_config.get("model_kwargs", {})
+        )
         for idx, actor_source in enumerate(actor_sources):
             if actor_source is None:
                 raise ValueError("agent_model must be provided for MAAC.")
@@ -211,12 +227,9 @@ class MAACTrainer(ActorCriticTrainerBase):
                     value_head_hidden_dim=None,
                 )
             else:
-                model_kwargs = self._filter_model_kwargs(
-                    self.model_config.get("model_kwargs", {})
-                )
                 try:
                     base = AutoModelForCausalLM.from_pretrained(
-                        actor_source, **model_kwargs
+                        actor_source, **actor_model_kwargs
                     )
                 except (OSError, ValueError) as exc:
                     raise ValueError(
@@ -272,12 +285,37 @@ class MAACTrainer(ActorCriticTrainerBase):
         critic_model_instance.to(self.critic_device)
         self.critics: List[CausalLMWithValueHead] = [critic_model_instance]
 
+        self.reference_models: List[Any] = []
+        self.reference_devices: List[torch.device] = []
+        if reference_kl_enabled(self.args):
+            self.reference_devices = resolve_reference_devices(
+                self.args,
+                self.agent_devices,
+                self.args.num_agents,
+            )
+            if actor_sources and all(isinstance(src, str) for src in actor_sources):
+                self.reference_models = load_reference_models_from_sources(
+                    actor_sources,
+                    devices=self.reference_devices,
+                    model_kwargs=actor_model_kwargs,
+                )
+            else:
+                self.reference_models = clone_reference_models(
+                    self.agents,
+                    devices=self.reference_devices,
+                )
+
         if self.tokenizers and len(self.tokenizers) == len(self.agents):
             for idx, tok in enumerate(self.tokenizers):
-                apply_tokenizer_specials(tok, [self.agents[idx]])
+                models = [self.agents[idx]]
+                if idx < len(self.reference_models):
+                    models.append(self.reference_models[idx])
+                apply_tokenizer_specials(tok, models)
             apply_tokenizer_specials(self.tokenizers[0], [self.critics[0]])
         else:
-            apply_tokenizer_specials(self.tokenizer, [*self.agents, self.critics[0]])
+            apply_tokenizer_specials(
+                self.tokenizer, [*self.agents, self.critics[0], *self.reference_models]
+            )
 
         self.formatters = build_formatters(formatters, self.args.num_agents)
         try:
@@ -340,6 +378,9 @@ class MAACTrainer(ActorCriticTrainerBase):
             "max_new_tokens": self.args.max_new_tokens,
             "num_generations": self.args.num_generations,
             "critic_type": self.args.critic_type,
+            "reference_kl_enabled": reference_kl_enabled(self.args),
+            "reference_kl_coef": reference_kl_coef(self.args),
+            "reference_devices": getattr(self.args, "reference_devices", None),
         }
 
         sections = (
@@ -490,14 +531,70 @@ class MAACTrainer(ActorCriticTrainerBase):
             completion_texts.append(
                 tokenizer.decode(seq[:resp_len], skip_special_tokens=True)
             )
+        full_attention_mask = torch.ones_like(sequences, device=agent_device)
+        reference_kls = self._reference_kl_values(
+            agent_idx,
+            agent_model,
+            sequences,
+            full_attention_mask,
+            prompt_len,
+            response_lens,
+        )
 
         return {
             "prompt": prompt,
             "prompt_len": prompt_len,
             "sequences": sequences,
-            "attention_mask": torch.ones_like(sequences, device=agent_device),
+            "attention_mask": full_attention_mask,
             "response_lens": response_lens,
+            "reference_kls": reference_kls,
             "completions": completion_texts,
+        }
+
+    def _reference_kl_values(
+        self,
+        agent_idx: int,
+        policy_model: CausalLMWithValueHead,
+        sequences: torch.Tensor,
+        attention_mask: torch.Tensor,
+        prompt_len: int,
+        response_lens: Sequence[int],
+    ) -> List[float]:
+        if not reference_kl_enabled(self.args):
+            return []
+        if not getattr(self, "reference_models", None):
+            raise RuntimeError(
+                "Reference KL is enabled but reference models are missing."
+            )
+        reference_model = self.reference_models[agent_idx]
+        values: List[float] = []
+        for seq, attn, response_len in zip(sequences, attention_mask, response_lens):
+            kl_value = reference_kl_for_sequence(
+                policy_model,
+                reference_model,
+                seq.unsqueeze(0),
+                attn.unsqueeze(0),
+                prompt_len,
+                int(response_len),
+            )
+            values.append(float(kl_value.view(-1)[0].item()))
+        return values
+
+    def _kl_shaped_reward(
+        self, reward: float, data: Dict[str, Any], index: int
+    ) -> Tuple[float, Dict[str, float]]:
+        if not reference_kl_enabled(self.args):
+            return reward, {}
+        reference_kl = 0.0
+        penalty = 0.0
+        raw_kls = data.get("reference_kls") or []
+        if index < len(raw_kls):
+            reference_kl = float(raw_kls[index])
+        penalty = reference_kl_coef(self.args) * reference_kl
+        return reward - penalty, {
+            "reference_kl": reference_kl,
+            "reference_kl_penalty": penalty,
+            "environment_reward": reward,
         }
 
     def _collect_rollouts(self, item: Dict[str, Any]) -> List[RolloutSample]:
@@ -522,6 +619,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 "sequences": gen["sequences"],
                 "attention_mask": gen["attention_mask"],
                 "response_lens": gen["response_lens"],
+                "reference_kls": gen["reference_kls"],
                 "completion_texts": gen["completions"],
             }
 
@@ -583,6 +681,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 attn = data["attention_mask"][i]
                 resp_len = data["response_lens"][i]
                 reward = float(rewards_matrix[agent_idx][i])
+                shaped_reward, kl_meta = self._kl_shaped_reward(reward, data, i)
 
                 logprob, _ = self._policy_eval(
                     self.agents[agent_idx],
@@ -603,6 +702,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 joint_len = int(critic_pack["prompt_len"])
                 value = critic_pack["value"].detach().cpu()
                 reward_cpu = torch.tensor([reward], dtype=torch.float32)
+                shaped_reward_cpu = torch.tensor([shaped_reward], dtype=torch.float32)
                 logprob_cpu = logprob.detach().cpu()
                 rollouts.append(
                     RolloutSample(
@@ -619,7 +719,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                         old_logprob=logprob_cpu,
                         old_value=value,
                         reward=reward_cpu,
-                        returns=reward_cpu.clone(),
+                        returns=shaped_reward_cpu.clone(),
                         advantage=torch.zeros_like(reward_cpu),
                         normalized_advantage=None,
                         metadata={
@@ -627,13 +727,14 @@ class MAACTrainer(ActorCriticTrainerBase):
                             "joint_attention_mask": joint_mask.detach().cpu(),
                             "joint_prompt_len": joint_len,
                             "turn_idx": 0,
-                            "adv_target": reward_cpu,
+                            "adv_target": shaped_reward_cpu,
+                            **kl_meta,
                         },
                     )
                 )
 
         for sample in rollouts:
-            r = float(sample.reward.view(-1)[0].item())
+            r = float(sample.returns.view(-1)[0].item())
             sample.metadata["value_target"] = torch.tensor([r]).cpu()
 
         if self.metrics_callback is not None:
@@ -703,6 +804,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                     "sequences": gen["sequences"],
                     "attention_mask": gen["attention_mask"],
                     "response_lens": gen["response_lens"],
+                    "reference_kls": gen["reference_kls"],
                     "completion_texts": gen["completions"],
                 }
 
@@ -744,6 +846,8 @@ class MAACTrainer(ActorCriticTrainerBase):
                 resp_len = data["response_lens"][0]
                 reward_val = float(rewards_matrix[agent_idx][0])
                 reward_cpu = torch.tensor([reward_val], dtype=torch.float32)
+                shaped_reward, kl_meta = self._kl_shaped_reward(reward_val, data, 0)
+                shaped_reward_cpu = torch.tensor([shaped_reward], dtype=torch.float32)
 
                 logprob, _ = self._policy_eval(
                     self.agents[agent_idx],
@@ -768,7 +872,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                     old_logprob=logprob_cpu,
                     old_value=value,
                     reward=reward_cpu,
-                    returns=reward_cpu.clone(),
+                    returns=shaped_reward_cpu.clone(),
                     advantage=torch.zeros_like(reward_cpu),
                     normalized_advantage=None,
                     metadata={
@@ -776,6 +880,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                         "joint_attention_mask": joint_mask.detach().cpu(),
                         "joint_prompt_len": joint_len,
                         "turn_idx": turn_idx,
+                        **kl_meta,
                     },
                 )
                 rollouts.append(sample)
@@ -792,7 +897,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         for agent_idx in range(self.args.num_agents):
             traj = per_agent_samples[agent_idx]
             for t, sample in enumerate(traj):
-                r = float(sample.reward.view(-1)[0].item())
+                r = float(sample.returns.view(-1)[0].item())
                 if t < len(traj) - 1:
                     next_v = float(traj[t + 1].old_value.view(-1)[0].item())
                     target = r + gamma * next_v
@@ -804,7 +909,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         for agent_idx in range(self.args.num_agents):
             future = 0.0
             for sample in reversed(per_agent_samples[agent_idx]):
-                immediate = float(sample.reward.view(-1)[0].item())
+                immediate = float(sample.returns.view(-1)[0].item())
                 future = immediate + gamma * future
                 sample.returns = torch.tensor([future], dtype=torch.float32)
                 sample.advantage = torch.zeros_like(sample.returns)

@@ -184,6 +184,26 @@ class ActorCriticTrainerBase:
             if target_vals.numel() > 0 and torch.isfinite(target_vals).all():
                 metrics["value_target_mean"] = float(target_vals.mean().item())
 
+        reference_kls = [
+            float(sample.metadata.get("reference_kl", 0.0))
+            for sample in rollouts
+            if "reference_kl" in sample.metadata
+        ]
+        if reference_kls:
+            vals = torch.tensor(reference_kls, dtype=torch.float32)
+            if torch.isfinite(vals).all():
+                metrics["reference_kl_mean"] = float(vals.mean().item())
+
+        reference_penalties = [
+            float(sample.metadata.get("reference_kl_penalty", 0.0))
+            for sample in rollouts
+            if "reference_kl_penalty" in sample.metadata
+        ]
+        if reference_penalties:
+            vals = torch.tensor(reference_penalties, dtype=torch.float32)
+            if torch.isfinite(vals).all():
+                metrics["reference_kl_penalty_mean"] = float(vals.mean().item())
+
         return metrics
 
     def _iter_dataloader(self, dataloader, epoch: int, total_epochs: int):
