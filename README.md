@@ -132,10 +132,10 @@ Please cite the following papers if you find this library useful in your researc
   year={2026}
 }
 
-@article{liu2026learndecllmcollabmaac,
+@inproceedings{liu2026learning,
   title   = {Learning Decentralized LLM Collaboration with Multi-Agent Actor Critic},
   author  = {Liu, Shuo and Chen, Tianle and Amiri, Ryan and Amato, Christopher},
-  journal = {arXiv preprint arXiv:2601.21972},
+  booktitle={Proceedings of the International Conference on Machine Learning.},
   year    = {2026}
 }
 ```
