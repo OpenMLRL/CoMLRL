@@ -727,6 +727,8 @@ class MAACTrainer(ActorCriticTrainerBase):
                             "joint_attention_mask": joint_mask.detach().cpu(),
                             "joint_prompt_len": joint_len,
                             "turn_idx": 0,
+                            "generation_idx": i,
+                            "batch_item": item,
                             "adv_target": shaped_reward_cpu,
                             **kl_meta,
                         },
@@ -737,10 +739,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             r = float(sample.returns.view(-1)[0].item())
             sample.metadata["value_target"] = torch.tensor([r]).cpu()
 
-        if self.metrics_callback is not None:
-            extra = self.metrics_callback(rollouts)
-            if isinstance(extra, dict):
-                self._log_metrics(extra)
         return rollouts
 
     def _collect_rollouts_multi_turn(
@@ -880,6 +878,8 @@ class MAACTrainer(ActorCriticTrainerBase):
                         "joint_attention_mask": joint_mask.detach().cpu(),
                         "joint_prompt_len": joint_len,
                         "turn_idx": turn_idx,
+                        "generation_idx": 0,
+                        "batch_item": item,
                         **kl_meta,
                     },
                 )
@@ -915,10 +915,6 @@ class MAACTrainer(ActorCriticTrainerBase):
                 sample.advantage = torch.zeros_like(sample.returns)
                 sample.normalized_advantage = None
 
-        if self.metrics_callback is not None:
-            extra = self.metrics_callback(rollouts)
-            if isinstance(extra, dict):
-                self._log_metrics(extra)
         return rollouts
 
     def _expand_rewards(self, rewards: List[float], num_ret: int) -> List[List[float]]:

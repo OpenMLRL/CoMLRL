@@ -255,6 +255,30 @@ class ActorCriticTrainerBase:
         if self.wandb_initialized and wandb is not None:
             wandb.log(metrics, step=self.env_step)
 
+    def _domain_metrics_from_rollouts(self, rollouts: List[Any]) -> Dict[str, float]:
+        callback = getattr(self, "metrics_callback", None)
+        if callback is None:
+            return {}
+        extra = callback(rollouts)
+        if not isinstance(extra, dict):
+            return {}
+
+        metrics: Dict[str, float] = {}
+        for key, value in extra.items():
+            try:
+                metrics[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return metrics
+
+    def _log_domain_metrics(self, rollouts: List[Any], *, prefix: str = "") -> None:
+        metrics = self._domain_metrics_from_rollouts(rollouts)
+        if not metrics:
+            return
+        if prefix:
+            metrics = {f"{prefix}{key}": value for key, value in metrics.items()}
+        self._log_metrics(metrics)
+
     def _should_log_train(self) -> bool:
         interval = int(getattr(self.args, "logging_steps", 1))
         if interval <= 1:
@@ -337,6 +361,11 @@ class ActorCriticTrainerBase:
     def _run_batch(self, batch, epoch_metrics: Dict[str, List[float]]) -> None:
         for item in batch:
             rollouts = self._collect_rollouts(item)
+            if self.args.num_agents > 0:
+                # Count joint-action reward evaluations (one per agent group).
+                self.env_step += len(rollouts) // self.args.num_agents
+            self._log_domain_metrics(rollouts)
+
             ready_agents: List[int] = []
             for sample in rollouts:
                 agent_idx = sample.agent_idx
@@ -346,9 +375,6 @@ class ActorCriticTrainerBase:
                     ready_agents.append(agent_idx)
             if ready_agents:
                 self._drain_ready_agent_buffers(ready_agents, epoch_metrics)
-            if self.args.num_agents > 0:
-                # Count joint-action reward evaluations (one per agent group).
-                self.env_step += len(rollouts) // self.args.num_agents
 
     def _flush_buffers(self, epoch_metrics: Dict[str, List[float]]) -> None:
         ready_agents = [
@@ -386,6 +412,7 @@ class ActorCriticTrainerBase:
 
         num_samples = int(self.args.eval_num_samples)
         turn_groups: Dict[int, List[Any]] = {}
+        domain_metric_values: Dict[str, List[float]] = defaultdict(list)
         seen = 0
 
         self._in_eval = True
@@ -397,6 +424,9 @@ class ActorCriticTrainerBase:
                         for sample in rollouts:
                             t_idx = int(sample.metadata.get("turn_idx", 0))
                             turn_groups.setdefault(t_idx, []).append(sample)
+                        domain_metrics = self._domain_metrics_from_rollouts(rollouts)
+                        for key, value in domain_metrics.items():
+                            domain_metric_values[key].append(value)
                         seen += 1
                         if seen >= num_samples:
                             break
@@ -410,6 +440,10 @@ class ActorCriticTrainerBase:
             metrics = self._summarize_rollout_metrics(samples)
             for key, value in metrics.items():
                 eval_log[f"eval/turn_{turn_idx + 1}/{key}"] = value
+
+        for key, values in domain_metric_values.items():
+            if values:
+                eval_log[f"eval/{key}"] = float(sum(values) / len(values))
 
         if eval_log:
             self._log_metrics(eval_log)

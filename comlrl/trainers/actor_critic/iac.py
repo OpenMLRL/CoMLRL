@@ -749,6 +749,9 @@ class IACTrainer(ActorCriticTrainerBase):
                         advantage=advantage_cpu,
                         metadata={
                             "char_length": data["char_lengths"][i],
+                            "turn_idx": 0,
+                            "generation_idx": i,
+                            "batch_item": item,
                             **kl_meta,
                             "value_target": returns_cpu,
                         },
@@ -864,6 +867,8 @@ class IACTrainer(ActorCriticTrainerBase):
                     metadata={
                         "char_length": data["char_lengths"][0],
                         "turn_idx": turn_idx,
+                        "generation_idx": 0,
+                        "batch_item": item,
                         **kl_meta,
                     },
                 )
@@ -1205,11 +1210,6 @@ class IACTrainer(ActorCriticTrainerBase):
             if torch.isfinite(vals).all():
                 metrics["reference_kl_penalty_mean"].append(vals.mean().item())
 
-        if self.metrics_callback is not None:
-            extra = self.metrics_callback(rollouts)
-            if isinstance(extra, dict):
-                for key, value in extra.items():
-                    metrics[key].append(float(value))
         random.shuffle(rollouts)
         for start in range(0, len(rollouts), self.args.train_batch_size):
             batch = rollouts[start : start + self.args.train_batch_size]
