@@ -9,7 +9,10 @@ from comlrl.trainers.actor_critic.iac import IACConfig
 from comlrl.trainers.actor_critic.maac import MAACConfig, MAACTrainer
 from comlrl.trainers.reinforce import MAGRPOTrainer
 from comlrl.trainers.reinforce.magrpo import MAGRPOConfig
-from comlrl.utils.reference_kl import reference_kl_for_sequence
+from comlrl.utils.reference_kl import (
+    reference_kl_for_sequence,
+    resolve_reference_devices,
+)
 
 
 def _tiny_model(vocab_size: int = 32) -> GPT2LMHeadModel:
@@ -45,12 +48,37 @@ def test_reference_kl_config_defaults_off():
     assert magrpo.reference_kl_enabled is False
     assert iac.reference_kl_enabled is False
     assert maac.reference_kl_enabled is False
+    assert magrpo.reference_devices is None
+    assert iac.reference_devices is None
+    assert maac.reference_devices is None
 
 
 @pytest.mark.parametrize("config_cls", [MAGRPOConfig, IACConfig, MAACConfig])
 def test_reference_kl_rejects_negative_coef(config_cls):
     with pytest.raises(ValueError, match="reference_kl_coef"):
         config_cls(reference_kl_coef=-0.1)
+
+
+@pytest.mark.parametrize("config_cls", [MAGRPOConfig, IACConfig, MAACConfig])
+def test_reference_kl_rejects_mismatched_reference_devices(config_cls):
+    kwargs = {
+        "num_agents": 2,
+        "reference_kl_enabled": True,
+        "reference_devices": ["cpu", "cpu", "cpu"],
+    }
+    if config_cls is MAGRPOConfig:
+        kwargs["num_generations"] = 2
+    with pytest.raises(ValueError, match="reference_devices length"):
+        config_cls(**kwargs)
+
+
+def test_reference_devices_can_be_resolved_separately_from_agents():
+    args = SimpleNamespace(reference_devices=["cuda:1"])
+    fallback = [torch.device("cuda:0")]
+
+    devices = resolve_reference_devices(args, fallback, expected_count=1)
+
+    assert devices == [torch.device("cuda:1")]
 
 
 def test_reference_kl_enabled_uses_self_reference_by_default():

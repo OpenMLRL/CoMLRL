@@ -20,6 +20,7 @@ from comlrl.utils.reference_kl import (
     reference_kl_coef,
     reference_kl_enabled,
     reference_kl_for_sequence,
+    resolve_reference_devices,
     validate_reference_kl_config,
 )
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
@@ -63,6 +64,7 @@ class MAACConfig:
     logging_steps: int = 1
     reference_kl_enabled: bool = False
     reference_kl_coef: float = 0.1
+    reference_devices: Optional[Union[str, Sequence[str]]] = None
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
@@ -283,10 +285,16 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.critics: List[CausalLMWithValueHead] = [critic_model_instance]
 
         self.reference_models: List[Any] = []
+        self.reference_devices: List[torch.device] = []
         if reference_kl_enabled(self.args):
+            self.reference_devices = resolve_reference_devices(
+                self.args,
+                self.agent_devices,
+                self.args.num_agents,
+            )
             self.reference_models = clone_reference_models(
                 self.agents,
-                devices=self.agent_devices,
+                devices=self.reference_devices,
             )
 
         if self.tokenizers and len(self.tokenizers) == len(self.agents):
@@ -364,6 +372,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             "critic_type": self.args.critic_type,
             "reference_kl_enabled": reference_kl_enabled(self.args),
             "reference_kl_coef": reference_kl_coef(self.args),
+            "reference_devices": getattr(self.args, "reference_devices", None),
         }
 
         sections = (

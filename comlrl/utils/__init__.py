@@ -5,6 +5,7 @@ from .reference_kl import (
     reference_kl_coef,
     reference_kl_enabled,
     reference_kl_for_sequence,
+    resolve_reference_devices,
     validate_reference_kl_config,
 )
 from .reward_processor import RewardProcessors
@@ -38,6 +39,7 @@ __all__ = [
     "reference_kl_coef",
     "reference_kl_enabled",
     "reference_kl_for_sequence",
+    "resolve_reference_devices",
     "validate_reference_kl_config",
     "RewardProcessors",
     "call_reward_function",

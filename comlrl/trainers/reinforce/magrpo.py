@@ -26,6 +26,7 @@ from comlrl.utils.reference_kl import (
     reference_kl_coef,
     reference_kl_enabled,
     reference_kl_for_sequence,
+    resolve_reference_devices,
     validate_reference_kl_config,
 )
 from comlrl.utils.reward_utils import call_reward_function
@@ -70,6 +71,7 @@ class MAGRPOConfig:
     advantage_mode: str = "mean"
     reference_kl_enabled: bool = False
     reference_kl_coef: float = 0.1
+    reference_devices: Optional[Union[str, Sequence[str]]] = None
 
     def __post_init__(self) -> None:
         if self.num_train_epochs < 1:
@@ -273,10 +275,16 @@ class MAGRPOTrainer:
                 tok.add_special_tokens(special_tokens)
 
         self.reference_models: List[Any] = []
+        self.reference_devices: List[torch.device] = []
         if reference_kl_enabled(self.args):
+            self.reference_devices = resolve_reference_devices(
+                self.args,
+                self.agent_devices,
+                self.num_agents,
+            )
             self.reference_models = clone_reference_models(
                 self.agents,
-                devices=self.agent_devices,
+                devices=self.reference_devices,
             )
             if self.tokenizers and len(self.tokenizers) == len(self.reference_models):
                 for idx, tok in enumerate(self.tokenizers):
@@ -417,6 +425,7 @@ class MAGRPOTrainer:
                 "advantage_normalization": self.args.advantage_normalization,
                 "reference_kl_enabled": reference_kl_enabled(self.args),
                 "reference_kl_coef": reference_kl_coef(self.args),
+                "reference_devices": getattr(self.args, "reference_devices", None),
                 "agent_learning_rate": self.args.agent_learning_rate,
                 "num_train_epochs": self.args.num_train_epochs,
                 "num_generations": self.args.num_generations,

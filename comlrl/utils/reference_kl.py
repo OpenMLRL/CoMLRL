@@ -6,6 +6,7 @@ from typing import Any, List, Sequence
 import torch
 import torch.nn.functional as F
 
+from comlrl.schedulers import DeviceScheduler
 from comlrl.utils.distributed import unwrap_model
 
 
@@ -18,10 +19,31 @@ def reference_kl_coef(args: Any) -> float:
 
 
 def validate_reference_kl_config(args: Any, expected_count: int) -> None:
-    del expected_count
     coef = reference_kl_coef(args)
     if coef < 0:
         raise ValueError("reference_kl_coef must be >= 0.")
+    reference_devices = getattr(args, "reference_devices", None)
+    if reference_kl_enabled(args) and reference_devices is not None:
+        DeviceScheduler.resolve_devices(
+            reference_devices,
+            expected_count,
+            kind="reference_devices",
+        )
+
+
+def resolve_reference_devices(
+    args: Any,
+    fallback_devices: Sequence[torch.device],
+    expected_count: int,
+) -> List[torch.device]:
+    reference_devices = getattr(args, "reference_devices", None)
+    if reference_devices is None:
+        return list(fallback_devices)
+    return DeviceScheduler.resolve_devices(
+        reference_devices,
+        expected_count,
+        kind="reference_devices",
+    )
 
 
 def clone_reference_models(
