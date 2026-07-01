@@ -56,7 +56,7 @@ class MAACConfig:
     agent_devices: Optional[Union[str, Sequence[str]]] = None
     critic_devices: Optional[Union[str, Sequence[str]]] = None
     external_prompt_passthrough: bool = False
-    discount: float = 0.9
+    discount: float = 1.0
     critic_type: str = "v"  # "v" (V(s)) or "q" (Q(s,a))
     early_termination_threshold: Optional[float] = -0.2
     eval_interval: int = 16
@@ -754,7 +754,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             [] for _ in range(self.args.num_agents)
         ]
         rollouts: List[RolloutSample] = []
-        gamma = float(getattr(self.args, "discount", 0.9))
+        value_discount = float(getattr(self.args, "discount", 1.0))
 
         for turn_idx in range(num_turns):
             if turn_idx == 0:
@@ -900,7 +900,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 r = float(sample.returns.view(-1)[0].item())
                 if t < len(traj) - 1:
                     next_v = float(traj[t + 1].old_value.view(-1)[0].item())
-                    target = r + gamma * next_v
+                    target = r + value_discount * next_v
                 else:
                     target = r
                 sample.metadata["adv_target"] = torch.tensor([target]).cpu()
@@ -910,7 +910,8 @@ class MAACTrainer(ActorCriticTrainerBase):
             future = 0.0
             for sample in reversed(per_agent_samples[agent_idx]):
                 immediate = float(sample.returns.view(-1)[0].item())
-                future = immediate + gamma * future
+                # Logged return is the undiscounted reward sum from this turn onward.
+                future = immediate + future
                 sample.returns = torch.tensor([future], dtype=torch.float32)
                 sample.advantage = torch.zeros_like(sample.returns)
                 sample.normalized_advantage = None

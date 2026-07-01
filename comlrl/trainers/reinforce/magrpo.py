@@ -58,7 +58,7 @@ class MAGRPOConfig:
 
     # Multi-turn / tree rollout
     num_turns: int = 2
-    discount: float = 0.9
+    discount: float = 1.0
     joint_mode: str = "aligned"
     early_termination_threshold: Optional[float] = -0.2
     external_prompt_passthrough: bool = False
@@ -599,7 +599,6 @@ class MAGRPOTrainer:
         n_turns = self.args.num_turns
         if n_turns > 0 and eval_turn_rewards and eval_turn_rewards[0]:
             n_samp = len(eval_turn_rewards[0])
-            gamma = float(getattr(self.args, "discount", 0.9))
             sum_returns = [0.0] * n_turns
             for s in range(n_samp):
                 rs = [
@@ -609,7 +608,8 @@ class MAGRPOTrainer:
                 ret = [0.0] * n_turns
                 ret[-1] = rs[-1]
                 for t in range(n_turns - 2, -1, -1):
-                    ret[t] = rs[t] + gamma * ret[t + 1]
+                    # Evaluation return is the undiscounted reward sum from this turn onward.
+                    ret[t] = rs[t] + ret[t + 1]
                 for t in range(n_turns):
                     sum_returns[t] += ret[t]
             for t in range(n_turns):
@@ -868,8 +868,6 @@ class MAGRPOTrainer:
         """
         num_turns = int(self.args.num_turns)
         num_gens = int(self.args.num_generations)
-        gamma = float(getattr(self.args, "discount", 0.9))
-
         # Per-turn accumulators for batch-level summaries
         turn_reward_node_means: List[List[float]] = [[] for _ in range(num_turns)]
         turn_return_node_means: List[List[float]] = [[] for _ in range(num_turns)]
@@ -1059,7 +1057,8 @@ class MAGRPOTrainer:
                 child_node = node["children"][j]
                 child_returns = compute_returns(child_node)
                 mean_child = float(np.mean(child_returns)) if child_returns else 0.0
-                parent_returns.append(rj + gamma * mean_child)
+                # Training return is the undiscounted reward sum over the rollout tree.
+                parent_returns.append(rj + mean_child)
             node["returns"] = parent_returns
             return parent_returns
 
