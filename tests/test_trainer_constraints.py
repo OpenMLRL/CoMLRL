@@ -6,8 +6,10 @@ from transformers import GPT2Config, GPT2LMHeadModel
 from comlrl.trainers.actor_critic import IACTrainer, MAACTrainer
 from comlrl.trainers.actor_critic.iac import IACConfig
 from comlrl.trainers.actor_critic.maac import MAACConfig
-from comlrl.trainers.reinforce import MAGRPOTrainer
+from comlrl.trainers.reinforce import MADPOTrainer, MAGRPOTrainer, MARLHFTrainer
+from comlrl.trainers.reinforce.madpo import MADPOConfig
 from comlrl.trainers.reinforce.magrpo import MAGRPOConfig
+from comlrl.trainers.reinforce.marlhf import MARLHFConfig
 
 
 def _reward_func(*_args, **_kwargs):
@@ -28,6 +30,14 @@ def _maac_cfg(**kwargs):
 
 def _magrpo_cfg(**kwargs):
     return MAGRPOConfig(agent_devices="cpu", **kwargs)
+
+
+def _madpo_cfg(**kwargs):
+    return MADPOConfig(agent_devices="cpu", **kwargs)
+
+
+def _marlhf_cfg(**kwargs):
+    return MARLHFConfig(agent_devices="cpu", **kwargs)
 
 
 @pytest.fixture(scope="session")
@@ -124,6 +134,26 @@ def tiny_model_b():
             lambda: MAGRPOTrainer(reward_func=_reward_func, args=_magrpo_cfg()),
             "Either agent_model or agents",
         ),
+        (
+            lambda: MADPOTrainer(
+                agent_model="dummy", reward_func=None, args=_madpo_cfg()
+            ),
+            "reward_func",
+        ),
+        (
+            lambda: MADPOTrainer(reward_func=_reward_func, args=_madpo_cfg()),
+            "Either agent_model or agents",
+        ),
+        (
+            lambda: MARLHFTrainer(
+                agent_model="dummy", reward_func=None, args=_marlhf_cfg()
+            ),
+            "reward_func",
+        ),
+        (
+            lambda: MARLHFTrainer(reward_func=_reward_func, args=_marlhf_cfg()),
+            "Either agent_model or agents",
+        ),
     ],
     ids=[
         "iac_reward_func",
@@ -135,6 +165,10 @@ def tiny_model_b():
         "maac_multiturn_transition",
         "magrpo_reward_func",
         "magrpo_model_or_agents",
+        "madpo_reward_func",
+        "madpo_model_or_agents",
+        "marlhf_reward_func",
+        "marlhf_model_or_agents",
     ],
 )
 def test_trainer_early_constraints(factory, match):
