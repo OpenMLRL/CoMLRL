@@ -2,7 +2,9 @@ import pytest
 
 from comlrl.trainers.actor_critic.iac import IACConfig
 from comlrl.trainers.actor_critic.maac import MAACConfig
+from comlrl.trainers.reinforce.madpo import MADPOConfig
 from comlrl.trainers.reinforce.magrpo import MAGRPOConfig
+from comlrl.trainers.reinforce.marlhf import MARLHFConfig
 
 
 def _assert_invalid(cfg_cls, field, value, match=None):
@@ -110,3 +112,27 @@ def test_magrpo_config_constraints():
     MAGRPOConfig(parallel_training="mp", agent_devices="cpu")
     MAGRPOConfig(agent_devices="cpu")
     MAGRPOConfig(num_generations=2)
+
+
+def test_madpo_config_constraints():
+    _assert_invalid(MADPOConfig, "num_turns", 2)
+    _assert_invalid(MADPOConfig, "preference_num_candidates", 1)
+    _assert_invalid(MADPOConfig, "preference_pairs_per_sample", 0)
+    _assert_invalid(MADPOConfig, "dpo_beta", 0)
+    _assert_invalid(MADPOConfig, "environment_steps_per_pair", 0)
+    _assert_invalid(MADPOConfig, "pair_selection", "x")
+
+    MADPOConfig(agent_devices="cpu")
+    MADPOConfig(agent_devices="cpu", preference_pairs_per_sample=None)
+    MADPOConfig(agent_devices="cpu", pair_selection="random")
+
+
+def test_marlhf_config_constraints():
+    _assert_invalid(MARLHFConfig, "rl_algorithm", "x")
+    _assert_invalid(MARLHFConfig, "reward_learning_rate", 0)
+    _assert_invalid(MARLHFConfig, "reward_num_train_epochs", 0)
+    _assert_invalid(MARLHFConfig, "reward_train_batch_size", 0)
+    _assert_invalid(MARLHFConfig, "reward_max_length", 0)
+
+    MARLHFConfig(agent_devices="cpu")
+    MARLHFConfig(agent_devices="cpu", rl_algorithm="maac")
