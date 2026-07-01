@@ -1,8 +1,5 @@
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import version
 
-try:
-    __version__ = version("comlrl")
-except PackageNotFoundError:
-    __version__ = "0+local"
+__version__ = version("comlrl")
 
 __all__ = ["__version__"]

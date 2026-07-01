@@ -23,7 +23,6 @@ class AgentPreferenceTensors:
 
 @dataclass
 class PreferencePair:
-    batch_item: Dict[str, Any]
     prompts: List[str]
     winner_completions: List[str]
     loser_completions: List[str]
@@ -42,7 +41,6 @@ class MADPOConfig(MAGRPOConfig):
     preference_pairs_per_sample: Optional[int] = 2
     pair_selection: str = "reward_gap"
     dpo_beta: float = 0.1
-    dpo_reference_enabled: bool = False
     use_environment_step: bool = True
     environment_steps_per_pair: int = 2
 
@@ -59,8 +57,6 @@ class MADPOConfig(MAGRPOConfig):
             raise ValueError("preference_pairs_per_sample must be >= 1 or null.")
         if self.dpo_beta <= 0:
             raise ValueError("dpo_beta must be > 0.")
-        if self.dpo_reference_enabled:
-            raise ValueError("dpo_reference_enabled is not implemented yet.")
         if self.environment_steps_per_pair < 1:
             raise ValueError("environment_steps_per_pair must be >= 1.")
         mode = str(self.pair_selection or "reward_gap").strip().lower()
@@ -94,27 +90,27 @@ class MADPOTrainer(MAGRPOTrainer):
 
         preference_pairs = self._build_preference_dataset(**kwargs)
         if not preference_pairs:
-            if getattr(self, "verbose", True):
+            if self.verbose:
                 print("MADPO: no non-tied preference pairs were generated.")
             return
 
         updates_seen = 0
         for epoch in range(int(self.args.num_train_epochs)):
             random.shuffle(preference_pairs)
-            batch_size = int(getattr(self.args, "train_batch_size", None) or 1)
+            batch_size = int(self.args.train_batch_size)
             batches = [
                 preference_pairs[start : start + batch_size]
                 for start in range(0, len(preference_pairs), batch_size)
             ]
             iterator = batches
-            if getattr(self, "verbose", True):
+            if self.verbose:
                 iterator = tqdm(
                     batches,
                     total=len(batches),
                     desc=f"MADPO epoch {epoch + 1}/{int(self.args.num_train_epochs)}",
                 )
 
-            for batch_idx, batch in enumerate(iterator):
+            for batch in iterator:
                 if int(self.args.eval_interval) > 0 and (
                     updates_seen % int(self.args.eval_interval) == 0
                 ):
@@ -122,7 +118,7 @@ class MADPOTrainer(MAGRPOTrainer):
 
                 metrics = self._update_from_preference_batch(batch)
                 updates_seen += 1
-                if bool(getattr(self.args, "use_environment_step", True)):
+                if self.args.use_environment_step:
                     self.env_step += int(self.args.environment_steps_per_pair) * len(
                         batch
                     )
@@ -135,7 +131,7 @@ class MADPOTrainer(MAGRPOTrainer):
         pairs: List[PreferencePair] = []
         dataloader = self.get_train_dataloader()
         iterator = dataloader
-        if getattr(self, "verbose", True):
+        if self.verbose:
             iterator = tqdm(
                 dataloader,
                 total=len(dataloader),
@@ -167,7 +163,7 @@ class MADPOTrainer(MAGRPOTrainer):
         batch_item: Dict[str, Any],
         **kwargs,
     ) -> List[PreferencePair]:
-        num_candidates = int(getattr(self.args, "preference_num_candidates", 5))
+        num_candidates = int(self.args.preference_num_candidates)
 
         def _generate_agent(agent_idx: int) -> Dict[str, Any]:
             return self._generate_completions_with_external_prompts(
@@ -185,7 +181,7 @@ class MADPOTrainer(MAGRPOTrainer):
         ]
         prompts = [comps_per_agent[i]["prompts"][0] for i in range(self.num_agents)]
 
-        joint_mode = str(getattr(self.args, "joint_mode", "aligned")).lower()
+        joint_mode = self.args.joint_mode.lower()
         if joint_mode not in {"align", "aligned"}:
             raise ValueError(
                 "MADPO preference generation currently supports aligned joint_mode only."
@@ -220,7 +216,6 @@ class MADPOTrainer(MAGRPOTrainer):
 
             result.append(
                 PreferencePair(
-                    batch_item=batch_item,
                     prompts=list(prompts),
                     winner_completions=winner_texts,
                     loser_completions=loser_texts,
@@ -248,7 +243,7 @@ class MADPOTrainer(MAGRPOTrainer):
         if not candidate_pairs:
             return []
 
-        mode = str(getattr(self.args, "pair_selection", "reward_gap")).lower()
+        mode = self.args.pair_selection
         if mode == "random":
             random.shuffle(candidate_pairs)
         elif mode == "all":
@@ -256,7 +251,7 @@ class MADPOTrainer(MAGRPOTrainer):
         else:
             candidate_pairs.sort(key=lambda item: item[0], reverse=True)
 
-        limit = getattr(self.args, "preference_pairs_per_sample", None)
+        limit = self.args.preference_pairs_per_sample
         if limit is not None:
             candidate_pairs = candidate_pairs[: int(limit)]
         return [(winner_idx, loser_idx) for _, winner_idx, loser_idx in candidate_pairs]
@@ -269,7 +264,7 @@ class MADPOTrainer(MAGRPOTrainer):
 
         detached_deltas = self._detached_agent_deltas(batch)
         joint_deltas = [sum(row) for row in detached_deltas]
-        beta = float(getattr(self.args, "dpo_beta", 0.1))
+        beta = float(self.args.dpo_beta)
         logged_losses = [
             -F.logsigmoid(torch.tensor(beta * delta)).item() for delta in joint_deltas
         ]
@@ -325,7 +320,7 @@ class MADPOTrainer(MAGRPOTrainer):
     ) -> torch.Tensor:
         device = next(unwrap_model(self.agents[agent_idx]).parameters()).device
         losses: List[torch.Tensor] = []
-        beta = float(getattr(self.args, "dpo_beta", 0.1))
+        beta = float(self.args.dpo_beta)
 
         for pair_idx, pair in enumerate(batch):
             own_delta = self._agent_logprob_delta(agent_idx, pair)

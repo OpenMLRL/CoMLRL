@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -115,7 +114,7 @@ class MARLHFTrainer(MADPOTrainer):
     def train(self, **kwargs):
         if int(self.args.num_turns) != 1:
             raise ValueError("MARLHF currently supports num_turns=1 only.")
-        if str(getattr(self.args, "rl_algorithm", "magrpo")).lower() != "magrpo":
+        if self.args.rl_algorithm != "magrpo":
             raise NotImplementedError(
                 "MARLHF currently trains policies with rl_algorithm='magrpo'. "
                 "The config field accepts the planned algorithms for future dispatch."
@@ -126,7 +125,7 @@ class MARLHFTrainer(MADPOTrainer):
 
         preference_pairs = self._build_preference_dataset(**kwargs)
         if not preference_pairs:
-            if getattr(self, "verbose", True):
+            if self.verbose:
                 print("MARLHF: no non-tied preference pairs were generated.")
             return
 
@@ -164,7 +163,7 @@ class MARLHFTrainer(MADPOTrainer):
         )
 
     def _init_reward_model(self) -> None:
-        source = getattr(self.args, "reward_model_name", None) or self.model_name
+        source = self.args.reward_model_name or self.model_name
         if not source or not isinstance(source, str):
             raise ValueError(
                 "reward_model_name must be provided when agent models are objects."
@@ -182,19 +181,19 @@ class MARLHFTrainer(MADPOTrainer):
         backbone = AutoModelForCausalLM.from_pretrained(source, **model_kwargs)
         self.reward_model = JointRewardModel(
             backbone,
-            freeze_backbone=bool(getattr(self.args, "reward_freeze_backbone", False)),
+            freeze_backbone=self.args.reward_freeze_backbone,
         ).to(self.device)
         self.reward_tokenizer = tokenizer
         self.reward_optimizer = torch.optim.AdamW(
             self.reward_model.parameters(),
-            lr=float(getattr(self.args, "reward_learning_rate", 1.0e-5)),
+            lr=float(self.args.reward_learning_rate),
         )
 
     def _train_reward_model(self, preference_pairs: List[PreferencePair]) -> None:
         if self.reward_model is None or self.reward_optimizer is None:
             raise RuntimeError("Reward model has not been initialized.")
 
-        batch_size = int(getattr(self.args, "reward_train_batch_size", 2))
+        batch_size = int(self.args.reward_train_batch_size)
         reward_loader = DataLoader(
             preference_pairs,
             batch_size=batch_size,
@@ -202,18 +201,17 @@ class MARLHFTrainer(MADPOTrainer):
             collate_fn=lambda examples: examples,
             num_workers=0,
         )
-        reward_step = 0
         self.reward_model.train()
 
-        for epoch in range(int(getattr(self.args, "reward_num_train_epochs", 1))):
+        for epoch in range(int(self.args.reward_num_train_epochs)):
             iterator = reward_loader
-            if getattr(self, "verbose", True):
+            if self.verbose:
                 iterator = tqdm(
                     reward_loader,
                     total=len(reward_loader),
                     desc=(
                         "MARLHF reward model "
-                        f"{epoch + 1}/{int(getattr(self.args, 'reward_num_train_epochs', 1))}"
+                        f"{epoch + 1}/{int(self.args.reward_num_train_epochs)}"
                     ),
                 )
 
@@ -233,7 +231,6 @@ class MARLHFTrainer(MADPOTrainer):
                 self.reward_optimizer.zero_grad()
                 loss.backward()
                 self.reward_optimizer.step()
-                reward_step += 1
 
                 if self.wandb_initialized and wandb.run is not None:
                     accuracy = float(
@@ -260,7 +257,7 @@ class MARLHFTrainer(MADPOTrainer):
     ) -> List[float]:
         if self.reward_model is None:
             raise RuntimeError("Reward model has not been initialized.")
-        if str(getattr(self.args, "joint_mode", "aligned")).lower() not in {
+        if self.args.joint_mode.lower() not in {
             "align",
             "aligned",
         }:
@@ -272,12 +269,10 @@ class MARLHFTrainer(MADPOTrainer):
         if min_completions <= 0:
             return []
 
-        if batch_items:
-            item = batch_items[0]
-            agent_prompts = [self.formatters[i](item) for i in range(self.num_agents)]
-        else:
-            fallback_prompt = prompts[0] if prompts else ""
-            agent_prompts = [fallback_prompt for _ in range(self.num_agents)]
+        if not batch_items:
+            raise ValueError("MARLHF reward model scoring requires batch_items.")
+        item = batch_items[0]
+        agent_prompts = [self.formatters[i](item) for i in range(self.num_agents)]
 
         texts: List[str] = []
         for completion_idx in range(min_completions):
@@ -294,12 +289,11 @@ class MARLHFTrainer(MADPOTrainer):
     def _score_reward_texts(self, texts: Sequence[str]) -> torch.Tensor:
         if self.reward_model is None or self.reward_tokenizer is None:
             raise RuntimeError("Reward model has not been initialized.")
-        max_length = getattr(self.args, "reward_max_length", None)
         encoded = self.reward_tokenizer(
             list(texts),
             padding=True,
             truncation=True,
-            max_length=max_length,
+            max_length=self.args.reward_max_length,
             return_tensors="pt",
         )
         encoded = {key: value.to(self.device) for key, value in encoded.items()}
