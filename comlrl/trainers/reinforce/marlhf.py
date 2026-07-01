@@ -30,6 +30,8 @@ class JointRewardModel(nn.Module):
         if hidden_size is None:
             raise ValueError("Could not infer reward model hidden size.")
         self.reward_head = nn.Linear(int(hidden_size), 1)
+        reference_param = next(self.backbone.parameters())
+        self.reward_head.to(device=reference_param.device, dtype=reference_param.dtype)
         if freeze_backbone:
             for param in self.backbone.parameters():
                 param.requires_grad = False
