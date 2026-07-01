@@ -613,10 +613,10 @@ class MAGRPOTrainer:
                 for t in range(n_turns):
                     sum_returns[t] += ret[t]
             for t in range(n_turns):
-                extra_eval_metrics[f"eval/turn_{t+1}/mean_reward"] = float(
+                extra_eval_metrics[f"eval/turn_{t+1}/reward_mean"] = float(
                     np.mean(eval_turn_rewards[t]) if eval_turn_rewards[t] else 0.0
                 )
-                extra_eval_metrics[f"eval/turn_{t+1}/mean_return"] = float(
+                extra_eval_metrics[f"eval/turn_{t+1}/expected_return"] = float(
                     sum_returns[t] / n_samp if n_samp > 0 else 0.0
                 )
 
