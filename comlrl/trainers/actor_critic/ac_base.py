@@ -167,23 +167,6 @@ class ActorCriticTrainerBase:
         if returns.numel() > 0 and torch.isfinite(returns).all():
             metrics["expected_return"] = float(returns.mean().item())
 
-        values = torch.stack(
-            [sample.old_value.view(-1)[0] for sample in rollouts]
-        ).float()
-        if values.numel() > 0 and torch.isfinite(values).all():
-            metrics["value_pred_mean"] = float(values.mean().item())
-
-        targets = [sample.metadata.get("value_target") for sample in rollouts]
-        if any(t is not None for t in targets):
-            target_vals = torch.stack(
-                [
-                    (t if t is not None else sample.returns).view(-1)[0]
-                    for sample, t in zip(rollouts, targets)
-                ]
-            ).float()
-            if target_vals.numel() > 0 and torch.isfinite(target_vals).all():
-                metrics["value_target_mean"] = float(target_vals.mean().item())
-
         reference_kls = [
             float(sample.metadata.get("reference_kl", 0.0))
             for sample in rollouts

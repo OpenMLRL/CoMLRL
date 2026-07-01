@@ -1,7 +1,6 @@
 import inspect
 import os
 import random
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -1002,7 +1001,7 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         return response_log_probs.sum(dim=-1)
 
-    def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> Dict[str, float]:
+    def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> None:
         agent_model = self.agents[agent_idx]
         agent_optimizer = self.agent_optimizers[agent_idx]
 
@@ -1070,11 +1069,6 @@ class MAACTrainer(ActorCriticTrainerBase):
         value_total.backward()
         self.critic_optimizer.step()
 
-        return {
-            "policy_loss": actor_loss.detach().item(),
-            "value_loss": value_loss.detach().item(),
-        }
-
     def _update(
         self, agent_idx: int, rollouts: List[RolloutSample]
     ) -> Dict[str, float]:
@@ -1085,18 +1079,9 @@ class MAACTrainer(ActorCriticTrainerBase):
         self._prepare_advantages(rollouts)
         random.shuffle(rollouts)
 
-        loss_metrics = defaultdict(list)
         for start in range(0, len(rollouts), self.args.train_batch_size):
             batch = rollouts[start : start + self.args.train_batch_size]
-            step_metrics = self._ac_step(agent_idx, batch)
-            for key, value in step_metrics.items():
-                loss_metrics[key].append(value)
-        averaged_losses = {
-            key: float(sum(values) / len(values))
-            for key, values in loss_metrics.items()
-            if values
-        }
-        metrics.update(averaged_losses)
+            self._ac_step(agent_idx, batch)
         return metrics
 
     def _on_epoch_end(
@@ -1105,30 +1090,9 @@ class MAACTrainer(ActorCriticTrainerBase):
         total_epochs: int,
         epoch_metrics: Dict[str, List[float]],
     ) -> None:
-        num_turns = max(1, int(getattr(self.args, "num_turns", 1)))
-        epoch_log: Dict[str, float] = {}
-        for turn_idx in range(num_turns):
-            prefix = f"turn_{turn_idx + 1}/"
-
-            def _maybe_log(metric_key: str, epoch_key: str) -> None:
-                values = epoch_metrics.get(prefix + metric_key)
-                if values:
-                    epoch_log[prefix + epoch_key] = float(sum(values) / len(values))
-
-            _maybe_log("reward_mean", "epoch_reward_mean")
-            _maybe_log("expected_return", "epoch_avg_return")
-            _maybe_log("value_pred_mean", "epoch_value_pred_mean")
-            _maybe_log("value_target_mean", "epoch_value_target_mean")
-            _maybe_log("policy_loss", "epoch_policy_loss")
-            _maybe_log("value_loss", "epoch_value_loss")
-
-        if epoch_log:
-            self._log_metrics(epoch_log)
-
         summary = self._summarize_epoch_metrics(epoch_metrics)
         if summary and getattr(self, "verbose", True) and self.dist_env.is_main:
-            to_print = epoch_log if epoch_log else summary
-            print(f"Epoch {epoch + 1}/{total_epochs} metrics: {to_print}")
+            print(f"Epoch {epoch + 1}/{total_epochs} metrics: {summary}")
 
     def save_model(self, output_dir: str) -> None:
         if not self.dist_env.is_main:

@@ -1048,7 +1048,7 @@ class IACTrainer(ActorCriticTrainerBase):
         return logprob_sum
 
     # Actor-Critic update logic
-    def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> Dict[str, float]:
+    def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> None:
         agent_model = self.agents[agent_idx]
         critic_model = (
             self.critics[agent_idx] if self.args.use_separate_critic else None
@@ -1173,11 +1173,6 @@ class IACTrainer(ActorCriticTrainerBase):
             (actor_total + value_total).backward()
             agent_optimizer.step()
 
-        return {
-            "policy_loss": actor_loss.detach().item(),
-            "value_loss": value_loss.detach().item(),
-        }
-
     def _update(
         self, agent_idx: int, rollouts: List[RolloutSample]
     ) -> Dict[str, float]:
@@ -1214,9 +1209,7 @@ class IACTrainer(ActorCriticTrainerBase):
         random.shuffle(rollouts)
         for start in range(0, len(rollouts), self.args.train_batch_size):
             batch = rollouts[start : start + self.args.train_batch_size]
-            step_metrics = self._ac_step(agent_idx, batch)
-            for key, value in step_metrics.items():
-                metrics[key].append(value)
+            self._ac_step(agent_idx, batch)
 
         averaged = {
             key: float(sum(values) / len(values))

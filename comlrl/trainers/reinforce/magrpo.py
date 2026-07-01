@@ -793,13 +793,6 @@ class MAGRPOTrainer:
 
         # Create the data pipeline for generating examples
         for epoch in range(0, int(self.args.num_train_epochs)):
-            # No per-agent reward tracking in single reward mode
-
-            # Turn tracking for all cases (including single-turn)
-            epoch_turn_rewards = [
-                [] for _ in range(self.args.num_turns)
-            ]  # immediate rewards
-            epoch_turn_returns = [[] for _ in range(self.args.num_turns)]  # returns
             dl = self.get_train_dataloader()
             if getattr(self, "verbose", True):
                 it = enumerate(
@@ -823,8 +816,6 @@ class MAGRPOTrainer:
                 # Unified training step (returns-based, backward updates)
                 batch_loss, _batch_stats = self._train_step_returns(
                     batch_item,
-                    epoch_turn_rewards,
-                    epoch_turn_returns,
                     **kwargs,
                 )
 
@@ -835,27 +826,9 @@ class MAGRPOTrainer:
             ]
             self._drain_ready_buffers(ready_agents)
 
-            # Log per-turn epoch averages inline (avoid custom system/* metrics)
-            epoch_log: Dict[str, Any] = {}
-            n_turns = max(1, int(self.args.num_turns))
-            for turn_idx in range(n_turns):
-                if epoch_turn_rewards and epoch_turn_rewards[turn_idx]:
-                    epoch_log[f"turn_{turn_idx + 1}/epoch_reward_mean"] = float(
-                        np.mean(epoch_turn_rewards[turn_idx])
-                    )
-                if epoch_turn_returns and epoch_turn_returns[turn_idx]:
-                    epoch_log[f"turn_{turn_idx + 1}/epoch_avg_return"] = float(
-                        np.mean(epoch_turn_returns[turn_idx])
-                    )
-
-            if epoch_log and self.wandb_initialized and wandb.run is not None:
-                wandb.log(epoch_log, step=self.env_step)
-
     def _train_step_returns(
         self,
         batch_item,
-        epoch_turn_rewards,
-        epoch_turn_returns,
         **kwargs,
     ):
         """Branching rollout with returns; updates backward from last turn to first.
@@ -970,11 +943,6 @@ class MAGRPOTrainer:
             else:
                 raise ValueError(f"Unsupported joint_mode: {joint_mode}")
 
-            if 0 <= turn_idx < len(epoch_turn_rewards):
-                epoch_turn_rewards[turn_idx].append(
-                    np.mean(rewards_vec) if rewards_vec else 0.0
-                )
-
             # Per-node means for batch-level summaries
             self.env_step += len(rewards_vec)
             node_env_step = int(self.env_step)
@@ -1067,11 +1035,10 @@ class MAGRPOTrainer:
         # After returns computed, record per-turn mean returns
         def record_turn_returns(node):
             t = node["turn"]
-            if 0 <= t < len(epoch_turn_returns):
+            if 0 <= t < len(turn_return_node_means):
                 vals = node.get("returns") or []
                 if vals:
                     mean_ret = float(np.mean(vals))
-                    epoch_turn_returns[t].append(mean_ret)
                     turn_return_node_means[t].append(mean_ret)
             for ch in node["children"]:
                 record_turn_returns(ch)
