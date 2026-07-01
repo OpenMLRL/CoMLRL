@@ -11,7 +11,7 @@ from tqdm import tqdm  # type: ignore
 from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials
 
-from .magrpo import MAGRPOConfig, MAGRPOTrainer
+from ..reinforce.magrpo import MAGRPOConfig, MAGRPOTrainer
 
 
 @dataclass

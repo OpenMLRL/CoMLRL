@@ -2,9 +2,9 @@ import pytest
 
 from comlrl.trainers.actor_critic.iac import IACConfig
 from comlrl.trainers.actor_critic.maac import MAACConfig
-from comlrl.trainers.reinforce.madpo import MADPOConfig
+from comlrl.trainers.preference.madpo import MADPOConfig
+from comlrl.trainers.preference.marlhf import MARLHFConfig
 from comlrl.trainers.reinforce.magrpo import MAGRPOConfig
-from comlrl.trainers.reinforce.marlhf import MARLHFConfig
 
 
 def _assert_invalid(cfg_cls, field, value, match=None):

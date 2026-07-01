@@ -5,14 +5,16 @@ from .actor_critic import (
     MAACConfig,
     MAACTrainer,
 )
-from .reinforce import (
-    MAGRPOConfig,
-    MAGRPOTrainer,
+from .preference import (
+    JointRewardModel,
     MADPOConfig,
     MADPOTrainer,
     MARLHFConfig,
     MARLHFTrainer,
-    JointRewardModel,
+)
+from .reinforce import (
+    MAGRPOConfig,
+    MAGRPOTrainer,
     MAREINFORCEConfig,
     MAREINFORCETrainer,
     MAReMaxConfig,

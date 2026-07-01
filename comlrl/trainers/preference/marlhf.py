@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenize
 from comlrl.utils.tokenizer_utils import ensure_pad_token
 
 from .madpo import MADPOConfig, MADPOTrainer, PreferencePair
-from .magrpo import MAGRPOTrainer
+from ..reinforce.magrpo import MAGRPOTrainer
 
 
 class JointRewardModel(nn.Module):
