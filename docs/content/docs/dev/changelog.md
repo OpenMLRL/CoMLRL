@@ -5,6 +5,11 @@ weight: 3
 
 ---
 
+## Version 1.3.8
+
+- Allow to use reference model for all algorithms (PR [#65](https://github.com/OpenMLRL/CoMLRL/pull/65)).
+- Unify the logger between different trainers (PR [#66](https://github.com/OpenMLRL/CoMLRL/pull/66)).
+
 ## Version 1.3.7
 
 - Remove the redundant sampling hyperparameters in algorithms.
