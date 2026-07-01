@@ -60,7 +60,7 @@ class IACConfig:
     agent_devices: Optional[Union[str, Sequence[str]]] = None
     critic_devices: Optional[Union[str, Sequence[str]]] = None
     external_prompt_passthrough: bool = False
-    discount: float = 0.9
+    discount: float = 1.0
     num_generations: int = 1
     eval_interval: int = 16
     eval_num_samples: int = 4
@@ -749,6 +749,9 @@ class IACTrainer(ActorCriticTrainerBase):
                         advantage=advantage_cpu,
                         metadata={
                             "char_length": data["char_lengths"][i],
+                            "turn_idx": 0,
+                            "generation_idx": i,
+                            "batch_item": item,
                             **kl_meta,
                             "value_target": returns_cpu,
                         },
@@ -772,7 +775,7 @@ class IACTrainer(ActorCriticTrainerBase):
             [] for _ in range(self.args.num_agents)
         ]
         rollouts: List[RolloutSample] = []
-        gamma = float(getattr(self.args, "discount", 0.9))
+        value_discount = float(getattr(self.args, "discount", 1.0))
 
         for turn_idx in range(num_turns):
             if turn_idx == 0:
@@ -864,6 +867,8 @@ class IACTrainer(ActorCriticTrainerBase):
                     metadata={
                         "char_length": data["char_lengths"][0],
                         "turn_idx": turn_idx,
+                        "generation_idx": 0,
+                        "batch_item": item,
                         **kl_meta,
                     },
                 )
@@ -884,7 +889,7 @@ class IACTrainer(ActorCriticTrainerBase):
                 r = float(sample.returns.view(-1)[0].item())
                 if t < len(traj) - 1:
                     next_v = float(traj[t + 1].old_value.view(-1)[0].item())
-                    target = r + gamma * next_v
+                    target = r + value_discount * next_v
                 else:
                     target = r
                 sample.metadata["adv_target"] = torch.tensor([target]).cpu()
@@ -894,7 +899,8 @@ class IACTrainer(ActorCriticTrainerBase):
             future = 0.0
             for sample in reversed(per_agent_samples[agent_idx]):
                 immediate = float(sample.returns.view(-1)[0].item())
-                future = immediate + gamma * future
+                # Logged return is the undiscounted reward sum from this turn onward.
+                future = immediate + future
                 sample.returns = torch.tensor([future], dtype=torch.float32)
                 sample.advantage = torch.zeros_like(sample.returns)
                 sample.normalized_advantage = None
@@ -1042,7 +1048,7 @@ class IACTrainer(ActorCriticTrainerBase):
         return logprob_sum
 
     # Actor-Critic update logic
-    def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> Dict[str, float]:
+    def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> None:
         agent_model = self.agents[agent_idx]
         critic_model = (
             self.critics[agent_idx] if self.args.use_separate_critic else None
@@ -1167,11 +1173,6 @@ class IACTrainer(ActorCriticTrainerBase):
             (actor_total + value_total).backward()
             agent_optimizer.step()
 
-        return {
-            "policy_loss": actor_loss.detach().item(),
-            "value_loss": value_loss.detach().item(),
-        }
-
     def _update(
         self, agent_idx: int, rollouts: List[RolloutSample]
     ) -> Dict[str, float]:
@@ -1205,17 +1206,10 @@ class IACTrainer(ActorCriticTrainerBase):
             if torch.isfinite(vals).all():
                 metrics["reference_kl_penalty_mean"].append(vals.mean().item())
 
-        if self.metrics_callback is not None:
-            extra = self.metrics_callback(rollouts)
-            if isinstance(extra, dict):
-                for key, value in extra.items():
-                    metrics[key].append(float(value))
         random.shuffle(rollouts)
         for start in range(0, len(rollouts), self.args.train_batch_size):
             batch = rollouts[start : start + self.args.train_batch_size]
-            step_metrics = self._ac_step(agent_idx, batch)
-            for key, value in step_metrics.items():
-                metrics[key].append(value)
+            self._ac_step(agent_idx, batch)
 
         averaged = {
             key: float(sum(values) / len(values))

@@ -1,7 +1,6 @@
 import inspect
 import os
 import random
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -56,7 +55,7 @@ class MAACConfig:
     agent_devices: Optional[Union[str, Sequence[str]]] = None
     critic_devices: Optional[Union[str, Sequence[str]]] = None
     external_prompt_passthrough: bool = False
-    discount: float = 0.9
+    discount: float = 1.0
     critic_type: str = "v"  # "v" (V(s)) or "q" (Q(s,a))
     early_termination_threshold: Optional[float] = -0.2
     eval_interval: int = 16
@@ -727,6 +726,8 @@ class MAACTrainer(ActorCriticTrainerBase):
                             "joint_attention_mask": joint_mask.detach().cpu(),
                             "joint_prompt_len": joint_len,
                             "turn_idx": 0,
+                            "generation_idx": i,
+                            "batch_item": item,
                             "adv_target": shaped_reward_cpu,
                             **kl_meta,
                         },
@@ -737,10 +738,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             r = float(sample.returns.view(-1)[0].item())
             sample.metadata["value_target"] = torch.tensor([r]).cpu()
 
-        if self.metrics_callback is not None:
-            extra = self.metrics_callback(rollouts)
-            if isinstance(extra, dict):
-                self._log_metrics(extra)
         return rollouts
 
     def _collect_rollouts_multi_turn(
@@ -756,7 +753,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             [] for _ in range(self.args.num_agents)
         ]
         rollouts: List[RolloutSample] = []
-        gamma = float(getattr(self.args, "discount", 0.9))
+        value_discount = float(getattr(self.args, "discount", 1.0))
 
         for turn_idx in range(num_turns):
             if turn_idx == 0:
@@ -880,6 +877,8 @@ class MAACTrainer(ActorCriticTrainerBase):
                         "joint_attention_mask": joint_mask.detach().cpu(),
                         "joint_prompt_len": joint_len,
                         "turn_idx": turn_idx,
+                        "generation_idx": 0,
+                        "batch_item": item,
                         **kl_meta,
                     },
                 )
@@ -900,7 +899,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 r = float(sample.returns.view(-1)[0].item())
                 if t < len(traj) - 1:
                     next_v = float(traj[t + 1].old_value.view(-1)[0].item())
-                    target = r + gamma * next_v
+                    target = r + value_discount * next_v
                 else:
                     target = r
                 sample.metadata["adv_target"] = torch.tensor([target]).cpu()
@@ -910,15 +909,12 @@ class MAACTrainer(ActorCriticTrainerBase):
             future = 0.0
             for sample in reversed(per_agent_samples[agent_idx]):
                 immediate = float(sample.returns.view(-1)[0].item())
-                future = immediate + gamma * future
+                # Logged return is the undiscounted reward sum from this turn onward.
+                future = immediate + future
                 sample.returns = torch.tensor([future], dtype=torch.float32)
                 sample.advantage = torch.zeros_like(sample.returns)
                 sample.normalized_advantage = None
 
-        if self.metrics_callback is not None:
-            extra = self.metrics_callback(rollouts)
-            if isinstance(extra, dict):
-                self._log_metrics(extra)
         return rollouts
 
     def _expand_rewards(self, rewards: List[float], num_ret: int) -> List[List[float]]:
@@ -1005,7 +1001,7 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         return response_log_probs.sum(dim=-1)
 
-    def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> Dict[str, float]:
+    def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> None:
         agent_model = self.agents[agent_idx]
         agent_optimizer = self.agent_optimizers[agent_idx]
 
@@ -1073,11 +1069,6 @@ class MAACTrainer(ActorCriticTrainerBase):
         value_total.backward()
         self.critic_optimizer.step()
 
-        return {
-            "policy_loss": actor_loss.detach().item(),
-            "value_loss": value_loss.detach().item(),
-        }
-
     def _update(
         self, agent_idx: int, rollouts: List[RolloutSample]
     ) -> Dict[str, float]:
@@ -1088,18 +1079,9 @@ class MAACTrainer(ActorCriticTrainerBase):
         self._prepare_advantages(rollouts)
         random.shuffle(rollouts)
 
-        loss_metrics = defaultdict(list)
         for start in range(0, len(rollouts), self.args.train_batch_size):
             batch = rollouts[start : start + self.args.train_batch_size]
-            step_metrics = self._ac_step(agent_idx, batch)
-            for key, value in step_metrics.items():
-                loss_metrics[key].append(value)
-        averaged_losses = {
-            key: float(sum(values) / len(values))
-            for key, values in loss_metrics.items()
-            if values
-        }
-        metrics.update(averaged_losses)
+            self._ac_step(agent_idx, batch)
         return metrics
 
     def _on_epoch_end(
@@ -1108,30 +1090,9 @@ class MAACTrainer(ActorCriticTrainerBase):
         total_epochs: int,
         epoch_metrics: Dict[str, List[float]],
     ) -> None:
-        num_turns = max(1, int(getattr(self.args, "num_turns", 1)))
-        epoch_log: Dict[str, float] = {}
-        for turn_idx in range(num_turns):
-            prefix = f"turn_{turn_idx + 1}/"
-
-            def _maybe_log(metric_key: str, epoch_key: str) -> None:
-                values = epoch_metrics.get(prefix + metric_key)
-                if values:
-                    epoch_log[prefix + epoch_key] = float(sum(values) / len(values))
-
-            _maybe_log("reward_mean", "epoch_reward_mean")
-            _maybe_log("expected_return", "epoch_avg_return")
-            _maybe_log("value_pred_mean", "epoch_value_pred_mean")
-            _maybe_log("value_target_mean", "epoch_value_target_mean")
-            _maybe_log("policy_loss", "epoch_policy_loss")
-            _maybe_log("value_loss", "epoch_value_loss")
-
-        if epoch_log:
-            self._log_metrics(epoch_log)
-
         summary = self._summarize_epoch_metrics(epoch_metrics)
         if summary and getattr(self, "verbose", True) and self.dist_env.is_main:
-            to_print = epoch_log if epoch_log else summary
-            print(f"Epoch {epoch + 1}/{total_epochs} metrics: {to_print}")
+            print(f"Epoch {epoch + 1}/{total_epochs} metrics: {summary}")
 
     def save_model(self, output_dir: str) -> None:
         if not self.dist_env.is_main:
