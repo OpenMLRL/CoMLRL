@@ -37,8 +37,8 @@ class MADPOConfig(MAGRPOConfig):
     """Configuration for multi-agent direct preference optimization."""
 
     num_turns: int = 1
-    preference_num_candidates: int = 5
-    preference_pairs_per_sample: Optional[int] = 2
+    preference_num_candidates: int = 80
+    preference_pairs_per_sample: Optional[int] = 16
     pair_selection: str = "reward_gap"
     dpo_beta: float = 0.1
     use_environment_step: bool = True
@@ -141,20 +141,6 @@ class MADPOTrainer(MAGRPOTrainer):
         for batch in iterator:
             batch_item = batch[0]
             pairs.extend(self._generate_preference_pairs_for_item(batch_item, **kwargs))
-
-        if self.wandb_initialized and wandb.run is not None:
-            rewards_w = [pair.winner_reward for pair in pairs]
-            rewards_l = [pair.loser_reward for pair in pairs]
-            metrics = {
-                "preference/num_pairs": len(pairs),
-                "preference/pairs_per_sample_mean": (
-                    float(len(pairs) / len(dataloader)) if len(dataloader) else 0.0
-                ),
-            }
-            if rewards_w:
-                metrics["preference/winner_reward_mean"] = float(np.mean(rewards_w))
-                metrics["preference/loser_reward_mean"] = float(np.mean(rewards_l))
-            wandb.log(metrics, step=int(self.env_step))
 
         return pairs
 

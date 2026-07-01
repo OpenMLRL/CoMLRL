@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional, Sequence
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm  # type: ignore
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
@@ -233,21 +232,6 @@ class MARLHFTrainer(MADPOTrainer):
                 self.reward_optimizer.zero_grad()
                 loss.backward()
                 self.reward_optimizer.step()
-
-                if self.wandb_initialized and wandb.run is not None:
-                    accuracy = float(
-                        (winner_scores.detach() > loser_scores.detach())
-                        .float()
-                        .mean()
-                        .item()
-                    )
-                    wandb.log(
-                        {
-                            "reward_model/loss": float(loss.detach().cpu().item()),
-                            "reward_model/accuracy": accuracy,
-                        },
-                        step=int(self.env_step),
-                    )
 
         self.reward_model.eval()
 
