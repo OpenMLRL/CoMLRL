@@ -203,12 +203,15 @@ class MADPOIterTrainer(MADPOTrainer):
             num_candidates=current_candidates,
             **kwargs,
         )
-        comparator_outputs = self._generate_policy_outputs_for_item(
-            self._get_comparator_agents(),
-            batch_item,
-            num_candidates=comparator_candidates,
-            **kwargs,
-        )
+        if self.args.comparator_policy == "current":
+            comparator_outputs = current_outputs
+        else:
+            comparator_outputs = self._generate_policy_outputs_for_item(
+                self._get_comparator_agents(),
+                batch_item,
+                num_candidates=comparator_candidates,
+                **kwargs,
+            )
 
         current_completions = [
             current_outputs[i]["completions"][0] for i in range(self.num_agents)
