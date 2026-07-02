@@ -46,9 +46,36 @@ def _normalize_comparator_policy(policy: Optional[str]) -> str:
     )
 
 
+def _normalize_preference_replay_mode(mode: Optional[str]) -> str:
+    value = str(mode or "current").strip().lower()
+    if value in {"current", "latest", "new"}:
+        return "current"
+    if value in {"nearest_k", "recent_k", "last_k", "k"}:
+        return "nearest_k"
+    if value == "all_history":
+        return "all_history"
+    if value in {"lambda", "lambda_decay", "td_lambda", "td-lambda"}:
+        return "lambda_decay"
+    raise ValueError(
+        "preference_replay_mode must be one of: current, nearest_k, all_history, lambda_decay."
+    )
+
+
 def _validate_iterative_config(args: Any) -> None:
     if int(args.num_iterations) < 1:
         raise ValueError("num_iterations must be >= 1.")
+    args.preference_replay_mode = _normalize_preference_replay_mode(
+        args.preference_replay_mode
+    )
+    if int(args.preference_replay_k) < 1:
+        raise ValueError("preference_replay_k must be >= 1.")
+    replay_lambda = float(args.preference_replay_lambda)
+    if replay_lambda < 0.0 or replay_lambda > 1.0:
+        raise ValueError("preference_replay_lambda must be in [0, 1].")
+    args.preference_replay_lambda = replay_lambda
+    if args.preference_replay_sample_size is not None:
+        if int(args.preference_replay_sample_size) < 1:
+            raise ValueError("preference_replay_sample_size must be >= 1 or null.")
     args.comparator_policy = _normalize_comparator_policy(args.comparator_policy)
     if args.comparator_num_candidates is not None:
         if int(args.comparator_num_candidates) < 1:
@@ -68,6 +95,10 @@ class MADPOIterConfig(MADPOConfig):
     """Configuration for iterative MADPO preference refresh."""
 
     num_iterations: int = 1
+    preference_replay_mode: str = "current"
+    preference_replay_k: int = 1
+    preference_replay_lambda: float = 0.8
+    preference_replay_sample_size: Optional[int] = None
     comparator_policy: str = "current"
     comparator_model_name: Optional[str] = None
     comparator_agents: Optional[Sequence[str]] = None
@@ -95,6 +126,10 @@ class MARLHFIterConfig(MARLHFConfig):
     """Configuration for iterative MARLHF preference and reward refresh."""
 
     num_iterations: int = 1
+    preference_replay_mode: str = "current"
+    preference_replay_k: int = 1
+    preference_replay_lambda: float = 0.8
+    preference_replay_sample_size: Optional[int] = None
     comparator_policy: str = "current"
     comparator_model_name: Optional[str] = None
     comparator_agents: Optional[Sequence[str]] = None
@@ -152,24 +187,103 @@ class MADPOIterTrainer(MADPOTrainer):
                     )
                 continue
 
-            total_pairs += len(preference_pairs)
+            train_pairs = self._select_iteration_preference_pairs(preference_pairs)
+            total_pairs += len(train_pairs)
             if self.wandb_initialized and wandb.run is not None:
                 wandb.log(
                     {
                         "iter/iteration": float(iteration_idx + 1),
-                        "iter/preference_pairs": float(len(preference_pairs)),
+                        "iter/preference_pairs": float(len(train_pairs)),
+                        "iter/current_preference_pairs": float(len(preference_pairs)),
+                        "iter/replay_history_size": float(
+                            len(getattr(self, "_preference_history", []))
+                        ),
                     },
                     step=int(self.env_step),
                 )
 
             updates_seen = self._train_preference_pairs(
-                preference_pairs,
+                train_pairs,
                 iteration_idx=iteration_idx,
                 updates_seen=updates_seen,
             )
 
         if total_pairs == 0 and self.verbose:
             print("MADPOIter: no non-tied preference pairs were generated.")
+
+    def _select_iteration_preference_pairs(
+        self,
+        current_pairs: List[PreferencePair],
+    ) -> List[PreferencePair]:
+        history = getattr(self, "_preference_history", None)
+        if history is None:
+            history = []
+            self._preference_history = history
+        history.append(list(current_pairs))
+
+        mode = self.args.preference_replay_mode
+        if mode == "current":
+            return list(current_pairs)
+        if mode == "nearest_k":
+            k = int(self.args.preference_replay_k)
+            return self._flatten_preference_history(history[-k:])
+        if mode == "all_history":
+            return self._flatten_preference_history(history)
+        if mode == "lambda_decay":
+            sample_size = (
+                int(self.args.preference_replay_sample_size)
+                if self.args.preference_replay_sample_size is not None
+                else len(current_pairs)
+            )
+            return self._sample_lambda_decay_preferences(history, sample_size)
+        raise ValueError(f"Unsupported preference_replay_mode: {mode}")
+
+    @staticmethod
+    def _flatten_preference_history(
+        history: Sequence[Sequence[PreferencePair]],
+    ) -> List[PreferencePair]:
+        pairs: List[PreferencePair] = []
+        for dataset in history:
+            pairs.extend(dataset)
+        return pairs
+
+    def _sample_lambda_decay_preferences(
+        self,
+        history: Sequence[Sequence[PreferencePair]],
+        sample_size: int,
+    ) -> List[PreferencePair]:
+        non_empty_history = [list(dataset) for dataset in history if dataset]
+        if not non_empty_history:
+            return []
+
+        weights = self._lambda_decay_weights(len(non_empty_history))
+        sampled: List[PreferencePair] = []
+        for _ in range(int(sample_size)):
+            dataset_idx = random.choices(
+                range(len(non_empty_history)),
+                weights=weights,
+                k=1,
+            )[0]
+            sampled.append(random.choice(non_empty_history[dataset_idx]))
+        return sampled
+
+    def _lambda_decay_weights(self, num_datasets: int) -> List[float]:
+        if num_datasets < 1:
+            return []
+        replay_lambda = float(self.args.preference_replay_lambda)
+        if replay_lambda == 1.0:
+            return [1.0 / num_datasets] * num_datasets
+
+        # TD-lambda style finite geometric weights. Age 0 is the newest dataset.
+        newest_first = [
+            (1.0 - replay_lambda) * (replay_lambda**age) for age in range(num_datasets)
+        ]
+        normalizer = sum(newest_first)
+        if normalizer <= 0:
+            newest_first = [1.0] + [0.0] * (num_datasets - 1)
+            normalizer = 1.0
+        newest_first = [weight / normalizer for weight in newest_first]
+        return list(reversed(newest_first))
 
     def _train_preference_pairs(
         self,
@@ -233,13 +347,13 @@ class MADPOIterTrainer(MADPOTrainer):
             num_candidates=current_candidates,
             **kwargs,
         )
-        if self.args.comparator_policy == "current":
-            comparator_outputs = current_outputs
-        elif self.args.comparator_policy == "api":
+        if self.args.comparator_policy == "api":
             comparator_outputs = self._generate_api_outputs_for_item(
                 batch_item,
                 num_candidates=comparator_candidates,
             )
+        elif self.args.comparator_policy == "current":
+            comparator_outputs = current_outputs
         else:
             comparator_outputs = self._generate_policy_outputs_for_item(
                 self._get_comparator_agents(),
@@ -267,17 +381,26 @@ class MADPOIterTrainer(MADPOTrainer):
             current_completions,
             batch_items=[batch_item],
         )
-        comparator_rewards = self._compute_rewards(
-            [prompts[0]],
-            comparator_completions,
-            batch_items=[batch_item],
-        )
-        selected_pairs = self._select_policy_comparison_pairs(
-            current_rewards,
-            comparator_rewards,
-        )
-
-        all_rewards = list(current_rewards) + list(comparator_rewards)
+        if self.args.comparator_policy == "current":
+            comparator_rewards = current_rewards
+            selected_pairs = [
+                (("current", winner_idx), ("current", loser_idx))
+                for winner_idx, loser_idx in self._select_preference_pair_indices(
+                    current_rewards
+                )
+            ]
+            all_rewards = list(current_rewards)
+        else:
+            comparator_rewards = self._compute_rewards(
+                [prompts[0]],
+                comparator_completions,
+                batch_items=[batch_item],
+            )
+            selected_pairs = self._select_policy_comparison_pairs(
+                current_rewards,
+                comparator_rewards,
+            )
+            all_rewards = list(current_rewards) + list(comparator_rewards)
         candidate_reward_mean = float(np.mean(all_rewards)) if all_rewards else 0.0
         result: List[PreferencePair] = []
 
@@ -751,12 +874,17 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
                     )
                 continue
 
-            total_pairs += len(preference_pairs)
+            train_pairs = self._select_iteration_preference_pairs(preference_pairs)
+            total_pairs += len(train_pairs)
             if self.wandb_initialized and wandb.run is not None:
                 wandb.log(
                     {
                         "iter/iteration": float(iteration_idx + 1),
-                        "iter/preference_pairs": float(len(preference_pairs)),
+                        "iter/preference_pairs": float(len(train_pairs)),
+                        "iter/current_preference_pairs": float(len(preference_pairs)),
+                        "iter/replay_history_size": float(
+                            len(getattr(self, "_preference_history", []))
+                        ),
                     },
                     step=int(self.env_step),
                 )
@@ -767,7 +895,7 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             self._init_reward_model()
-            self._train_reward_model(preference_pairs)
+            self._train_reward_model(train_pairs)
             self._reward_model_active = True
 
             if self.args.rl_algorithm in _MAGRPO_ADVANTAGE_MODES:
