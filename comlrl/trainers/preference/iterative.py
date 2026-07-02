@@ -1,6 +1,10 @@
+import json
+import os
 import random
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 import numpy as np
 import torch
@@ -35,8 +39,10 @@ def _normalize_comparator_policy(policy: Optional[str]) -> str:
         return "current"
     if mode in {"model", "external", "comparator", "reference", "ref"}:
         return "model"
+    if mode in {"api", "http", "endpoint"}:
+        return "api"
     raise ValueError(
-        "comparator_policy must be one of: current, model, external, reference."
+        "comparator_policy must be one of: current, model, external, reference, api."
     )
 
 
@@ -53,6 +59,8 @@ def _validate_iterative_config(args: Any) -> None:
                 "comparator_model_name or comparator_agents is required when "
                 "comparator_policy='model'."
             )
+    if args.comparator_policy == "api" and not args.comparator_api_url:
+        raise ValueError("comparator_api_url is required when comparator_policy='api'.")
 
 
 @dataclass
@@ -65,6 +73,17 @@ class MADPOIterConfig(MADPOConfig):
     comparator_agents: Optional[Sequence[str]] = None
     comparator_devices: Optional[Union[str, Sequence[str]]] = None
     comparator_num_candidates: Optional[int] = None
+    comparator_api_url: Optional[str] = None
+    comparator_api_format: str = "generic"
+    comparator_api_model: Optional[str] = None
+    comparator_api_timeout: float = 120.0
+    comparator_api_headers: Optional[Dict[str, str]] = None
+    comparator_api_key: Optional[str] = None
+    comparator_api_key_env: Optional[str] = None
+    comparator_api_key_header: str = "Authorization"
+    comparator_api_key_prefix: str = "Bearer"
+    comparator_api_response_field: str = "completions"
+    comparator_api_extra_body: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -81,6 +100,17 @@ class MARLHFIterConfig(MARLHFConfig):
     comparator_agents: Optional[Sequence[str]] = None
     comparator_devices: Optional[Union[str, Sequence[str]]] = None
     comparator_num_candidates: Optional[int] = None
+    comparator_api_url: Optional[str] = None
+    comparator_api_format: str = "generic"
+    comparator_api_model: Optional[str] = None
+    comparator_api_timeout: float = 120.0
+    comparator_api_headers: Optional[Dict[str, str]] = None
+    comparator_api_key: Optional[str] = None
+    comparator_api_key_env: Optional[str] = None
+    comparator_api_key_header: str = "Authorization"
+    comparator_api_key_prefix: str = "Bearer"
+    comparator_api_response_field: str = "completions"
+    comparator_api_extra_body: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -205,6 +235,11 @@ class MADPOIterTrainer(MADPOTrainer):
         )
         if self.args.comparator_policy == "current":
             comparator_outputs = current_outputs
+        elif self.args.comparator_policy == "api":
+            comparator_outputs = self._generate_api_outputs_for_item(
+                batch_item,
+                num_candidates=comparator_candidates,
+            )
         else:
             comparator_outputs = self._generate_policy_outputs_for_item(
                 self._get_comparator_agents(),
@@ -316,6 +351,231 @@ class MADPOIterTrainer(MADPOTrainer):
             )
 
         return self._run_agent_tasks(_generate_agent)
+
+    def _generate_api_outputs_for_item(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        num_candidates: int,
+    ) -> List[Dict[str, Any]]:
+        def _generate_agent(agent_idx: int) -> Dict[str, Any]:
+            prompt = self.formatters[agent_idx](batch_item)
+            completions = self._call_comparator_api(
+                prompt=prompt,
+                agent_idx=agent_idx,
+                batch_item=batch_item,
+                num_candidates=num_candidates,
+            )
+            if not completions:
+                raise ValueError(
+                    "Comparator API returned no completions for " f"agent {agent_idx}."
+                )
+            return {
+                "prompts": [prompt],
+                "batch_items": [batch_item],
+                "completions": [completions],
+            }
+
+        return self._run_agent_tasks(_generate_agent)
+
+    def _call_comparator_api(
+        self,
+        *,
+        prompt: str,
+        agent_idx: int,
+        batch_item: Dict[str, Any],
+        num_candidates: int,
+    ) -> List[str]:
+        api_format = str(self.args.comparator_api_format or "generic").lower()
+        if api_format in {"openai", "openai_chat", "chat"}:
+            payload = self._build_openai_chat_payload(prompt, num_candidates)
+        else:
+            payload = self._build_generic_api_payload(
+                prompt=prompt,
+                agent_idx=agent_idx,
+                batch_item=batch_item,
+                num_candidates=num_candidates,
+            )
+
+        data = json.dumps(payload).encode("utf-8")
+        request = urlrequest.Request(
+            str(self.args.comparator_api_url),
+            data=data,
+            headers=self._comparator_api_headers(),
+            method="POST",
+        )
+        try:
+            with urlrequest.urlopen(
+                request,
+                timeout=float(self.args.comparator_api_timeout),
+            ) as response:
+                raw = response.read().decode("utf-8")
+        except urlerror.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise ValueError(
+                f"Comparator API request failed with HTTP {exc.code}: {detail}"
+            ) from exc
+        except urlerror.URLError as exc:
+            raise ValueError(f"Comparator API request failed: {exc}") from exc
+
+        try:
+            response_data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Comparator API returned non-JSON response: {raw[:500]}"
+            ) from exc
+
+        return self._extract_api_completions(response_data, api_format=api_format)
+
+    def _build_generic_api_payload(
+        self,
+        *,
+        prompt: str,
+        agent_idx: int,
+        batch_item: Dict[str, Any],
+        num_candidates: int,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "prompt": prompt,
+            "agent_idx": agent_idx,
+            "num_return_sequences": num_candidates,
+            "max_new_tokens": self.args.max_new_tokens,
+            "temperature": self.args.temperature,
+            "top_p": self.args.top_p,
+            "top_k": self.args.top_k,
+            "batch_item": self._jsonable(batch_item),
+        }
+        if self.args.comparator_api_model:
+            payload["model"] = self.args.comparator_api_model
+        if isinstance(self.args.comparator_api_extra_body, dict):
+            payload.update(self.args.comparator_api_extra_body)
+        return payload
+
+    def _build_openai_chat_payload(
+        self,
+        prompt: str,
+        num_candidates: int,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": self.args.comparator_api_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "n": num_candidates,
+            "max_tokens": self.args.max_new_tokens,
+            "temperature": self.args.temperature,
+            "top_p": self.args.top_p,
+        }
+        if isinstance(self.args.comparator_api_extra_body, dict):
+            payload.update(self.args.comparator_api_extra_body)
+        return {key: value for key, value in payload.items() if value is not None}
+
+    def _comparator_api_headers(self) -> Dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if isinstance(self.args.comparator_api_headers, dict):
+            headers.update(self.args.comparator_api_headers)
+
+        api_key = self.args.comparator_api_key
+        if not api_key and self.args.comparator_api_key_env:
+            api_key = os.environ.get(str(self.args.comparator_api_key_env))
+        if api_key:
+            prefix = str(self.args.comparator_api_key_prefix or "").strip()
+            header_value = f"{prefix} {api_key}" if prefix else str(api_key)
+            headers[str(self.args.comparator_api_key_header)] = header_value
+        return headers
+
+    def _extract_api_completions(
+        self,
+        response_data: Any,
+        *,
+        api_format: str,
+    ) -> List[str]:
+        if api_format in {"openai", "openai_chat", "chat"}:
+            return self._extract_openai_chat_completions(response_data)
+
+        value = self._get_dotted(response_data, self.args.comparator_api_response_field)
+        if value is None and isinstance(response_data, dict):
+            value = (
+                response_data.get("completions")
+                or response_data.get("responses")
+                or response_data.get("outputs")
+                or response_data.get("choices")
+            )
+        return self._normalize_completion_items(value)
+
+    @staticmethod
+    def _extract_openai_chat_completions(response_data: Any) -> List[str]:
+        choices = (
+            response_data.get("choices") if isinstance(response_data, dict) else None
+        )
+        completions: List[str] = []
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                message = choice.get("message")
+                if isinstance(message, dict) and message.get("content") is not None:
+                    completions.append(str(message["content"]))
+                    continue
+                if choice.get("text") is not None:
+                    completions.append(str(choice["text"]))
+        return completions
+
+    @classmethod
+    def _normalize_completion_items(cls, value: Any) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        if not isinstance(value, list):
+            return [str(value)]
+
+        completions: List[str] = []
+        for item in value:
+            if isinstance(item, str):
+                completions.append(item)
+            elif isinstance(item, dict):
+                text = (
+                    item.get("text")
+                    or item.get("content")
+                    or item.get("completion")
+                    or item.get("response")
+                )
+                if text is None and isinstance(item.get("message"), dict):
+                    text = item["message"].get("content")
+                if text is not None:
+                    completions.append(str(text))
+            elif item is not None:
+                completions.append(str(item))
+        return completions
+
+    @staticmethod
+    def _get_dotted(data: Any, field: Optional[str]) -> Any:
+        if not field:
+            return None
+        current = data
+        for part in str(field).split("."):
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return None
+        return current
+
+    @classmethod
+    def _jsonable(cls, value: Any) -> Any:
+        try:
+            json.dumps(value)
+            return value
+        except (TypeError, ValueError):
+            pass
+        if isinstance(value, dict):
+            return {str(key): cls._jsonable(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [cls._jsonable(item) for item in value]
+        if hasattr(value, "item"):
+            try:
+                return value.item()
+            except Exception:
+                pass
+        return str(value)
 
     def _select_policy_comparison_pairs(
         self,
