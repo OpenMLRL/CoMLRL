@@ -67,15 +67,7 @@ def _validate_iterative_config(args: Any) -> None:
     args.preference_replay_mode = _normalize_preference_replay_mode(
         args.preference_replay_mode
     )
-    if int(args.preference_replay_k) < 1:
-        raise ValueError("preference_replay_k must be >= 1.")
-    replay_lambda = float(args.preference_replay_lambda)
-    if replay_lambda < 0.0 or replay_lambda > 1.0:
-        raise ValueError("preference_replay_lambda must be in [0, 1].")
-    args.preference_replay_lambda = replay_lambda
-    if args.preference_replay_sample_size is not None:
-        if int(args.preference_replay_sample_size) < 1:
-            raise ValueError("preference_replay_sample_size must be >= 1 or null.")
+    _validate_preference_replay_args(args)
     args.comparator_policy = _normalize_comparator_policy(args.comparator_policy)
     if args.comparator_num_candidates is not None:
         if int(args.comparator_num_candidates) < 1:
@@ -90,14 +82,100 @@ def _validate_iterative_config(args: Any) -> None:
         raise ValueError("comparator_api_url is required when comparator_policy='api'.")
 
 
+def _validate_preference_replay_args(args: Any) -> None:
+    mode = args.preference_replay_mode
+    replay_k = args.preference_replay_k
+    replay_lambda = args.preference_replay_lambda
+    sample_size = args.preference_replay_sample_size
+
+    if mode == "current":
+        if replay_k not in (None, 1):
+            raise ValueError(
+                "preference_replay_k must be null or 1 when "
+                "preference_replay_mode='current'."
+            )
+        if replay_lambda is not None:
+            raise ValueError(
+                "preference_replay_lambda is only valid when "
+                "preference_replay_mode='lambda_decay'."
+            )
+        if sample_size is not None:
+            raise ValueError(
+                "preference_replay_sample_size is only valid when "
+                "preference_replay_mode is 'nearest_k', 'all_history', "
+                "or 'lambda_decay'."
+            )
+        return
+
+    if mode == "nearest_k":
+        if replay_k is None:
+            raise ValueError(
+                "preference_replay_k is required when "
+                "preference_replay_mode='nearest_k'."
+            )
+        if int(replay_k) < 1:
+            raise ValueError("preference_replay_k must be >= 1.")
+        args.preference_replay_k = int(replay_k)
+        if replay_lambda is not None:
+            raise ValueError(
+                "preference_replay_lambda is only valid when "
+                "preference_replay_mode='lambda_decay'."
+            )
+        if sample_size is not None:
+            if int(sample_size) < 1:
+                raise ValueError("preference_replay_sample_size must be >= 1 or null.")
+            args.preference_replay_sample_size = int(sample_size)
+        return
+
+    if mode == "all_history":
+        if replay_k is not None:
+            raise ValueError(
+                "preference_replay_k is only valid when "
+                "preference_replay_mode='nearest_k'."
+            )
+        if replay_lambda is not None:
+            raise ValueError(
+                "preference_replay_lambda is only valid when "
+                "preference_replay_mode='lambda_decay'."
+            )
+        if sample_size is not None:
+            if int(sample_size) < 1:
+                raise ValueError("preference_replay_sample_size must be >= 1 or null.")
+            args.preference_replay_sample_size = int(sample_size)
+        return
+
+    if mode == "lambda_decay":
+        if replay_k is not None:
+            raise ValueError(
+                "preference_replay_k is only valid when "
+                "preference_replay_mode='nearest_k'."
+            )
+        if replay_lambda is None:
+            raise ValueError(
+                "preference_replay_lambda is required when "
+                "preference_replay_mode='lambda_decay'."
+            )
+        replay_lambda = float(replay_lambda)
+        if replay_lambda < 0.0 or replay_lambda > 1.0:
+            raise ValueError("preference_replay_lambda must be in [0, 1].")
+        args.preference_replay_lambda = replay_lambda
+        if sample_size is not None:
+            if int(sample_size) < 1:
+                raise ValueError("preference_replay_sample_size must be >= 1 or null.")
+            args.preference_replay_sample_size = int(sample_size)
+        return
+
+    raise ValueError(f"Unsupported preference_replay_mode: {mode}")
+
+
 @dataclass
 class MADPOIterConfig(MADPOConfig):
     """Configuration for iterative MADPO preference refresh."""
 
     num_iterations: int = 1
     preference_replay_mode: str = "current"
-    preference_replay_k: int = 1
-    preference_replay_lambda: float = 0.8
+    preference_replay_k: Optional[int] = None
+    preference_replay_lambda: Optional[float] = None
     preference_replay_sample_size: Optional[int] = None
     comparator_policy: str = "current"
     comparator_model_name: Optional[str] = None
@@ -127,8 +205,8 @@ class MARLHFIterConfig(MARLHFConfig):
 
     num_iterations: int = 1
     preference_replay_mode: str = "current"
-    preference_replay_k: int = 1
-    preference_replay_lambda: float = 0.8
+    preference_replay_k: Optional[int] = None
+    preference_replay_lambda: Optional[float] = None
     preference_replay_sample_size: Optional[int] = None
     comparator_policy: str = "current"
     comparator_model_name: Optional[str] = None
@@ -226,45 +304,69 @@ class MADPOIterTrainer(MADPOTrainer):
             return list(current_pairs)
         if mode == "nearest_k":
             k = int(self.args.preference_replay_k)
-            return self._flatten_preference_history(history[-k:])
+            sample_size = self._replay_sample_size(current_pairs)
+            return self._sample_uniform_replay_preferences(history[-k:], sample_size)
         if mode == "all_history":
-            return self._flatten_preference_history(history)
+            sample_size = self._replay_sample_size(current_pairs)
+            return self._sample_uniform_replay_preferences(history, sample_size)
         if mode == "lambda_decay":
-            sample_size = (
-                int(self.args.preference_replay_sample_size)
-                if self.args.preference_replay_sample_size is not None
-                else len(current_pairs)
-            )
+            sample_size = self._replay_sample_size(current_pairs)
             return self._sample_lambda_decay_preferences(history, sample_size)
         raise ValueError(f"Unsupported preference_replay_mode: {mode}")
 
-    @staticmethod
-    def _flatten_preference_history(
+    def _replay_sample_size(self, current_pairs: Sequence[PreferencePair]) -> int:
+        if self.args.preference_replay_sample_size is not None:
+            return int(self.args.preference_replay_sample_size)
+        return len(current_pairs)
+
+    def _sample_uniform_replay_preferences(
+        self,
         history: Sequence[Sequence[PreferencePair]],
+        sample_size: int,
     ) -> List[PreferencePair]:
-        pairs: List[PreferencePair] = []
-        for dataset in history:
-            pairs.extend(dataset)
-        return pairs
+        return self._sample_replay_preferences(history, sample_size)
 
     def _sample_lambda_decay_preferences(
         self,
         history: Sequence[Sequence[PreferencePair]],
         sample_size: int,
     ) -> List[PreferencePair]:
-        non_empty_history = [list(dataset) for dataset in history if dataset]
-        if not non_empty_history:
+        weights = self._lambda_decay_weights(len(history))
+        return self._sample_replay_preferences(history, sample_size, weights=weights)
+
+    def _sample_replay_preferences(
+        self,
+        history: Sequence[Sequence[PreferencePair]],
+        sample_size: int,
+        *,
+        weights: Optional[Sequence[float]] = None,
+    ) -> List[PreferencePair]:
+        datasets: List[List[PreferencePair]] = []
+        dataset_weights: List[float] = []
+        for idx, dataset in enumerate(history):
+            if not dataset:
+                continue
+            datasets.append(list(dataset))
+            dataset_weights.append(float(weights[idx]) if weights is not None else 1.0)
+        if not datasets:
             return []
 
-        weights = self._lambda_decay_weights(len(non_empty_history))
+        base_datasets = [list(dataset) for dataset in datasets]
+        base_weights = list(dataset_weights)
+        remaining = [list(dataset) for dataset in base_datasets]
         sampled: List[PreferencePair] = []
         for _ in range(int(sample_size)):
-            dataset_idx = random.choices(
-                range(len(non_empty_history)),
-                weights=weights,
-                k=1,
-            )[0]
-            sampled.append(random.choice(non_empty_history[dataset_idx]))
+            active_indices = [idx for idx, dataset in enumerate(remaining) if dataset]
+            if not active_indices:
+                remaining = [list(dataset) for dataset in base_datasets]
+                active_indices = [
+                    idx for idx, dataset in enumerate(remaining) if dataset
+                ]
+
+            active_weights = [base_weights[idx] for idx in active_indices]
+            dataset_idx = random.choices(active_indices, weights=active_weights, k=1)[0]
+            pair_idx = random.randrange(len(remaining[dataset_idx]))
+            sampled.append(remaining[dataset_idx].pop(pair_idx))
         return sampled
 
     def _lambda_decay_weights(self, num_datasets: int) -> List[float]:
