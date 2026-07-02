@@ -246,15 +246,9 @@ class MADPOTrainer(MAGRPOTrainer):
         self, batch: List[PreferencePair]
     ) -> Dict[str, float]:
         if not batch:
-            return {"dpo/loss": 0.0, "dpo/accuracy": 0.0}
+            return {}
 
         detached_deltas = self._detached_agent_deltas(batch)
-        joint_deltas = [sum(row) for row in detached_deltas]
-        beta = float(self.args.dpo_beta)
-        logged_losses = [
-            -F.logsigmoid(torch.tensor(beta * delta)).item() for delta in joint_deltas
-        ]
-        logged_accuracy = float(np.mean([delta > 0 for delta in joint_deltas]))
 
         for agent_idx in range(self.num_agents):
             self.optimizers[agent_idx].zero_grad()
@@ -273,15 +267,6 @@ class MADPOTrainer(MAGRPOTrainer):
             "turn_1/expected_return": float(
                 np.mean([pair.candidate_reward_mean for pair in batch])
             ),
-            "dpo/loss": float(np.mean(logged_losses)) if logged_losses else 0.0,
-            "dpo/accuracy": logged_accuracy,
-            "dpo/joint_delta_mean": (
-                float(np.mean(joint_deltas)) if joint_deltas else 0.0
-            ),
-            "dpo/reward_gap_mean": float(
-                np.mean([pair.winner_reward - pair.loser_reward for pair in batch])
-            ),
-            "dpo/num_pairs": float(len(batch)),
         }
 
     def _detached_agent_deltas(
