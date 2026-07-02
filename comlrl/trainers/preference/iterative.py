@@ -15,6 +15,7 @@ from transformers import AutoModelForCausalLM
 from comlrl.schedulers import DeviceScheduler
 from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.model_loading import resolve_model_sources
+from comlrl.utils.reward_utils import call_reward_function
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials
 
 from .madpo import (
@@ -177,6 +178,7 @@ class MADPOIterConfig(MADPOConfig):
     preference_replay_k: Optional[int] = None
     preference_replay_lambda: Optional[float] = None
     preference_replay_sample_size: Optional[int] = None
+    preference_replay_dir: Optional[str] = None
     comparator_policy: str = "current"
     comparator_model_name: Optional[str] = None
     comparator_agents: Optional[Sequence[str]] = None
@@ -208,6 +210,7 @@ class MARLHFIterConfig(MARLHFConfig):
     preference_replay_k: Optional[int] = None
     preference_replay_lambda: Optional[float] = None
     preference_replay_sample_size: Optional[int] = None
+    preference_replay_dir: Optional[str] = None
     comparator_policy: str = "current"
     comparator_model_name: Optional[str] = None
     comparator_agents: Optional[Sequence[str]] = None
@@ -228,6 +231,13 @@ class MARLHFIterConfig(MARLHFConfig):
     def __post_init__(self) -> None:
         super().__post_init__()
         _validate_iterative_config(self)
+
+
+@dataclass
+class PreferenceReplayShard:
+    iteration: int
+    path: str
+    num_pairs: int
 
 
 class MADPOIterTrainer(MADPOTrainer):
@@ -257,28 +267,27 @@ class MADPOIterTrainer(MADPOTrainer):
         total_pairs = 0
         for iteration_idx in range(int(self.args.num_iterations)):
             preference_pairs = self._build_preference_dataset(**kwargs)
-            if not preference_pairs:
+            current_pair_count = len(preference_pairs)
+            train_pairs = self._select_iteration_preference_pairs(
+                preference_pairs,
+                iteration_idx=iteration_idx,
+            )
+            total_pairs += len(train_pairs)
+            self._log_iteration_replay(
+                iteration_idx,
+                current_pairs=preference_pairs,
+                current_pair_count=current_pair_count,
+                train_pair_count=len(train_pairs),
+            )
+            preference_pairs.clear()
+            if not train_pairs:
                 if self.verbose:
                     print(
-                        "MADPOIter: no non-tied preference pairs were generated "
-                        f"for iteration {iteration_idx + 1}."
+                        "MADPOIter: no replay preference pairs were available "
+                        f"for iteration {iteration_idx + 1} "
+                        f"(current generated {current_pair_count})."
                     )
                 continue
-
-            train_pairs = self._select_iteration_preference_pairs(preference_pairs)
-            total_pairs += len(train_pairs)
-            if self.wandb_initialized and wandb.run is not None:
-                wandb.log(
-                    {
-                        "iter/iteration": float(iteration_idx + 1),
-                        "iter/preference_pairs": float(len(train_pairs)),
-                        "iter/current_preference_pairs": float(len(preference_pairs)),
-                        "iter/replay_history_size": float(
-                            len(getattr(self, "_preference_history", []))
-                        ),
-                    },
-                    step=int(self.env_step),
-                )
 
             updates_seen = self._train_preference_pairs(
                 train_pairs,
@@ -292,82 +301,305 @@ class MADPOIterTrainer(MADPOTrainer):
     def _select_iteration_preference_pairs(
         self,
         current_pairs: List[PreferencePair],
+        *,
+        iteration_idx: int,
     ) -> List[PreferencePair]:
-        history = getattr(self, "_preference_history", None)
-        if history is None:
-            history = []
-            self._preference_history = history
-        history.append(list(current_pairs))
+        shard = self._write_iteration_preference_pairs(iteration_idx, current_pairs)
+        shards = self._preference_replay_shards()
+        if shard is not None:
+            shards.append(shard)
 
         mode = self.args.preference_replay_mode
         if mode == "current":
-            return list(current_pairs)
+            return self._load_replay_shard(shard) if shard is not None else []
         if mode == "nearest_k":
             k = int(self.args.preference_replay_k)
-            sample_size = self._replay_sample_size(current_pairs)
-            return self._sample_uniform_replay_preferences(history[-k:], sample_size)
+            sample_size = self._replay_sample_size(len(current_pairs), shards)
+            return self._sample_uniform_replay_preferences(shards[-k:], sample_size)
         if mode == "all_history":
-            sample_size = self._replay_sample_size(current_pairs)
-            return self._sample_uniform_replay_preferences(history, sample_size)
+            sample_size = self._replay_sample_size(len(current_pairs), shards)
+            return self._sample_uniform_replay_preferences(shards, sample_size)
         if mode == "lambda_decay":
-            sample_size = self._replay_sample_size(current_pairs)
-            return self._sample_lambda_decay_preferences(history, sample_size)
+            sample_size = self._replay_sample_size(len(current_pairs), shards)
+            return self._sample_lambda_decay_preferences(shards, sample_size)
         raise ValueError(f"Unsupported preference_replay_mode: {mode}")
 
-    def _replay_sample_size(self, current_pairs: Sequence[PreferencePair]) -> int:
+    def _replay_sample_size(
+        self,
+        current_pair_count: int,
+        shards: Sequence[PreferenceReplayShard],
+    ) -> int:
         if self.args.preference_replay_sample_size is not None:
             return int(self.args.preference_replay_sample_size)
-        return len(current_pairs)
+        if current_pair_count > 0:
+            return int(current_pair_count)
+        for shard in reversed(shards):
+            if shard.num_pairs > 0:
+                return int(shard.num_pairs)
+        return 0
+
+    def _log_iteration_replay(
+        self,
+        iteration_idx: int,
+        *,
+        current_pairs: Sequence[PreferencePair],
+        current_pair_count: int,
+        train_pair_count: int,
+    ) -> None:
+        if not (self.wandb_initialized and wandb.run is not None):
+            return
+        shards = getattr(self, "_preference_replay_shards_state", [])
+        metrics: Dict[str, Any] = {
+            "iter/current_iteration": float(iteration_idx + 1),
+            "iter/current_preference_pairs": float(current_pair_count),
+            "iter/total_preference_pairs": float(
+                sum(int(shard.num_pairs) for shard in shards)
+            ),
+            "iter/train_preference_pairs": float(train_pair_count),
+        }
+        reward_histogram = self._current_reward_histogram(current_pairs)
+        if reward_histogram is not None:
+            metrics["iter/current_reward_histogram"] = reward_histogram
+        wandb.log(metrics, step=int(self.env_step))
+
+    @staticmethod
+    def _current_reward_histogram(
+        current_pairs: Sequence[PreferencePair],
+    ) -> Optional[wandb.Histogram]:
+        reward_values: List[float] = []
+        for pair in current_pairs:
+            raw_rewards = pair.raw_rewards or []
+            if raw_rewards:
+                reward_values.extend(float(value) for value in raw_rewards)
+            else:
+                reward_values.extend(
+                    [float(pair.winner_reward), float(pair.loser_reward)]
+                )
+        if not reward_values:
+            return None
+
+        bin_edges = np.linspace(0.0, 4.0, 17)
+        clipped_rewards = np.clip(np.asarray(reward_values, dtype=float), 0.0, 4.0)
+        counts, edges = np.histogram(clipped_rewards, bins=bin_edges)
+        return wandb.Histogram(np_histogram=(counts, edges))
 
     def _sample_uniform_replay_preferences(
         self,
-        history: Sequence[Sequence[PreferencePair]],
+        shards: Sequence[PreferenceReplayShard],
         sample_size: int,
     ) -> List[PreferencePair]:
-        return self._sample_replay_preferences(history, sample_size)
+        return self._sample_replay_preferences(shards, sample_size)
 
     def _sample_lambda_decay_preferences(
         self,
-        history: Sequence[Sequence[PreferencePair]],
+        shards: Sequence[PreferenceReplayShard],
         sample_size: int,
     ) -> List[PreferencePair]:
-        weights = self._lambda_decay_weights(len(history))
-        return self._sample_replay_preferences(history, sample_size, weights=weights)
+        weights = self._lambda_decay_weights(len(shards))
+        return self._sample_replay_preferences(shards, sample_size, weights=weights)
 
     def _sample_replay_preferences(
         self,
-        history: Sequence[Sequence[PreferencePair]],
+        shards: Sequence[PreferenceReplayShard],
         sample_size: int,
         *,
         weights: Optional[Sequence[float]] = None,
     ) -> List[PreferencePair]:
-        datasets: List[List[PreferencePair]] = []
-        dataset_weights: List[float] = []
-        for idx, dataset in enumerate(history):
-            if not dataset:
-                continue
-            datasets.append(list(dataset))
-            dataset_weights.append(float(weights[idx]) if weights is not None else 1.0)
-        if not datasets:
+        if sample_size <= 0:
             return []
 
-        base_datasets = [list(dataset) for dataset in datasets]
-        base_weights = list(dataset_weights)
-        remaining = [list(dataset) for dataset in base_datasets]
-        sampled: List[PreferencePair] = []
-        for _ in range(int(sample_size)):
-            active_indices = [idx for idx, dataset in enumerate(remaining) if dataset]
-            if not active_indices:
-                remaining = [list(dataset) for dataset in base_datasets]
-                active_indices = [
-                    idx for idx, dataset in enumerate(remaining) if dataset
-                ]
+        eligible_shards: List[PreferenceReplayShard] = []
+        shard_weights: List[float] = []
+        for idx, shard in enumerate(shards):
+            if shard.num_pairs <= 0:
+                continue
+            eligible_shards.append(shard)
+            shard_weights.append(float(weights[idx]) if weights is not None else 1.0)
+        if not eligible_shards:
+            return []
 
-            active_weights = [base_weights[idx] for idx in active_indices]
-            dataset_idx = random.choices(active_indices, weights=active_weights, k=1)[0]
-            pair_idx = random.randrange(len(remaining[dataset_idx]))
-            sampled.append(remaining[dataset_idx].pop(pair_idx))
+        shard_counts = [0 for _ in eligible_shards]
+        for _ in range(int(sample_size)):
+            shard_idx = random.choices(
+                range(len(eligible_shards)),
+                weights=shard_weights,
+                k=1,
+            )[0]
+            shard_counts[shard_idx] += 1
+
+        sampled: List[PreferencePair] = []
+        for shard, count in zip(eligible_shards, shard_counts):
+            if count <= 0:
+                continue
+            records = self._load_replay_records(shard)
+            for record in self._sample_replay_records(records, count):
+                sampled.append(self._preference_pair_from_record(record))
+        random.shuffle(sampled)
         return sampled
+
+    def _preference_replay_shards(self) -> List[PreferenceReplayShard]:
+        shards = getattr(self, "_preference_replay_shards_state", None)
+        if shards is None:
+            shards = []
+            self._preference_replay_shards_state = shards
+        return shards
+
+    def _preference_replay_dir(self) -> str:
+        cached = getattr(self, "_preference_replay_dir_path", None)
+        if cached:
+            return cached
+
+        path = getattr(self.args, "preference_replay_dir", None)
+        if not path and isinstance(self.wandb_config, dict):
+            output_dir = self.wandb_config.get("output_dir")
+            if output_dir:
+                path = os.path.join(str(output_dir), "preference_replay")
+            else:
+                sections = self.wandb_config.get("config_sections") or {}
+                output_section = (
+                    sections.get("output") if isinstance(sections, dict) else {}
+                )
+                base_dir = None
+                if isinstance(output_section, dict):
+                    base_dir = output_section.get("base_dir")
+                base_dir = base_dir or self.wandb_config.get("dir")
+                if base_dir:
+                    job_id = os.environ.get("SLURM_JOB_ID")
+                    path = (
+                        os.path.join(
+                            str(base_dir), f"job_{job_id}", "preference_replay"
+                        )
+                        if job_id
+                        else os.path.join(str(base_dir), "preference_replay")
+                    )
+        if not path:
+            path = os.path.join(os.getcwd(), "preference_replay")
+
+        path = os.path.abspath(str(path))
+        os.makedirs(path, exist_ok=True)
+        self._preference_replay_dir_path = path
+        return path
+
+    def _write_iteration_preference_pairs(
+        self,
+        iteration_idx: int,
+        pairs: Sequence[PreferencePair],
+    ) -> Optional[PreferenceReplayShard]:
+        iteration = int(iteration_idx) + 1
+        replay_dir = self._preference_replay_dir()
+        path = os.path.join(replay_dir, f"iteration_{iteration:04d}.json")
+        payload = {
+            "iteration": iteration,
+            "num_pairs": len(pairs),
+            "pairs": [self._preference_pair_to_record(pair) for pair in pairs],
+        }
+
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False)
+        os.replace(tmp_path, path)
+
+        if not pairs:
+            return None
+        return PreferenceReplayShard(
+            iteration=iteration,
+            path=path,
+            num_pairs=len(pairs),
+        )
+
+    @staticmethod
+    def _preference_pair_to_record(pair: PreferencePair) -> Dict[str, Any]:
+        return {
+            "prompts": list(pair.prompts),
+            "winner_completions": list(pair.winner_completions),
+            "loser_completions": list(pair.loser_completions),
+            "winner_reward": float(pair.winner_reward),
+            "loser_reward": float(pair.loser_reward),
+            "candidate_reward_mean": float(pair.candidate_reward_mean),
+            "raw_rewards": [float(value) for value in (pair.raw_rewards or [])],
+        }
+
+    def _load_replay_shard(
+        self,
+        shard: Optional[PreferenceReplayShard],
+    ) -> List[PreferencePair]:
+        if shard is None:
+            return []
+        return [
+            self._preference_pair_from_record(record)
+            for record in self._load_replay_records(shard)
+        ]
+
+    @staticmethod
+    def _load_replay_records(shard: PreferenceReplayShard) -> List[Dict[str, Any]]:
+        with open(shard.path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        records = payload.get("pairs", []) if isinstance(payload, dict) else payload
+        if not isinstance(records, list):
+            return []
+        return [record for record in records if isinstance(record, dict)]
+
+    @staticmethod
+    def _sample_replay_records(
+        records: Sequence[Dict[str, Any]],
+        count: int,
+    ) -> List[Dict[str, Any]]:
+        if not records or count <= 0:
+            return []
+        if count <= len(records):
+            return random.sample(list(records), k=int(count))
+
+        sampled: List[Dict[str, Any]] = []
+        remaining = int(count)
+        while remaining > 0:
+            if remaining >= len(records):
+                batch = list(records)
+                random.shuffle(batch)
+                sampled.extend(batch)
+                remaining -= len(batch)
+                continue
+            sampled.extend(random.sample(list(records), k=remaining))
+            remaining = 0
+        return sampled
+
+    def _preference_pair_from_record(self, record: Dict[str, Any]) -> PreferencePair:
+        prompts = self._text_list(record.get("prompts"))
+        winner_completions = self._text_list(record.get("winner_completions"))
+        loser_completions = self._text_list(record.get("loser_completions"))
+
+        agent_tensors = [
+            self._preference_tensors_from_text(
+                agent_idx,
+                prompts[agent_idx],
+                winner_completions[agent_idx],
+                loser_completions[agent_idx],
+            )
+            for agent_idx in range(self.num_agents)
+        ]
+        return PreferencePair(
+            prompts=prompts,
+            winner_completions=winner_completions,
+            loser_completions=loser_completions,
+            agent_tensors=agent_tensors,
+            winner_reward=float(record.get("winner_reward", 0.0)),
+            loser_reward=float(record.get("loser_reward", 0.0)),
+            candidate_reward_mean=float(record.get("candidate_reward_mean", 0.0)),
+            raw_rewards=[
+                float(value)
+                for value in (
+                    record.get("raw_rewards")
+                    if isinstance(record.get("raw_rewards"), list)
+                    else []
+                )
+            ],
+        )
+
+    def _text_list(self, value: Any) -> List[str]:
+        values = list(value) if isinstance(value, list) else []
+        texts = [str(item) for item in values[: self.num_agents]]
+        while len(texts) < self.num_agents:
+            texts.append("")
+        return texts
 
     def _lambda_decay_weights(self, num_datasets: int) -> List[float]:
         if num_datasets < 1:
@@ -420,7 +652,6 @@ class MADPOIterTrainer(MADPOTrainer):
                     _ = self.evaluate(num_eval_samples=int(self.args.eval_num_samples))
 
                 metrics = self._update_from_preference_batch(batch)
-                metrics["iter/iteration"] = float(iteration_idx + 1)
                 updates_seen += 1
                 if self.args.use_environment_step:
                     self.env_step += int(self.args.environment_steps_per_pair) * len(
@@ -478,13 +709,14 @@ class MADPOIterTrainer(MADPOTrainer):
                 "MADPOIter preference generation currently supports aligned joint_mode only."
             )
 
-        current_rewards = self._compute_rewards(
+        current_raw_rewards, current_rewards = self._compute_raw_and_processed_rewards(
             [prompts[0]],
             current_completions,
             batch_items=[batch_item],
         )
         if self.args.comparator_policy == "current":
             comparator_rewards = current_rewards
+            comparator_raw_rewards = current_raw_rewards
             selected_pairs = [
                 (("current", winner_idx), ("current", loser_idx))
                 for winner_idx, loser_idx in self._select_preference_pair_indices(
@@ -493,7 +725,10 @@ class MADPOIterTrainer(MADPOTrainer):
             ]
             all_rewards = list(current_rewards)
         else:
-            comparator_rewards = self._compute_rewards(
+            (
+                comparator_raw_rewards,
+                comparator_rewards,
+            ) = self._compute_raw_and_processed_rewards(
                 [prompts[0]],
                 comparator_completions,
                 batch_items=[batch_item],
@@ -533,6 +768,18 @@ class MADPOIterTrainer(MADPOTrainer):
                 current_rewards,
                 comparator_rewards,
             )
+            winner_raw_reward = self._reward_at(
+                winner_source,
+                winner_idx,
+                current_raw_rewards,
+                comparator_raw_rewards,
+            )
+            loser_raw_reward = self._reward_at(
+                loser_source,
+                loser_idx,
+                current_raw_rewards,
+                comparator_raw_rewards,
+            )
 
             agent_tensors = [
                 self._preference_tensors_from_text(
@@ -552,10 +799,33 @@ class MADPOIterTrainer(MADPOTrainer):
                     winner_reward=float(winner_reward),
                     loser_reward=float(loser_reward),
                     candidate_reward_mean=candidate_reward_mean,
+                    raw_rewards=[
+                        float(winner_raw_reward),
+                        float(loser_raw_reward),
+                    ],
                 )
             )
 
         return result
+
+    def _compute_raw_and_processed_rewards(
+        self,
+        prompts: Sequence[str],
+        completions_list: List[List[str]],
+        *,
+        batch_items=None,
+    ) -> Tuple[List[float], List[float]]:
+        raw_rewards = call_reward_function(
+            self.reward_func,
+            prompts,
+            completions_list,
+            num_agents=self.num_agents,
+            batch_items=batch_items,
+        )
+        processed_rewards = [self.reward_processor(reward) for reward in raw_rewards]
+        return [float(reward) for reward in raw_rewards], [
+            float(reward) for reward in processed_rewards
+        ]
 
     def _generate_policy_outputs_for_item(
         self,
@@ -968,28 +1238,27 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
             self._reward_model_active = False
             self._evaluating_with_task_reward = False
             preference_pairs = self._build_preference_dataset(**kwargs)
-            if not preference_pairs:
+            current_pair_count = len(preference_pairs)
+            train_pairs = self._select_iteration_preference_pairs(
+                preference_pairs,
+                iteration_idx=iteration_idx,
+            )
+            total_pairs += len(train_pairs)
+            self._log_iteration_replay(
+                iteration_idx,
+                current_pairs=preference_pairs,
+                current_pair_count=current_pair_count,
+                train_pair_count=len(train_pairs),
+            )
+            preference_pairs.clear()
+            if not train_pairs:
                 if self.verbose:
                     print(
-                        "MARLHFIter: no non-tied preference pairs were generated "
-                        f"for iteration {iteration_idx + 1}."
+                        "MARLHFIter: no replay preference pairs were available "
+                        f"for iteration {iteration_idx + 1} "
+                        f"(current generated {current_pair_count})."
                     )
                 continue
-
-            train_pairs = self._select_iteration_preference_pairs(preference_pairs)
-            total_pairs += len(train_pairs)
-            if self.wandb_initialized and wandb.run is not None:
-                wandb.log(
-                    {
-                        "iter/iteration": float(iteration_idx + 1),
-                        "iter/preference_pairs": float(len(train_pairs)),
-                        "iter/current_preference_pairs": float(len(preference_pairs)),
-                        "iter/replay_history_size": float(
-                            len(getattr(self, "_preference_history", []))
-                        ),
-                    },
-                    step=int(self.env_step),
-                )
 
             self.reward_model = None
             self.reward_tokenizer = None

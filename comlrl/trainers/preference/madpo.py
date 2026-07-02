@@ -30,6 +30,7 @@ class PreferencePair:
     winner_reward: float
     loser_reward: float
     candidate_reward_mean: float
+    raw_rewards: Optional[List[float]] = None
 
 
 @dataclass
