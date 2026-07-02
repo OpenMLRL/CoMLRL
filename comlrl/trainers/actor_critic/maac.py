@@ -601,7 +601,11 @@ class MAACTrainer(ActorCriticTrainerBase):
         if num_turns > 1:
             return self._collect_rollouts_multi_turn(item, num_turns)
 
-        num_ret = int(self.args.num_generations)
+        num_ret = (
+            1
+            if bool(getattr(self, "_in_eval", False))
+            else int(self.args.num_generations)
+        )
         turn_prompts = [
             self._resolve_turn_prompt(item, agent_idx)
             for agent_idx in range(self.args.num_agents)
