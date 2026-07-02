@@ -5,6 +5,10 @@ weight: 3
 
 ---
 
+## Version 1.3.9
+
+- Add offline preference-learning methods, MADPO, MARLHF, etc. ([#67](https://github.com/OpenMLRL/CoMLRL/pull/67)).
+
 ## Version 1.3.8
 
 - Allow to use reference model for all algorithms (PR [#65](https://github.com/OpenMLRL/CoMLRL/pull/65)).
