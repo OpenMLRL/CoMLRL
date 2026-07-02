@@ -1,3 +1,4 @@
+import inspect
 import json
 import os
 import random
@@ -311,7 +312,7 @@ class MADPOIterTrainer(MADPOTrainer):
 
         mode = self.args.preference_replay_mode
         if mode == "current":
-            return self._load_replay_shard(shard) if shard is not None else []
+            return list(current_pairs)
         if mode == "nearest_k":
             k = int(self.args.preference_replay_k)
             sample_size = self._replay_sample_size(len(current_pairs), shards)
@@ -781,15 +782,25 @@ class MADPOIterTrainer(MADPOTrainer):
                 comparator_raw_rewards,
             )
 
-            agent_tensors = [
-                self._preference_tensors_from_text(
-                    agent_idx,
-                    prompts[agent_idx],
-                    winner_completions[agent_idx],
-                    loser_completions[agent_idx],
-                )
-                for agent_idx in range(self.num_agents)
-            ]
+            if winner_source == "current" and loser_source == "current":
+                agent_tensors = [
+                    self._preference_tensors_from_generation(
+                        current_outputs[agent_idx],
+                        winner_idx,
+                        loser_idx,
+                    )
+                    for agent_idx in range(self.num_agents)
+                ]
+            else:
+                agent_tensors = [
+                    self._preference_tensors_from_text(
+                        agent_idx,
+                        prompts[agent_idx],
+                        winner_completions[agent_idx],
+                        loser_completions[agent_idx],
+                    )
+                    for agent_idx in range(self.num_agents)
+                ]
             result.append(
                 PreferencePair(
                     prompts=list(prompts),
@@ -808,6 +819,19 @@ class MADPOIterTrainer(MADPOTrainer):
 
         return result
 
+    @staticmethod
+    def _preference_tensors_from_generation(
+        generation_output: Dict[str, Any],
+        winner_idx: int,
+        loser_idx: int,
+    ) -> AgentPreferenceTensors:
+        completion_ids = generation_output["completion_input_ids"][0]
+        return AgentPreferenceTensors(
+            prompt_input_ids=generation_output["prompt_input_ids"][0].detach().cpu(),
+            winner_completion_ids=completion_ids[winner_idx].detach().cpu(),
+            loser_completion_ids=completion_ids[loser_idx].detach().cpu(),
+        )
+
     def _compute_raw_and_processed_rewards(
         self,
         prompts: Sequence[str],
@@ -815,17 +839,37 @@ class MADPOIterTrainer(MADPOTrainer):
         *,
         batch_items=None,
     ) -> Tuple[List[float], List[float]]:
-        raw_rewards = call_reward_function(
-            self.reward_func,
-            prompts,
-            completions_list,
-            num_agents=self.num_agents,
-            batch_items=batch_items,
-        )
-        processed_rewards = [self.reward_processor(reward) for reward in raw_rewards]
-        return [float(reward) for reward in raw_rewards], [
-            float(reward) for reward in processed_rewards
-        ]
+        for agent_idx in range(self.num_agents):
+            if not isinstance(completions_list[agent_idx], list):
+                completions_list[agent_idx] = [completions_list[agent_idx]]
+
+        min_completions = min(len(completions_list[i]) for i in range(self.num_agents))
+        try:
+            reward_signature = inspect.signature(self.reward_func)
+        except (TypeError, ValueError):
+            reward_signature = None
+
+        raw_rewards: List[float] = []
+        processed_rewards: List[float] = []
+        for completion_idx in range(min_completions):
+            agent_completions = [
+                completions_list[agent_idx][completion_idx]
+                for agent_idx in range(self.num_agents)
+            ]
+            completion_args = [[completion] for completion in agent_completions]
+            func_rewards = call_reward_function(
+                self.reward_func,
+                prompts,
+                completion_args,
+                num_agents=self.num_agents,
+                batch_items=batch_items,
+                signature=reward_signature,
+            )
+            processed = [self.reward_processor(reward) for reward in func_rewards]
+            raw_rewards.append(float(func_rewards[0] if func_rewards else 0.0))
+            processed_rewards.append(float(processed[0] if processed else 0.0))
+
+        return raw_rewards, processed_rewards
 
     def _generate_policy_outputs_for_item(
         self,
