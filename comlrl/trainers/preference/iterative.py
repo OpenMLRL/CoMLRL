@@ -64,6 +64,15 @@ def _normalize_preference_replay_mode(mode: Optional[str]) -> str:
     )
 
 
+def _normalize_preference_scoring_reward(mode: Optional[str]) -> str:
+    value = str(mode or "task").strip().lower()
+    if value in {"task", "oracle", "environment", "env"}:
+        return "task"
+    if value in {"reward_model", "model", "learned"}:
+        return "reward_model"
+    raise ValueError("preference_scoring_reward must be one of: task, reward_model.")
+
+
 def _validate_iterative_config(args: Any) -> None:
     if int(args.num_iterations) < 1:
         raise ValueError("num_iterations must be >= 1.")
@@ -241,6 +250,7 @@ class MARLHFIterConfig(MARLHFConfig):
     preference_replay_lambda: Optional[float] = None
     preference_replay_sample_size: Optional[int] = None
     preference_replay_dir: Optional[str] = None
+    preference_scoring_reward: str = "task"
     policy_checkpoint_dir: Optional[str] = None
     comparator_policy: str = "current"
     comparator_model_name: Optional[str] = None
@@ -263,6 +273,9 @@ class MARLHFIterConfig(MARLHFConfig):
     def __post_init__(self) -> None:
         super().__post_init__()
         _validate_iterative_config(self)
+        self.preference_scoring_reward = _normalize_preference_scoring_reward(
+            self.preference_scoring_reward
+        )
 
     def _allowed_pair_selection_modes(self) -> Tuple[str, ...]:
         return ("reward_gap", "all", "random", "comparator_reward")
@@ -968,6 +981,15 @@ class MADPOIterTrainer(MADPOTrainer):
                 completions_list[agent_idx] = [completions_list[agent_idx]]
 
         min_completions = min(len(completions_list[i]) for i in range(self.num_agents))
+        learned_scores = self._preference_scoring_raw_and_processed_rewards(
+            prompts,
+            completions_list,
+            batch_items=batch_items,
+            min_completions=min_completions,
+        )
+        if learned_scores is not None:
+            return learned_scores
+
         try:
             reward_signature = inspect.signature(self.reward_func)
         except (TypeError, ValueError):
@@ -994,6 +1016,16 @@ class MADPOIterTrainer(MADPOTrainer):
             processed_rewards.append(float(processed[0] if processed else 0.0))
 
         return raw_rewards, processed_rewards
+
+    def _preference_scoring_raw_and_processed_rewards(
+        self,
+        prompts: Sequence[str],
+        completions_list: List[List[str]],
+        *,
+        batch_items=None,
+        min_completions: int,
+    ) -> Optional[Tuple[List[float], List[float]]]:
+        return None
 
     def _generate_policy_outputs_for_item(
         self,
@@ -1447,6 +1479,28 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
 
     default_config_cls = MARLHFIterConfig
     algorithm_name = "MARLHFIter"
+
+    def _preference_scoring_raw_and_processed_rewards(
+        self,
+        prompts: Sequence[str],
+        completions_list: List[List[str]],
+        *,
+        batch_items=None,
+        min_completions: int,
+    ) -> Optional[Tuple[List[float], List[float]]]:
+        if self.args.preference_scoring_reward != "reward_model":
+            return None
+        if self.reward_model is None:
+            return None
+        if min_completions <= 0:
+            return [], []
+
+        scores = self._compute_reward_model_rewards(
+            prompts,
+            completions_list,
+            batch_items=batch_items,
+        )
+        return list(scores), list(scores)
 
     def train(self, **kwargs):
         if int(self.args.num_turns) != 1:
