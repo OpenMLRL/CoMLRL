@@ -1,3 +1,4 @@
+import gc
 import inspect
 import json
 import os
@@ -41,11 +42,11 @@ def _normalize_comparator_policy(policy: Optional[str]) -> str:
         return "current"
     if mode in {"model", "external", "comparator", "reference", "ref"}:
         return "model"
+    if mode in {"history", "checkpoint", "previous", "previous_iteration"}:
+        return "history"
     if mode in {"api", "http", "endpoint"}:
         return "api"
-    raise ValueError(
-        "comparator_policy must be one of: current, model, external, reference, api."
-    )
+    raise ValueError("comparator_policy must be one of: current, model, history, api.")
 
 
 def _normalize_preference_replay_mode(mode: Optional[str]) -> str:
@@ -74,11 +75,34 @@ def _validate_iterative_config(args: Any) -> None:
     if args.comparator_num_candidates is not None:
         if int(args.comparator_num_candidates) < 1:
             raise ValueError("comparator_num_candidates must be >= 1 or null.")
+        args.comparator_num_candidates = int(args.comparator_num_candidates)
     if args.comparator_policy == "model":
         if args.comparator_model_name is None and args.comparator_agents is None:
             raise ValueError(
                 "comparator_model_name or comparator_agents is required when "
                 "comparator_policy='model'."
+            )
+        if args.comparator_history_k is not None:
+            raise ValueError(
+                "comparator_history_k is only valid when "
+                "comparator_policy='history'."
+            )
+    elif args.comparator_policy == "history":
+        if args.comparator_history_k is None:
+            args.comparator_history_k = 1
+        if int(args.comparator_history_k) < 1:
+            raise ValueError("comparator_history_k must be >= 1.")
+        args.comparator_history_k = int(args.comparator_history_k)
+        if args.comparator_model_name is not None or args.comparator_agents is not None:
+            raise ValueError(
+                "comparator_model_name and comparator_agents are only valid when "
+                "comparator_policy='model'."
+            )
+    else:
+        if args.comparator_history_k is not None:
+            raise ValueError(
+                "comparator_history_k is only valid when "
+                "comparator_policy='history'."
             )
     if args.comparator_policy == "api" and not args.comparator_api_url:
         raise ValueError("comparator_api_url is required when comparator_policy='api'.")
@@ -180,11 +204,13 @@ class MADPOIterConfig(MADPOConfig):
     preference_replay_lambda: Optional[float] = None
     preference_replay_sample_size: Optional[int] = None
     preference_replay_dir: Optional[str] = None
+    policy_checkpoint_dir: Optional[str] = None
     comparator_policy: str = "current"
     comparator_model_name: Optional[str] = None
     comparator_agents: Optional[Sequence[str]] = None
     comparator_devices: Optional[Union[str, Sequence[str]]] = None
     comparator_num_candidates: Optional[int] = None
+    comparator_history_k: Optional[int] = None
     comparator_api_url: Optional[str] = None
     comparator_api_format: str = "generic"
     comparator_api_model: Optional[str] = None
@@ -200,6 +226,9 @@ class MADPOIterConfig(MADPOConfig):
     def __post_init__(self) -> None:
         super().__post_init__()
         _validate_iterative_config(self)
+
+    def _allowed_pair_selection_modes(self) -> Tuple[str, ...]:
+        return ("reward_gap", "all", "random", "comparator_reward")
 
 
 @dataclass
@@ -212,11 +241,13 @@ class MARLHFIterConfig(MARLHFConfig):
     preference_replay_lambda: Optional[float] = None
     preference_replay_sample_size: Optional[int] = None
     preference_replay_dir: Optional[str] = None
+    policy_checkpoint_dir: Optional[str] = None
     comparator_policy: str = "current"
     comparator_model_name: Optional[str] = None
     comparator_agents: Optional[Sequence[str]] = None
     comparator_devices: Optional[Union[str, Sequence[str]]] = None
     comparator_num_candidates: Optional[int] = None
+    comparator_history_k: Optional[int] = None
     comparator_api_url: Optional[str] = None
     comparator_api_format: str = "generic"
     comparator_api_model: Optional[str] = None
@@ -232,6 +263,9 @@ class MARLHFIterConfig(MARLHFConfig):
     def __post_init__(self) -> None:
         super().__post_init__()
         _validate_iterative_config(self)
+
+    def _allowed_pair_selection_modes(self) -> Tuple[str, ...]:
+        return ("reward_gap", "all", "random", "comparator_reward")
 
 
 @dataclass
@@ -264,10 +298,14 @@ class MADPOIterTrainer(MADPOTrainer):
             agent.to(self.agent_devices[agent_idx])
             agent.train()
 
+        self._save_initial_policy_checkpoint()
         updates_seen = 0
         total_pairs = 0
         for iteration_idx in range(int(self.args.num_iterations)):
-            preference_pairs = self._build_preference_dataset(**kwargs)
+            preference_pairs = self._build_preference_dataset(
+                iteration_idx=iteration_idx,
+                **kwargs,
+            )
             current_pair_count = len(preference_pairs)
             train_pairs = self._select_iteration_preference_pairs(
                 preference_pairs,
@@ -288,6 +326,7 @@ class MADPOIterTrainer(MADPOTrainer):
                         f"for iteration {iteration_idx + 1} "
                         f"(current generated {current_pair_count})."
                     )
+                self._save_iteration_policy_checkpoint(iteration_idx)
                 continue
 
             updates_seen = self._train_preference_pairs(
@@ -295,6 +334,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 iteration_idx=iteration_idx,
                 updates_seen=updates_seen,
             )
+            self._save_iteration_policy_checkpoint(iteration_idx)
 
         if total_pairs == 0 and self.verbose:
             print("MADPOIter: no non-tied preference pairs were generated.")
@@ -620,6 +660,88 @@ class MADPOIterTrainer(MADPOTrainer):
         newest_first = [weight / normalizer for weight in newest_first]
         return list(reversed(newest_first))
 
+    def _policy_checkpoint_dir(self) -> str:
+        cached = getattr(self, "_policy_checkpoint_dir_path", None)
+        if cached:
+            return cached
+
+        path = getattr(self.args, "policy_checkpoint_dir", None)
+        if not path and isinstance(self.wandb_config, dict):
+            output_dir = self.wandb_config.get("output_dir")
+            if output_dir:
+                path = os.path.join(str(output_dir), "policy_checkpoints")
+            else:
+                sections = self.wandb_config.get("config_sections") or {}
+                output_section = (
+                    sections.get("output") if isinstance(sections, dict) else {}
+                )
+                base_dir = None
+                if isinstance(output_section, dict):
+                    base_dir = output_section.get("base_dir")
+                base_dir = base_dir or self.wandb_config.get("dir")
+                if base_dir:
+                    job_id = os.environ.get("SLURM_JOB_ID")
+                    path = (
+                        os.path.join(
+                            str(base_dir), f"job_{job_id}", "policy_checkpoints"
+                        )
+                        if job_id
+                        else os.path.join(str(base_dir), "policy_checkpoints")
+                    )
+        if not path:
+            path = os.path.join(os.getcwd(), "policy_checkpoints")
+
+        path = os.path.abspath(str(path))
+        os.makedirs(path, exist_ok=True)
+        self._policy_checkpoint_dir_path = path
+        return path
+
+    def _save_initial_policy_checkpoint(self) -> str:
+        if getattr(self, "_initial_policy_checkpoint_saved", False):
+            return os.path.join(self._policy_checkpoint_dir(), "initial")
+        path = self._save_policy_checkpoint("initial")
+        self._initial_policy_checkpoint_saved = True
+        return path
+
+    def _save_iteration_policy_checkpoint(self, iteration_idx: int) -> str:
+        return self._save_policy_checkpoint(f"iteration_{int(iteration_idx):04d}")
+
+    def _save_policy_checkpoint(self, label: str) -> str:
+        checkpoint_dir = os.path.join(self._policy_checkpoint_dir(), str(label))
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        for agent_idx, agent in enumerate(self.agents):
+            agent_module = unwrap_model(agent)
+            agent_dir = os.path.join(checkpoint_dir, f"agent_{agent_idx}")
+            os.makedirs(agent_dir, exist_ok=True)
+            agent_module.save_pretrained(agent_dir)
+            if self.tokenizers:
+                self.tokenizers[agent_idx].save_pretrained(agent_dir)
+
+        return checkpoint_dir
+
+    def _history_policy_checkpoint_path(self, iteration_idx: int) -> str:
+        self._save_initial_policy_checkpoint()
+        history_k = int(self.args.comparator_history_k)
+        target_iteration = int(iteration_idx) - history_k
+        if target_iteration < 0:
+            return os.path.join(self._policy_checkpoint_dir(), "initial")
+
+        for candidate_iteration in range(target_iteration, -1, -1):
+            path = os.path.join(
+                self._policy_checkpoint_dir(),
+                f"iteration_{candidate_iteration:04d}",
+            )
+            if self._policy_checkpoint_exists(path):
+                return path
+        return os.path.join(self._policy_checkpoint_dir(), "initial")
+
+    def _policy_checkpoint_exists(self, checkpoint_dir: str) -> bool:
+        return all(
+            os.path.isdir(os.path.join(checkpoint_dir, f"agent_{agent_idx}"))
+            for agent_idx in range(self.num_agents)
+        )
+
     def _train_preference_pairs(
         self,
         preference_pairs: List[PreferencePair],
@@ -670,6 +792,7 @@ class MADPOIterTrainer(MADPOTrainer):
         batch_item: Dict[str, Any],
         **kwargs,
     ) -> List[PreferencePair]:
+        iteration_idx = int(kwargs.pop("iteration_idx", 0))
         current_candidates = int(self.args.preference_num_candidates)
         comparator_candidates = int(
             self.args.comparator_num_candidates or current_candidates
@@ -687,7 +810,19 @@ class MADPOIterTrainer(MADPOTrainer):
                 num_candidates=comparator_candidates,
             )
         elif self.args.comparator_policy == "current":
-            comparator_outputs = current_outputs
+            comparator_outputs = self._generate_policy_outputs_for_item(
+                self.agents,
+                batch_item,
+                num_candidates=comparator_candidates,
+                **kwargs,
+            )
+        elif self.args.comparator_policy == "history":
+            comparator_outputs = self._generate_history_policy_outputs_for_item(
+                batch_item,
+                iteration_idx=iteration_idx,
+                num_candidates=comparator_candidates,
+                **kwargs,
+            )
         else:
             comparator_outputs = self._generate_policy_outputs_for_item(
                 self._get_comparator_agents(),
@@ -715,30 +850,19 @@ class MADPOIterTrainer(MADPOTrainer):
             current_completions,
             batch_items=[batch_item],
         )
-        if self.args.comparator_policy == "current":
-            comparator_rewards = current_rewards
-            comparator_raw_rewards = current_raw_rewards
-            selected_pairs = [
-                (("current", winner_idx), ("current", loser_idx))
-                for winner_idx, loser_idx in self._select_preference_pair_indices(
-                    current_rewards
-                )
-            ]
-            all_rewards = list(current_rewards)
-        else:
-            (
-                comparator_raw_rewards,
-                comparator_rewards,
-            ) = self._compute_raw_and_processed_rewards(
-                [prompts[0]],
-                comparator_completions,
-                batch_items=[batch_item],
-            )
-            selected_pairs = self._select_policy_comparison_pairs(
-                current_rewards,
-                comparator_rewards,
-            )
-            all_rewards = list(current_rewards) + list(comparator_rewards)
+        (
+            comparator_raw_rewards,
+            comparator_rewards,
+        ) = self._compute_raw_and_processed_rewards(
+            [prompts[0]],
+            comparator_completions,
+            batch_items=[batch_item],
+        )
+        selected_pairs = self._select_policy_comparison_pairs(
+            current_rewards,
+            comparator_rewards,
+        )
+        all_rewards = list(current_rewards) + list(comparator_rewards)
         candidate_reward_mean = float(np.mean(all_rewards)) if all_rewards else 0.0
         result: List[PreferencePair] = []
 
@@ -890,6 +1014,29 @@ class MADPOIterTrainer(MADPOTrainer):
             )
 
         return self._run_agent_tasks(_generate_agent)
+
+    def _generate_history_policy_outputs_for_item(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        iteration_idx: int,
+        num_candidates: int,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        checkpoint_dir = self._history_policy_checkpoint_path(iteration_idx)
+        comparator_agents = self._load_policy_checkpoint_agents(checkpoint_dir)
+        try:
+            return self._generate_policy_outputs_for_item(
+                comparator_agents,
+                batch_item,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+        finally:
+            del comparator_agents
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def _generate_api_outputs_for_item(
         self,
@@ -1121,26 +1268,34 @@ class MADPOIterTrainer(MADPOTrainer):
         current_rewards: Sequence[float],
         comparator_rewards: Sequence[float],
     ) -> List[Tuple[Tuple[str, int], Tuple[str, int]]]:
-        candidate_pairs: List[Tuple[float, Tuple[str, int], Tuple[str, int]]] = []
-        for current_idx, current_reward in enumerate(current_rewards):
-            for comparator_idx, comparator_reward in enumerate(comparator_rewards):
-                gap = float(current_reward) - float(comparator_reward)
-                if gap > 0:
-                    candidate_pairs.append(
-                        (
-                            gap,
-                            ("current", current_idx),
-                            ("comparator", comparator_idx),
-                        )
+        candidate_pairs: List[
+            Tuple[float, float, int, Tuple[str, int], Tuple[str, int]]
+        ] = []
+        num_pairs = min(len(current_rewards), len(comparator_rewards))
+        for pair_idx in range(num_pairs):
+            current_reward = float(current_rewards[pair_idx])
+            comparator_reward = float(comparator_rewards[pair_idx])
+            gap = current_reward - comparator_reward
+            if gap > 0:
+                candidate_pairs.append(
+                    (
+                        abs(gap),
+                        comparator_reward,
+                        pair_idx,
+                        ("current", pair_idx),
+                        ("comparator", pair_idx),
                     )
-                elif gap < 0:
-                    candidate_pairs.append(
-                        (
-                            abs(gap),
-                            ("comparator", comparator_idx),
-                            ("current", current_idx),
-                        )
+                )
+            elif gap < 0:
+                candidate_pairs.append(
+                    (
+                        abs(gap),
+                        comparator_reward,
+                        pair_idx,
+                        ("comparator", pair_idx),
+                        ("current", pair_idx),
                     )
+                )
 
         if not candidate_pairs:
             return []
@@ -1149,14 +1304,16 @@ class MADPOIterTrainer(MADPOTrainer):
         if mode == "random":
             random.shuffle(candidate_pairs)
         elif mode == "all":
-            candidate_pairs.sort(key=lambda item: (item[1], item[2]))
+            candidate_pairs.sort(key=lambda item: item[2])
+        elif mode == "comparator_reward":
+            candidate_pairs.sort(key=lambda item: (item[1], item[0]), reverse=True)
         else:
             candidate_pairs.sort(key=lambda item: item[0], reverse=True)
 
         limit = self.args.preference_pairs_per_sample
-        if limit is not None:
+        if mode != "all" and limit is not None:
             candidate_pairs = candidate_pairs[: int(limit)]
-        return [(winner, loser) for _, winner, loser in candidate_pairs]
+        return [(winner, loser) for _, _, _, winner, loser in candidate_pairs]
 
     def _preference_tensors_from_text(
         self,
@@ -1189,6 +1346,8 @@ class MADPOIterTrainer(MADPOTrainer):
     def _get_comparator_agents(self) -> Sequence[Any]:
         if self.args.comparator_policy == "current":
             return self.agents
+        if self.args.comparator_policy == "history":
+            raise ValueError("History comparator agents must be loaded per iteration.")
         if getattr(self, "_comparator_agents", None) is None:
             self._comparator_agents = self._load_comparator_agents()
         return self._comparator_agents
@@ -1202,30 +1361,31 @@ class MADPOIterTrainer(MADPOTrainer):
             expected_label=f"num_agents ({self.num_agents})",
             model_label="comparator_model_name",
         )
-        comparator_devices = DeviceScheduler.resolve_devices(
-            self.args.comparator_devices or getattr(self.args, "agent_devices", None),
-            self.num_agents,
-            kind="comparator_devices",
-        )
+        return self._load_frozen_policy_agents(comparator_sources)
 
-        model_kwargs: Dict[str, Any] = {}
-        torch_dtype = None
-        if isinstance(self.model_config, dict):
-            torch_dtype = self.model_config.get("torch_dtype") or self.model_config.get(
-                "dtype"
+    def _load_policy_checkpoint_agents(self, checkpoint_dir: str) -> List[Any]:
+        checkpoint_sources = [
+            os.path.join(checkpoint_dir, f"agent_{agent_idx}")
+            for agent_idx in range(self.num_agents)
+        ]
+        missing = [path for path in checkpoint_sources if not os.path.isdir(path)]
+        if missing:
+            raise ValueError(
+                "Missing comparator history checkpoint agent directories: "
+                f"{missing}."
             )
-        if torch_dtype is not None:
-            model_kwargs["torch_dtype"] = torch_dtype
+        return self._load_frozen_policy_agents(checkpoint_sources)
 
-        if comparator_sources and all(
-            isinstance(src, str) for src in comparator_sources
-        ):
+    def _load_frozen_policy_agents(self, sources: Sequence[Any]) -> List[Any]:
+        comparator_devices = self._resolve_comparator_devices()
+        model_kwargs = self._comparator_model_kwargs()
+        if sources and all(isinstance(src, str) for src in sources):
             comparator_agents = [
                 AutoModelForCausalLM.from_pretrained(name, **model_kwargs)
-                for name in comparator_sources
+                for name in sources
             ]
         else:
-            comparator_agents = list(comparator_sources)
+            comparator_agents = list(sources)
 
         for agent_idx, comparator_agent in enumerate(comparator_agents):
             comparator_agent.to(comparator_devices[agent_idx])
@@ -1235,6 +1395,24 @@ class MADPOIterTrainer(MADPOTrainer):
             apply_tokenizer_specials(self.tokenizers[agent_idx], [comparator_agent])
 
         return comparator_agents
+
+    def _resolve_comparator_devices(self) -> List[torch.device]:
+        return DeviceScheduler.resolve_devices(
+            self.args.comparator_devices or getattr(self.args, "agent_devices", None),
+            self.num_agents,
+            kind="comparator_devices",
+        )
+
+    def _comparator_model_kwargs(self) -> Dict[str, Any]:
+        model_kwargs: Dict[str, Any] = {}
+        torch_dtype = None
+        if isinstance(self.model_config, dict):
+            torch_dtype = self.model_config.get("torch_dtype") or self.model_config.get(
+                "dtype"
+            )
+        if torch_dtype is not None:
+            model_kwargs["torch_dtype"] = torch_dtype
+        return model_kwargs
 
     @staticmethod
     def _completion_group(
@@ -1277,11 +1455,15 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
         if self.wandb_config is not None and not self.wandb_initialized:
             self._init_wandb()
 
+        self._save_initial_policy_checkpoint()
         total_pairs = 0
         for iteration_idx in range(int(self.args.num_iterations)):
             self._reward_model_active = False
             self._evaluating_with_task_reward = False
-            preference_pairs = self._build_preference_dataset(**kwargs)
+            preference_pairs = self._build_preference_dataset(
+                iteration_idx=iteration_idx,
+                **kwargs,
+            )
             current_pair_count = len(preference_pairs)
             train_pairs = self._select_iteration_preference_pairs(
                 preference_pairs,
@@ -1302,6 +1484,7 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
                         f"for iteration {iteration_idx + 1} "
                         f"(current generated {current_pair_count})."
                     )
+                self._save_iteration_policy_checkpoint(iteration_idx)
                 continue
 
             self.reward_model = None
@@ -1317,10 +1500,12 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
                 _apply_magrpo_family_args(self.args)
                 self.advantage_mode = self.args.advantage_mode
                 MAGRPOTrainer.train(self, **kwargs)
+                self._save_iteration_policy_checkpoint(iteration_idx)
                 continue
 
             if self.args.rl_algorithm in _ACTOR_CRITIC_ALGORITHMS:
                 self._train_actor_critic_rl(**kwargs)
+                self._save_iteration_policy_checkpoint(iteration_idx)
                 continue
 
             raise ValueError(f"Unsupported rl_algorithm: {self.args.rl_algorithm}")

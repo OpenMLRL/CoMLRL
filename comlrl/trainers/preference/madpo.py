@@ -61,9 +61,19 @@ class MADPOConfig(MAGRPOConfig):
         if self.environment_steps_per_pair < 1:
             raise ValueError("environment_steps_per_pair must be >= 1.")
         mode = str(self.pair_selection or "reward_gap").strip().lower()
-        if mode not in {"reward_gap", "all", "random"}:
-            raise ValueError("pair_selection must be one of: reward_gap, all, random.")
+        allowed_modes = self._allowed_pair_selection_modes()
+        if mode not in allowed_modes:
+            raise ValueError(
+                "pair_selection must be one of: " f"{', '.join(allowed_modes)}."
+            )
+        if mode == "all" and self.preference_pairs_per_sample is not None:
+            raise ValueError(
+                "preference_pairs_per_sample must be null when " "pair_selection='all'."
+            )
         self.pair_selection = mode
+
+    def _allowed_pair_selection_modes(self) -> Tuple[str, ...]:
+        return ("reward_gap", "all", "random")
 
 
 class MADPOTrainer(MAGRPOTrainer):
@@ -239,7 +249,7 @@ class MADPOTrainer(MAGRPOTrainer):
             candidate_pairs.sort(key=lambda item: item[0], reverse=True)
 
         limit = self.args.preference_pairs_per_sample
-        if limit is not None:
+        if mode != "all" and limit is not None:
             candidate_pairs = candidate_pairs[: int(limit)]
         return [(winner_idx, loser_idx) for _, winner_idx, loser_idx in candidate_pairs]
 
