@@ -36,6 +36,11 @@ from .marlhf import (
 from ..reinforce.magrpo import MAGRPOTrainer
 
 
+_REWARD_DISTRIBUTION_MIN = 0.0
+_REWARD_DISTRIBUTION_MAX = 4.0
+_REWARD_DISTRIBUTION_BINS = 16
+
+
 def _normalize_comparator_policy(policy: Optional[str]) -> str:
     mode = str(policy or "current").strip().lower()
     if mode in {"current", "self", "online"}:
@@ -207,7 +212,7 @@ def _validate_preference_replay_args(args: Any) -> None:
 class MADPOIterConfig(MADPOConfig):
     """Configuration for iterative MADPO preference refresh."""
 
-    num_iterations: int = 6
+    num_iterations: int = 4
     num_train_epochs: int = 1
     preference_num_candidates: int = 20
     preference_pairs_per_sample: Optional[int] = 4
@@ -248,7 +253,7 @@ class MADPOIterConfig(MADPOConfig):
 class MARLHFIterConfig(MARLHFConfig):
     """Configuration for iterative MARLHF preference and reward refresh."""
 
-    num_iterations: int = 6
+    num_iterations: int = 4
     num_train_epochs: int = 2
     preference_num_candidates: int = 20
     preference_pairs_per_sample: Optional[int] = 4
@@ -324,6 +329,7 @@ class MADPOIterTrainer(MADPOTrainer):
         updates_seen = 0
         total_pairs = 0
         for iteration_idx in range(int(self.args.num_iterations)):
+            self._reset_iteration_reward_distribution()
             preference_pairs = self._build_preference_dataset(
                 iteration_idx=iteration_idx,
                 **kwargs,
@@ -420,31 +426,121 @@ class MADPOIterTrainer(MADPOTrainer):
             ),
             "iter/train_preference_pairs": float(train_pair_count),
         }
-        reward_histogram = self._current_reward_histogram(current_pairs)
-        if reward_histogram is not None:
-            metrics["iter/current_reward_histogram"] = reward_histogram
+        metrics.update(self._iteration_reward_distribution_metrics())
         wandb.log(metrics, step=int(self.env_step))
 
-    @staticmethod
-    def _current_reward_histogram(
-        current_pairs: Sequence[PreferencePair],
-    ) -> Optional[wandb.Histogram]:
-        reward_values: List[float] = []
-        for pair in current_pairs:
-            raw_rewards = pair.raw_rewards or []
-            if raw_rewards:
-                reward_values.extend(float(value) for value in raw_rewards)
-            else:
-                reward_values.extend(
-                    [float(pair.winner_reward), float(pair.loser_reward)]
-                )
-        if not reward_values:
-            return None
+    def _reset_iteration_reward_distribution(self) -> None:
+        self._iteration_reward_distribution = {
+            "target": [],
+            "comparator": [],
+        }
 
-        bin_edges = np.linspace(0.0, 4.0, 17)
-        clipped_rewards = np.clip(np.asarray(reward_values, dtype=float), 0.0, 4.0)
-        counts, edges = np.histogram(clipped_rewards, bins=bin_edges)
-        return wandb.Histogram(np_histogram=(counts, edges))
+    def _record_iteration_reward_distribution(
+        self,
+        *,
+        target_rewards: Sequence[float],
+        comparator_rewards: Sequence[float],
+    ) -> None:
+        distribution = getattr(self, "_iteration_reward_distribution", None)
+        if distribution is None:
+            self._reset_iteration_reward_distribution()
+            distribution = self._iteration_reward_distribution
+        distribution["target"].extend(self._finite_floats(target_rewards))
+        distribution["comparator"].extend(self._finite_floats(comparator_rewards))
+
+    @staticmethod
+    def _finite_floats(values: Sequence[float]) -> List[float]:
+        result: List[float] = []
+        for value in values:
+            float_value = float(value)
+            if np.isfinite(float_value):
+                result.append(float_value)
+        return result
+
+    def _iteration_reward_distribution_metrics(self) -> Dict[str, Any]:
+        distribution = getattr(self, "_iteration_reward_distribution", None)
+        if not distribution:
+            return {}
+
+        target_rewards = distribution.get("target", [])
+        comparator_rewards = distribution.get("comparator", [])
+        if not target_rewards and not comparator_rewards:
+            return {}
+
+        bin_edges = np.linspace(
+            _REWARD_DISTRIBUTION_MIN,
+            _REWARD_DISTRIBUTION_MAX,
+            _REWARD_DISTRIBUTION_BINS + 1,
+        )
+        target_counts, edges = self._reward_distribution_counts(
+            target_rewards,
+            bin_edges,
+        )
+        comparator_counts, _ = self._reward_distribution_counts(
+            comparator_rewards,
+            bin_edges,
+        )
+        bin_centers = ((edges[:-1] + edges[1:]) / 2.0).tolist()
+
+        table = wandb.Table(columns=["reward_bin", "target_count", "comparator_count"])
+        for reward_bin, target_count, comparator_count in zip(
+            bin_centers,
+            target_counts.tolist(),
+            comparator_counts.tolist(),
+        ):
+            table.add_data(
+                float(reward_bin),
+                int(target_count),
+                int(comparator_count),
+            )
+
+        metrics: Dict[str, Any] = {
+            "iter/reward_distribution/target_histogram": wandb.Histogram(
+                np_histogram=(target_counts, edges)
+            ),
+            "iter/reward_distribution/comparator_histogram": wandb.Histogram(
+                np_histogram=(comparator_counts, edges)
+            ),
+            "iter/reward_distribution/table": table,
+            "iter/reward_distribution/target_sample_count": float(len(target_rewards)),
+            "iter/reward_distribution/comparator_sample_count": float(
+                len(comparator_rewards)
+            ),
+        }
+        if target_rewards:
+            metrics["iter/reward_distribution/target_mean"] = float(
+                np.mean(target_rewards)
+            )
+        if comparator_rewards:
+            metrics["iter/reward_distribution/comparator_mean"] = float(
+                np.mean(comparator_rewards)
+            )
+
+        try:
+            metrics["iter/reward_distribution/chart"] = wandb.plot.line_series(
+                xs=bin_centers,
+                ys=[target_counts.tolist(), comparator_counts.tolist()],
+                keys=["target", "comparator"],
+                title="Candidate Reward Distribution",
+                xname="reward",
+            )
+        except Exception:
+            pass
+        return metrics
+
+    def _reward_distribution_counts(
+        self,
+        rewards: Sequence[float],
+        bin_edges: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        if not rewards:
+            return np.zeros(len(bin_edges) - 1, dtype=int), bin_edges
+        clipped_rewards = np.clip(
+            np.asarray(rewards, dtype=float),
+            _REWARD_DISTRIBUTION_MIN,
+            _REWARD_DISTRIBUTION_MAX,
+        )
+        return np.histogram(clipped_rewards, bins=bin_edges)
 
     def _sample_uniform_replay_preferences(
         self,
@@ -879,6 +975,10 @@ class MADPOIterTrainer(MADPOTrainer):
             [prompts[0]],
             comparator_completions,
             batch_items=[batch_item],
+        )
+        self._record_iteration_reward_distribution(
+            target_rewards=current_raw_rewards,
+            comparator_rewards=comparator_raw_rewards,
         )
         selected_pairs = self._select_policy_comparison_pairs(
             current_rewards,
@@ -1523,6 +1623,7 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
         for iteration_idx in range(int(self.args.num_iterations)):
             self._reward_model_active = False
             self._evaluating_with_task_reward = False
+            self._reset_iteration_reward_distribution()
             preference_pairs = self._build_preference_dataset(
                 iteration_idx=iteration_idx,
                 **kwargs,
