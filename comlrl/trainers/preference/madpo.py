@@ -30,6 +30,7 @@ class PreferencePair:
     winner_reward: float
     loser_reward: float
     candidate_reward_mean: float
+    raw_rewards: Optional[List[float]] = None
 
 
 @dataclass
@@ -60,9 +61,19 @@ class MADPOConfig(MAGRPOConfig):
         if self.environment_steps_per_pair < 1:
             raise ValueError("environment_steps_per_pair must be >= 1.")
         mode = str(self.pair_selection or "reward_gap").strip().lower()
-        if mode not in {"reward_gap", "all", "random"}:
-            raise ValueError("pair_selection must be one of: reward_gap, all, random.")
+        allowed_modes = self._allowed_pair_selection_modes()
+        if mode not in allowed_modes:
+            raise ValueError(
+                "pair_selection must be one of: " f"{', '.join(allowed_modes)}."
+            )
+        if mode == "all" and self.preference_pairs_per_sample is not None:
+            raise ValueError(
+                "preference_pairs_per_sample must be null when " "pair_selection='all'."
+            )
         self.pair_selection = mode
+
+    def _allowed_pair_selection_modes(self) -> Tuple[str, ...]:
+        return ("reward_gap", "all", "random")
 
 
 class MADPOTrainer(MAGRPOTrainer):
@@ -238,7 +249,7 @@ class MADPOTrainer(MAGRPOTrainer):
             candidate_pairs.sort(key=lambda item: item[0], reverse=True)
 
         limit = self.args.preference_pairs_per_sample
-        if limit is not None:
+        if mode != "all" and limit is not None:
             candidate_pairs = candidate_pairs[: int(limit)]
         return [(winner_idx, loser_idx) for _, winner_idx, loser_idx in candidate_pairs]
 
@@ -246,15 +257,9 @@ class MADPOTrainer(MAGRPOTrainer):
         self, batch: List[PreferencePair]
     ) -> Dict[str, float]:
         if not batch:
-            return {"dpo/loss": 0.0, "dpo/accuracy": 0.0}
+            return {}
 
         detached_deltas = self._detached_agent_deltas(batch)
-        joint_deltas = [sum(row) for row in detached_deltas]
-        beta = float(self.args.dpo_beta)
-        logged_losses = [
-            -F.logsigmoid(torch.tensor(beta * delta)).item() for delta in joint_deltas
-        ]
-        logged_accuracy = float(np.mean([delta > 0 for delta in joint_deltas]))
 
         for agent_idx in range(self.num_agents):
             self.optimizers[agent_idx].zero_grad()
@@ -273,15 +278,6 @@ class MADPOTrainer(MAGRPOTrainer):
             "turn_1/expected_return": float(
                 np.mean([pair.candidate_reward_mean for pair in batch])
             ),
-            "dpo/loss": float(np.mean(logged_losses)) if logged_losses else 0.0,
-            "dpo/accuracy": logged_accuracy,
-            "dpo/joint_delta_mean": (
-                float(np.mean(joint_deltas)) if joint_deltas else 0.0
-            ),
-            "dpo/reward_gap_mean": float(
-                np.mean([pair.winner_reward - pair.loser_reward for pair in batch])
-            ),
-            "dpo/num_pairs": float(len(batch)),
         }
 
     def _detached_agent_deltas(
