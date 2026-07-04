@@ -505,6 +505,16 @@ class MADPOIterTrainer(MADPOTrainer):
                 len(comparator_rewards)
             ),
         }
+        line_image = self._reward_distribution_line_image(
+            title="Candidate Reward Distribution",
+            edges=edges,
+            series=[
+                ("target", target_counts),
+                ("comparator", comparator_counts),
+            ],
+        )
+        if line_image is not None:
+            metrics[f"{histogram_prefix}/line_plot"] = line_image
         if target_rewards:
             metrics["iter/reward_distribution/target_mean"] = float(
                 np.mean(target_rewards)
@@ -523,10 +533,10 @@ class MADPOIterTrainer(MADPOTrainer):
         if not selected_pairs:
             return {}
 
-        winner_rewards, loser_rewards = self._selected_pair_reward_values(
+        target_rewards, comparator_rewards = self._selected_pair_reward_values(
             selected_pairs
         )
-        if not winner_rewards and not loser_rewards:
+        if not target_rewards and not comparator_rewards:
             return {}
 
         bin_edges = np.linspace(
@@ -534,12 +544,12 @@ class MADPOIterTrainer(MADPOTrainer):
             _REWARD_DISTRIBUTION_MAX,
             _REWARD_DISTRIBUTION_BINS + 1,
         )
-        winner_counts, edges = self._reward_distribution_counts(
-            winner_rewards,
+        target_counts, edges = self._reward_distribution_counts(
+            target_rewards,
             bin_edges,
         )
-        loser_counts, _ = self._reward_distribution_counts(
-            loser_rewards,
+        comparator_counts, _ = self._reward_distribution_counts(
+            comparator_rewards,
             bin_edges,
         )
         iteration = int(iteration_idx) + 1
@@ -549,27 +559,37 @@ class MADPOIterTrainer(MADPOTrainer):
 
         metrics: Dict[str, Any] = {
             "iter/selected_reward_distribution/current_iteration": float(iteration),
-            f"{histogram_prefix}/winner_histogram": wandb.Histogram(
-                np_histogram=(winner_counts, edges)
+            f"{histogram_prefix}/target_histogram": wandb.Histogram(
+                np_histogram=(target_counts, edges)
             ),
-            f"{histogram_prefix}/loser_histogram": wandb.Histogram(
-                np_histogram=(loser_counts, edges)
+            f"{histogram_prefix}/comparator_histogram": wandb.Histogram(
+                np_histogram=(comparator_counts, edges)
             ),
             "iter/selected_reward_distribution/pair_count": float(len(selected_pairs)),
-            "iter/selected_reward_distribution/winner_sample_count": float(
-                len(winner_rewards)
+            "iter/selected_reward_distribution/target_sample_count": float(
+                len(target_rewards)
             ),
-            "iter/selected_reward_distribution/loser_sample_count": float(
-                len(loser_rewards)
+            "iter/selected_reward_distribution/comparator_sample_count": float(
+                len(comparator_rewards)
             ),
         }
-        if winner_rewards:
-            metrics["iter/selected_reward_distribution/winner_mean"] = float(
-                np.mean(winner_rewards)
+        line_image = self._reward_distribution_line_image(
+            title="Selected Preference Reward Distribution",
+            edges=edges,
+            series=[
+                ("target", target_counts),
+                ("comparator", comparator_counts),
+            ],
+        )
+        if line_image is not None:
+            metrics[f"{histogram_prefix}/line_plot"] = line_image
+        if target_rewards:
+            metrics["iter/selected_reward_distribution/target_mean"] = float(
+                np.mean(target_rewards)
             )
-        if loser_rewards:
-            metrics["iter/selected_reward_distribution/loser_mean"] = float(
-                np.mean(loser_rewards)
+        if comparator_rewards:
+            metrics["iter/selected_reward_distribution/comparator_mean"] = float(
+                np.mean(comparator_rewards)
             )
         return metrics
 
@@ -577,17 +597,136 @@ class MADPOIterTrainer(MADPOTrainer):
         self,
         selected_pairs: Sequence[PreferencePair],
     ) -> Tuple[List[float], List[float]]:
-        winner_rewards: List[float] = []
-        loser_rewards: List[float] = []
+        target_rewards: List[float] = []
+        comparator_rewards: List[float] = []
         for pair in selected_pairs:
-            raw_rewards = pair.raw_rewards or []
-            if len(raw_rewards) >= 2:
-                winner_rewards.extend(self._finite_floats([raw_rewards[0]]))
-                loser_rewards.extend(self._finite_floats([raw_rewards[1]]))
+            if pair.target_raw_reward is None or pair.comparator_raw_reward is None:
                 continue
-            winner_rewards.extend(self._finite_floats([pair.winner_reward]))
-            loser_rewards.extend(self._finite_floats([pair.loser_reward]))
-        return winner_rewards, loser_rewards
+            target_rewards.extend(self._finite_floats([pair.target_raw_reward]))
+            comparator_rewards.extend(self._finite_floats([pair.comparator_raw_reward]))
+        return target_rewards, comparator_rewards
+
+    @staticmethod
+    def _reward_distribution_line_image(
+        *,
+        title: str,
+        edges: np.ndarray,
+        series: Sequence[Tuple[str, np.ndarray]],
+    ) -> Optional[Any]:
+        if not series:
+            return None
+
+        xs = ((edges[:-1] + edges[1:]) / 2.0).tolist()
+        max_count = max(
+            [float(np.max(counts)) for _, counts in series if len(counts) > 0] or [1.0]
+        )
+        max_count = max(max_count, 1.0)
+
+        width, height = 720, 480
+        left, right = 70, 30
+        top, bottom = 30, 60
+        plot_left = left
+        plot_right = width - right
+        plot_top = top
+        plot_bottom = height - bottom
+
+        palette = {
+            "target": "#e87030",
+            "comparator": "#6e6e6e",
+        }
+
+        elements: List[str] = [
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
+            f'height="{height}" viewBox="0 0 {width} {height}">',
+            '<rect width="100%" height="100%" fill="white"/>',
+            (
+                f'<text x="{plot_left}" y="22" font-size="20" '
+                f'font-family="Arial, sans-serif" font-weight="700">'
+                f"{MADPOIterTrainer._xml_escape(title)}</text>"
+            ),
+        ]
+        for x_grid in np.linspace(plot_left, plot_right, 5):
+            x_pos = int(round(x_grid))
+            elements.append(
+                f'<line x1="{x_pos}" y1="{plot_top}" x2="{x_pos}" '
+                f'y2="{plot_bottom}" stroke="#dddddd" stroke-width="1"/>'
+            )
+        for y_grid in np.linspace(plot_top, plot_bottom, 5):
+            y_pos = int(round(y_grid))
+            elements.append(
+                f'<line x1="{plot_left}" y1="{y_pos}" x2="{plot_right}" '
+                f'y2="{y_pos}" stroke="#dddddd" stroke-width="1"/>'
+            )
+        elements.append(
+            f'<line x1="{plot_left}" y1="{plot_bottom}" x2="{plot_right}" '
+            f'y2="{plot_bottom}" stroke="#505050" stroke-width="2"/>'
+        )
+        elements.append(
+            f'<line x1="{plot_left}" y1="{plot_top}" x2="{plot_left}" '
+            f'y2="{plot_bottom}" stroke="#505050" stroke-width="2"/>'
+        )
+        elements.append(
+            f'<text x="{(plot_left + plot_right) / 2:.1f}" y="{height - 18}" '
+            'font-size="16" font-family="Arial, sans-serif" '
+            'text-anchor="middle">reward</text>'
+        )
+        elements.append(
+            f'<text x="20" y="{(plot_top + plot_bottom) / 2:.1f}" '
+            'font-size="16" font-family="Arial, sans-serif" '
+            'text-anchor="middle" transform="rotate(-90 20 '
+            f'{(plot_top + plot_bottom) / 2:.1f})">count</text>'
+        )
+
+        legend_y = plot_top + 18
+        for label, counts in series:
+            if len(counts) == 0:
+                continue
+            color = palette.get(label, "#2878d6")
+            points: List[Tuple[int, int]] = []
+            for reward_value, count in zip(xs, counts.tolist()):
+                x_pos = plot_left + (
+                    (float(reward_value) - float(edges[0]))
+                    / max(float(edges[-1] - edges[0]), 1e-12)
+                ) * (plot_right - plot_left)
+                y_pos = plot_bottom - (float(count) / max_count) * (
+                    plot_bottom - plot_top
+                )
+                points.append((int(round(x_pos)), int(round(y_pos))))
+
+            point_string = " ".join(f"{x_pos},{y_pos}" for x_pos, y_pos in points)
+            elements.append(
+                f'<polyline points="{point_string}" fill="none" stroke="{color}" '
+                'stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>'
+            )
+            for x_pos, y_pos in points:
+                elements.append(
+                    f'<circle cx="{x_pos}" cy="{y_pos}" r="3.5" fill="{color}"/>'
+                )
+
+            elements.append(
+                f'<line x1="{plot_right - 130}" y1="{legend_y}" '
+                f'x2="{plot_right - 95}" y2="{legend_y}" stroke="{color}" '
+                'stroke-width="3" stroke-linecap="round"/>'
+            )
+            elements.append(
+                f'<text x="{plot_right - 88}" y="{legend_y + 5}" '
+                'font-size="14" font-family="Arial, sans-serif">'
+                f"{MADPOIterTrainer._xml_escape(label)}</text>"
+            )
+            legend_y += 22
+
+        elements.append("</svg>")
+        return wandb.Html("".join(elements))
+
+    @staticmethod
+    def _xml_escape(value: str) -> str:
+        return (
+            str(value)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
 
     def _reward_distribution_counts(
         self,
@@ -737,6 +876,16 @@ class MADPOIterTrainer(MADPOTrainer):
             "loser_reward": float(pair.loser_reward),
             "candidate_reward_mean": float(pair.candidate_reward_mean),
             "raw_rewards": [float(value) for value in (pair.raw_rewards or [])],
+            "target_raw_reward": (
+                float(pair.target_raw_reward)
+                if pair.target_raw_reward is not None
+                else None
+            ),
+            "comparator_raw_reward": (
+                float(pair.comparator_raw_reward)
+                if pair.comparator_raw_reward is not None
+                else None
+            ),
         }
 
     def _load_replay_shard(
@@ -812,6 +961,16 @@ class MADPOIterTrainer(MADPOTrainer):
                     else []
                 )
             ],
+            target_raw_reward=(
+                float(record["target_raw_reward"])
+                if record.get("target_raw_reward") is not None
+                else None
+            ),
+            comparator_raw_reward=(
+                float(record["comparator_raw_reward"])
+                if record.get("comparator_raw_reward") is not None
+                else None
+            ),
         )
 
     def _text_list(self, value: Any) -> List[str]:
@@ -1088,6 +1247,10 @@ class MADPOIterTrainer(MADPOTrainer):
                 current_raw_rewards,
                 comparator_raw_rewards,
             )
+            target_idx = winner_idx if winner_source == "current" else loser_idx
+            comparator_idx = winner_idx if winner_source == "comparator" else loser_idx
+            target_raw_reward = current_raw_rewards[target_idx]
+            comparator_raw_reward = comparator_raw_rewards[comparator_idx]
 
             if winner_source == "current" and loser_source == "current":
                 agent_tensors = [
@@ -1121,6 +1284,8 @@ class MADPOIterTrainer(MADPOTrainer):
                         float(winner_raw_reward),
                         float(loser_raw_reward),
                     ],
+                    target_raw_reward=float(target_raw_reward),
+                    comparator_raw_reward=float(comparator_raw_reward),
                 )
             )
 
