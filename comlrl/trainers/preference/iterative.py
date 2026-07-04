@@ -259,7 +259,6 @@ class MADPOIterConfig(MADPOConfig):
     preference_replay_sample_size: Optional[int] = None
     preference_replay_dir: Optional[str] = None
     log_reward_distribution: bool = False
-    log_comparator_generations: bool = False
     policy_checkpoint_dir: Optional[str] = None
     comparator_policy: str = "current"
     comparator_generation_mode: str = "decentralized"
@@ -306,7 +305,6 @@ class MARLHFIterConfig(MARLHFConfig):
     preference_replay_sample_size: Optional[int] = None
     preference_replay_dir: Optional[str] = None
     log_reward_distribution: bool = False
-    log_comparator_generations: bool = False
     preference_scoring_reward: str = "task"
     policy_checkpoint_dir: Optional[str] = None
     comparator_policy: str = "current"
@@ -1187,62 +1185,6 @@ class MADPOIterTrainer(MADPOTrainer):
         self._reward_distribution_dir_path = path
         return path
 
-    def _comparator_generation_dir(self) -> str:
-        cached = getattr(self, "_comparator_generation_dir_path", None)
-        if cached:
-            return cached
-
-        path = None
-        if isinstance(self.wandb_config, dict):
-            output_dir = self.wandb_config.get("output_dir")
-            if output_dir:
-                path = os.path.join(str(output_dir), "comparator_generations")
-            else:
-                sections = self.wandb_config.get("config_sections") or {}
-                output_section = (
-                    sections.get("output") if isinstance(sections, dict) else {}
-                )
-                base_dir = None
-                if isinstance(output_section, dict):
-                    base_dir = output_section.get("base_dir")
-                base_dir = base_dir or self.wandb_config.get("dir")
-                if base_dir:
-                    job_id = os.environ.get("SLURM_JOB_ID")
-                    path = (
-                        os.path.join(
-                            str(base_dir), f"job_{job_id}", "comparator_generations"
-                        )
-                        if job_id
-                        else os.path.join(str(base_dir), "comparator_generations")
-                    )
-        if not path:
-            path = os.path.join(os.getcwd(), "comparator_generations")
-
-        path = os.path.abspath(str(path))
-        os.makedirs(path, exist_ok=True)
-        self._comparator_generation_dir_path = path
-        return path
-
-    def _write_comparator_generation_record(
-        self,
-        iteration_idx: int,
-        record: Dict[str, Any],
-    ) -> None:
-        if not getattr(self.args, "log_comparator_generations", False):
-            return
-        path = os.path.join(
-            self._comparator_generation_dir(),
-            f"iteration_{iteration_idx + 1:04d}.jsonl",
-        )
-        payload = {
-            "iteration": int(iteration_idx + 1),
-            "comparator_policy": self.args.comparator_policy,
-            "comparator_generation_mode": self.args.comparator_generation_mode,
-            **record,
-        }
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(self._jsonable(payload), ensure_ascii=False) + "\n")
-
     def _write_iteration_preference_pairs(
         self,
         iteration_idx: int,
@@ -1763,54 +1705,30 @@ class MADPOIterTrainer(MADPOTrainer):
             )
 
         if self.args.comparator_policy == "api":
-            outputs = self._generate_api_outputs_for_item(
+            return self._generate_api_outputs_for_item(
                 batch_item,
                 num_candidates=num_candidates,
             )
-            self._log_decentralized_comparator_outputs(
-                outputs,
-                batch_item=batch_item,
-                iteration_idx=iteration_idx,
-            )
-            return outputs
         if self.args.comparator_policy == "current":
-            outputs = self._generate_policy_outputs_for_item(
+            return self._generate_policy_outputs_for_item(
                 self.agents,
                 batch_item,
                 num_candidates=num_candidates,
                 **kwargs,
             )
-            self._log_decentralized_comparator_outputs(
-                outputs,
-                batch_item=batch_item,
-                iteration_idx=iteration_idx,
-            )
-            return outputs
         if self.args.comparator_policy == "history":
-            outputs = self._generate_history_policy_outputs_for_item(
+            return self._generate_history_policy_outputs_for_item(
                 batch_item,
                 iteration_idx=iteration_idx,
                 num_candidates=num_candidates,
                 **kwargs,
             )
-            self._log_decentralized_comparator_outputs(
-                outputs,
-                batch_item=batch_item,
-                iteration_idx=iteration_idx,
-            )
-            return outputs
-        outputs = self._generate_policy_outputs_for_item(
+        return self._generate_policy_outputs_for_item(
             self._get_comparator_agents(),
             batch_item,
             num_candidates=num_candidates,
             **kwargs,
         )
-        self._log_decentralized_comparator_outputs(
-            outputs,
-            batch_item=batch_item,
-            iteration_idx=iteration_idx,
-        )
-        return outputs
 
     def _generate_policy_outputs_for_item(
         self,
@@ -1852,56 +1770,55 @@ class MADPOIterTrainer(MADPOTrainer):
                 completions,
                 batch_item=batch_item,
                 prompt=prompt,
-                iteration_idx=iteration_idx,
             )
         if self.args.comparator_policy == "current":
-            return self._generate_centralized_policy_outputs_for_item(
-                self.agents,
+            return self._generate_centralized_policy_output_for_agent(
+                self.agents[self._centralized_comparator_agent_index()],
                 batch_item,
                 prompt=prompt,
-                iteration_idx=iteration_idx,
                 num_candidates=num_candidates,
                 **kwargs,
             )
         if self.args.comparator_policy == "history":
             checkpoint_dir = self._history_policy_checkpoint_path(iteration_idx)
-            comparator_agents = self._load_policy_checkpoint_agents(checkpoint_dir)
+            agent_idx = self._centralized_comparator_agent_index()
+            comparator_agent = self._load_single_policy_checkpoint_agent(
+                checkpoint_dir,
+                agent_idx,
+            )
             try:
-                return self._generate_centralized_policy_outputs_for_item(
-                    comparator_agents,
+                return self._generate_centralized_policy_output_for_agent(
+                    comparator_agent,
                     batch_item,
                     prompt=prompt,
-                    iteration_idx=iteration_idx,
                     num_candidates=num_candidates,
                     **kwargs,
                 )
             finally:
-                del comparator_agents
+                del comparator_agent
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-        return self._generate_centralized_policy_outputs_for_item(
-            self._get_comparator_agents(),
+        return self._generate_centralized_policy_output_for_agent(
+            self._get_centralized_comparator_agent(),
             batch_item,
             prompt=prompt,
-            iteration_idx=iteration_idx,
             num_candidates=num_candidates,
             **kwargs,
         )
 
-    def _generate_centralized_policy_outputs_for_item(
+    def _generate_centralized_policy_output_for_agent(
         self,
-        policy_agents: Sequence[Any],
+        policy_agent: Any,
         batch_item: Dict[str, Any],
         *,
         prompt: str,
-        iteration_idx: int,
         num_candidates: int,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         agent_idx = self._centralized_comparator_agent_index()
         generation_output = self._generate_completions(
-            policy_agents[agent_idx],
+            policy_agent,
             [batch_item],
             agent_idx=agent_idx,
             num_return_sequences=num_candidates,
@@ -1914,7 +1831,6 @@ class MADPOIterTrainer(MADPOTrainer):
             completions,
             batch_item=batch_item,
             prompt=prompt,
-            iteration_idx=iteration_idx,
         )
 
     def _centralized_comparator_agent_index(self) -> int:
@@ -1981,61 +1897,20 @@ def aux(...):
         *,
         batch_item: Dict[str, Any],
         prompt: str,
-        iteration_idx: int,
     ) -> List[Dict[str, Any]]:
         auxiliary_completions: List[str] = []
         main_completions: List[str] = []
-        for candidate_idx, completion in enumerate(completions):
+        for completion in completions:
             raw_completion = str(completion)
-            try:
-                auxiliary, main = self._parse_centralized_comparator_completion(
-                    raw_completion,
-                    batch_item=batch_item,
-                )
-            except Exception as exc:
-                self._write_comparator_generation_record(
-                    iteration_idx,
-                    {
-                        "candidate_index": int(candidate_idx),
-                        "centralized_agent_index": (
-                            self._centralized_comparator_agent_index()
-                        ),
-                        "batch_item": self._jsonable(batch_item),
-                        "prompt": prompt,
-                        "raw_completion": raw_completion,
-                        "parsed_auxiliary": None,
-                        "parsed_main": None,
-                        "parse_ok": False,
-                        "parse_error": str(exc),
-                    },
-                )
-                continue
+            auxiliary, main = self._parse_centralized_comparator_completion(
+                raw_completion,
+                batch_item=batch_item,
+            )
             auxiliary_completions.append(auxiliary)
             main_completions.append(main)
-            parse_warning = self._centralized_parse_warning(auxiliary, main)
-            self._write_comparator_generation_record(
-                iteration_idx,
-                {
-                    "candidate_index": int(candidate_idx),
-                    "centralized_agent_index": (
-                        self._centralized_comparator_agent_index()
-                    ),
-                    "batch_item": self._jsonable(batch_item),
-                    "prompt": prompt,
-                    "raw_completion": raw_completion,
-                    "parsed_auxiliary": auxiliary,
-                    "parsed_main": main,
-                    "parse_ok": True,
-                    "parse_error": None,
-                    "parse_warning": parse_warning,
-                },
-            )
 
         if not auxiliary_completions:
-            raise ValueError(
-                "Centralized comparator produced no parseable candidates. See "
-                "comparator_generations JSONL for raw completions."
-            )
+            raise ValueError("Centralized comparator produced no candidates.")
 
         return [
             {
@@ -2113,17 +1988,6 @@ def aux(...):
             return partial_auxiliary or "", partial_main or ""
 
         return "", ""
-
-    @staticmethod
-    def _centralized_parse_warning(auxiliary: str, main: str) -> Optional[str]:
-        missing = []
-        if not auxiliary.strip():
-            missing.append("auxiliary")
-        if not main.strip():
-            missing.append("main")
-        if not missing:
-            return None
-        return "missing_" + "_and_".join(missing)
 
     @staticmethod
     def _extract_tagged_section(text: str, tag: str) -> Optional[str]:
@@ -2280,40 +2144,6 @@ def aux(...):
         if fence_match:
             value = fence_match.group(1).strip()
         return value
-
-    def _log_decentralized_comparator_outputs(
-        self,
-        outputs: Sequence[Dict[str, Any]],
-        *,
-        batch_item: Dict[str, Any],
-        iteration_idx: int,
-    ) -> None:
-        if not getattr(self.args, "log_comparator_generations", False):
-            return
-        for agent_idx, output in enumerate(outputs):
-            prompts = output.get("prompts") if isinstance(output, dict) else None
-            prompt = prompts[0] if isinstance(prompts, list) and prompts else None
-            completions = (
-                output.get("completions") if isinstance(output, dict) else None
-            )
-            candidate_completions = (
-                completions[0] if isinstance(completions, list) and completions else []
-            )
-            for candidate_idx, completion in enumerate(candidate_completions):
-                self._write_comparator_generation_record(
-                    iteration_idx,
-                    {
-                        "agent_idx": int(agent_idx),
-                        "candidate_index": int(candidate_idx),
-                        "batch_item": self._jsonable(batch_item),
-                        "prompt": prompt,
-                        "raw_completion": str(completion),
-                        "parsed_auxiliary": None,
-                        "parsed_main": None,
-                        "parse_ok": True,
-                        "parse_error": None,
-                    },
-                )
 
     def _generate_history_policy_outputs_for_item(
         self,
@@ -2703,6 +2533,39 @@ def aux(...):
             self._comparator_agents = self._load_comparator_agents()
         return self._comparator_agents
 
+    def _get_centralized_comparator_agent(self) -> Any:
+        if self.args.comparator_policy == "current":
+            return self.agents[self._centralized_comparator_agent_index()]
+        if self.args.comparator_policy == "history":
+            raise ValueError("History comparator agents must be loaded per iteration.")
+        if getattr(self, "_centralized_comparator_agent", None) is None:
+            source = self._centralized_comparator_source()
+            self._centralized_comparator_agent = self._load_single_frozen_policy_agent(
+                source,
+                self._centralized_comparator_agent_index(),
+            )
+        return self._centralized_comparator_agent
+
+    def _centralized_comparator_source(self) -> Any:
+        if self.args.comparator_agents is not None:
+            sources = self.args.comparator_agents
+            if isinstance(sources, (str, bytes)) or not isinstance(sources, Sequence):
+                raise ValueError("comparator_agents must be a non-empty sequence.")
+            if len(sources) == 1:
+                return list(sources)[0]
+            if len(sources) == self.num_agents:
+                return list(sources)[self._centralized_comparator_agent_index()]
+            raise ValueError(
+                "comparator_agents length must be 1 or num_agents when "
+                "comparator_generation_mode='centralized'."
+            )
+        if self.args.comparator_model_name is None:
+            raise ValueError(
+                "comparator_model_name or comparator_agents is required when "
+                "comparator_policy='model'."
+            )
+        return self.args.comparator_model_name
+
     def _load_comparator_agents(self) -> List[Any]:
         comparator_sources, _ = resolve_model_sources(
             kind="comparator_agents",
@@ -2727,6 +2590,19 @@ def aux(...):
             )
         return self._load_frozen_policy_agents(checkpoint_sources)
 
+    def _load_single_policy_checkpoint_agent(
+        self,
+        checkpoint_dir: str,
+        agent_idx: int,
+    ) -> Any:
+        checkpoint_source = os.path.join(checkpoint_dir, f"agent_{agent_idx}")
+        if not os.path.isdir(checkpoint_source):
+            raise ValueError(
+                "Missing comparator history checkpoint agent directory: "
+                f"{checkpoint_source}."
+            )
+        return self._load_single_frozen_policy_agent(checkpoint_source, agent_idx)
+
     def _load_frozen_policy_agents(self, sources: Sequence[Any]) -> List[Any]:
         comparator_devices = self._resolve_comparator_devices()
         model_kwargs = self._comparator_model_kwargs()
@@ -2746,6 +2622,21 @@ def aux(...):
             apply_tokenizer_specials(self.tokenizers[agent_idx], [comparator_agent])
 
         return comparator_agents
+
+    def _load_single_frozen_policy_agent(self, source: Any, agent_idx: int) -> Any:
+        model_kwargs = self._comparator_model_kwargs()
+        comparator_agent = (
+            AutoModelForCausalLM.from_pretrained(source, **model_kwargs)
+            if isinstance(source, str)
+            else source
+        )
+        comparator_device = self._resolve_comparator_devices()[agent_idx]
+        comparator_agent.to(comparator_device)
+        comparator_agent.eval()
+        for param in comparator_agent.parameters():
+            param.requires_grad = False
+        apply_tokenizer_specials(self.tokenizers[agent_idx], [comparator_agent])
+        return comparator_agent
 
     def _resolve_comparator_devices(self) -> List[torch.device]:
         return DeviceScheduler.resolve_devices(
