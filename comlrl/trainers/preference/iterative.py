@@ -1927,6 +1927,7 @@ class MADPOIterTrainer(MADPOTrainer):
             )
         auxiliary_prompt = self.formatters[0](batch_item)
         main_prompt = self.formatters[1](batch_item)
+        entry_signature = self._centralized_main_signature(batch_item)
         return f"""You are acting as one centralized coordinator for two code-generation agents.
 
 Your job is to produce the exact outputs that two decentralized agents would submit:
@@ -1942,6 +1943,7 @@ IMPORTANT INSTRUCTIONS:
 - Return exactly two complete code snippets: one for Auxiliary and one for Main.
 - The Auxiliary snippet must define the helper function aux(...).
 - The Main snippet must define only the required main function from the problem.
+- Do not copy placeholders such as required_function, ..., result, or pass.
 - Do not include explanations, examples, tests, markdown fences, or extra text.
 - Use the exact section tags below so the parser can split the two outputs.
 
@@ -1952,11 +1954,26 @@ def aux(...):
 </auxiliary>
 
 <main>
-def required_function(...):
+{entry_signature}:
     # your main code here
     return result
 </main>
 """
+
+    @staticmethod
+    def _centralized_main_signature(batch_item: Dict[str, Any]) -> str:
+        entry_point = str(batch_item.get("entry_point") or "").strip()
+        prompt = str(batch_item.get("prompt") or "")
+        if entry_point:
+            pattern = rf"def\s+{re.escape(entry_point)}\s*\(([^)]*)\)"
+            match = re.search(pattern, prompt)
+            if match:
+                return f"def {entry_point}({match.group(1).strip()})"
+            return f"def {entry_point}(...)"
+        match = re.search(r"def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)", prompt)
+        if match:
+            return f"def {match.group(1)}({match.group(2).strip()})"
+        return "def main(...)"
 
     def _split_centralized_comparator_outputs(
         self,
@@ -1992,9 +2009,10 @@ def required_function(...):
                         "parse_error": str(exc),
                     },
                 )
-                raise
+                continue
             auxiliary_completions.append(auxiliary)
             main_completions.append(main)
+            parse_warning = self._centralized_parse_warning(auxiliary, main)
             self._write_comparator_generation_record(
                 iteration_idx,
                 {
@@ -2009,7 +2027,14 @@ def required_function(...):
                     "parsed_main": main,
                     "parse_ok": True,
                     "parse_error": None,
+                    "parse_warning": parse_warning,
                 },
+            )
+
+        if not auxiliary_completions:
+            raise ValueError(
+                "Centralized comparator produced no parseable candidates. See "
+                "comparator_generations JSONL for raw completions."
             )
 
         return [
@@ -2031,49 +2056,74 @@ def required_function(...):
         *,
         batch_item: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, str]:
+        partial_auxiliary: Optional[str] = None
+        partial_main: Optional[str] = None
+
+        def _remember(
+            auxiliary: Optional[str],
+            main: Optional[str],
+        ) -> Optional[Tuple[str, str]]:
+            nonlocal partial_auxiliary, partial_main
+            clean_auxiliary = (
+                self._clean_centralized_section(auxiliary)
+                if auxiliary is not None
+                else None
+            )
+            clean_main = (
+                self._clean_centralized_section(main) if main is not None else None
+            )
+            if clean_auxiliary is not None and partial_auxiliary is None:
+                partial_auxiliary = clean_auxiliary
+            if clean_main is not None and partial_main is None:
+                partial_main = clean_main
+            if clean_auxiliary is not None and clean_main is not None:
+                return clean_auxiliary, clean_main
+            return None
+
         auxiliary = self._extract_tagged_section(text, "auxiliary")
         main = self._extract_tagged_section(text, "main")
-        if auxiliary is not None and main is not None:
-            return (
-                self._clean_centralized_section(auxiliary),
-                self._clean_centralized_section(main),
-            )
+        result = _remember(auxiliary, main)
+        if result is not None:
+            return result
 
         auxiliary, main = self._extract_labeled_centralized_sections(text)
-        if auxiliary is not None and main is not None:
-            return (
-                self._clean_centralized_section(auxiliary),
-                self._clean_centralized_section(main),
-            )
+        result = _remember(auxiliary, main)
+        if result is not None:
+            return result
 
         auxiliary, main = self._extract_json_centralized_sections(text)
-        if auxiliary is not None and main is not None:
-            return (
-                self._clean_centralized_section(auxiliary),
-                self._clean_centralized_section(main),
-            )
+        result = _remember(auxiliary, main)
+        if result is not None:
+            return result
 
         auxiliary, main = self._extract_fenced_code_centralized_sections(text)
-        if auxiliary is not None and main is not None:
-            return (
-                self._clean_centralized_section(auxiliary),
-                self._clean_centralized_section(main),
-            )
+        result = _remember(auxiliary, main)
+        if result is not None:
+            return result
 
         auxiliary, main = self._extract_function_centralized_sections(
             text,
             batch_item=batch_item,
         )
-        if auxiliary is None or main is None:
-            raise ValueError(
-                "Centralized comparator output could not be parsed. Expected "
-                "<auxiliary>...</auxiliary>, Auxiliary/Main sections, JSON, "
-                "two code blocks, or def aux plus the task entry function."
-            )
-        return (
-            self._clean_centralized_section(auxiliary),
-            self._clean_centralized_section(main),
-        )
+        result = _remember(auxiliary, main)
+        if result is not None:
+            return result
+
+        if partial_auxiliary is not None or partial_main is not None:
+            return partial_auxiliary or "", partial_main or ""
+
+        return "", ""
+
+    @staticmethod
+    def _centralized_parse_warning(auxiliary: str, main: str) -> Optional[str]:
+        missing = []
+        if not auxiliary.strip():
+            missing.append("auxiliary")
+        if not main.strip():
+            missing.append("main")
+        if not missing:
+            return None
+        return "missing_" + "_and_".join(missing)
 
     @staticmethod
     def _extract_tagged_section(text: str, tag: str) -> Optional[str]:
@@ -2096,6 +2146,10 @@ def required_function(...):
             text,
         )
         if auxiliary_label is None or main_label is None:
+            if auxiliary_label is not None:
+                return text[auxiliary_label.end() :], None
+            if main_label is not None:
+                return None, text[main_label.end() :]
             return None, None
 
         if auxiliary_label.start() < main_label.start():
@@ -2134,8 +2188,11 @@ def required_function(...):
             if auxiliary is None:
                 auxiliary = parsed.get("aux")
             main = parsed.get("main")
-            if auxiliary is not None and main is not None:
-                return str(auxiliary), str(main)
+            if auxiliary is not None or main is not None:
+                return (
+                    str(auxiliary) if auxiliary is not None else None,
+                    str(main) if main is not None else None,
+                )
         return None, None
 
     @staticmethod
