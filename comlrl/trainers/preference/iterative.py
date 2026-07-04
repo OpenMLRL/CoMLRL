@@ -1972,7 +1972,8 @@ def required_function(...):
             raw_completion = str(completion)
             try:
                 auxiliary, main = self._parse_centralized_comparator_completion(
-                    raw_completion
+                    raw_completion,
+                    batch_item=batch_item,
                 )
             except Exception as exc:
                 self._write_comparator_generation_record(
@@ -2024,7 +2025,12 @@ def required_function(...):
             },
         ]
 
-    def _parse_centralized_comparator_completion(self, text: str) -> Tuple[str, str]:
+    def _parse_centralized_comparator_completion(
+        self,
+        text: str,
+        *,
+        batch_item: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, str]:
         auxiliary = self._extract_tagged_section(text, "auxiliary")
         main = self._extract_tagged_section(text, "main")
         if auxiliary is not None and main is not None:
@@ -2034,10 +2040,35 @@ def required_function(...):
             )
 
         auxiliary, main = self._extract_labeled_centralized_sections(text)
+        if auxiliary is not None and main is not None:
+            return (
+                self._clean_centralized_section(auxiliary),
+                self._clean_centralized_section(main),
+            )
+
+        auxiliary, main = self._extract_json_centralized_sections(text)
+        if auxiliary is not None and main is not None:
+            return (
+                self._clean_centralized_section(auxiliary),
+                self._clean_centralized_section(main),
+            )
+
+        auxiliary, main = self._extract_fenced_code_centralized_sections(text)
+        if auxiliary is not None and main is not None:
+            return (
+                self._clean_centralized_section(auxiliary),
+                self._clean_centralized_section(main),
+            )
+
+        auxiliary, main = self._extract_function_centralized_sections(
+            text,
+            batch_item=batch_item,
+        )
         if auxiliary is None or main is None:
             raise ValueError(
                 "Centralized comparator output could not be parsed. Expected "
-                "<auxiliary>...</auxiliary> and <main>...</main> sections."
+                "<auxiliary>...</auxiliary>, Auxiliary/Main sections, JSON, "
+                "two code blocks, or def aux plus the task entry function."
             )
         return (
             self._clean_centralized_section(auxiliary),
@@ -2074,6 +2105,114 @@ def required_function(...):
             main = text[main_label.end() : auxiliary_label.start()]
             auxiliary = text[auxiliary_label.end() :]
         return auxiliary, main
+
+    @staticmethod
+    def _extract_json_centralized_sections(
+        text: str,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        value = text.strip()
+        fence_match = re.fullmatch(
+            r"```(?:json)?\s*(.*?)```", value, flags=re.IGNORECASE | re.DOTALL
+        )
+        if fence_match:
+            value = fence_match.group(1).strip()
+
+        candidates = [value]
+        start = value.find("{")
+        end = value.rfind("}")
+        if start >= 0 and end > start:
+            candidates.append(value[start : end + 1])
+
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            auxiliary = parsed.get("auxiliary")
+            if auxiliary is None:
+                auxiliary = parsed.get("aux")
+            main = parsed.get("main")
+            if auxiliary is not None and main is not None:
+                return str(auxiliary), str(main)
+        return None, None
+
+    @staticmethod
+    def _extract_fenced_code_centralized_sections(
+        text: str,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        blocks = re.findall(
+            r"```(?:python)?\s*(.*?)```",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if len(blocks) >= 2:
+            return blocks[0], blocks[1]
+        return None, None
+
+    @classmethod
+    def _extract_function_centralized_sections(
+        cls,
+        text: str,
+        *,
+        batch_item: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        entry_point = None
+        if isinstance(batch_item, dict):
+            value = batch_item.get("entry_point")
+            if value is not None:
+                entry_point = str(value).strip() or None
+
+        auxiliary = cls._extract_python_function(text, "aux")
+        main = cls._extract_python_function(text, entry_point) if entry_point else None
+        if main is None:
+            for name in cls._python_function_names(text):
+                if name != "aux":
+                    main = cls._extract_python_function(text, name)
+                    break
+        return auxiliary, main
+
+    @staticmethod
+    def _python_function_names(text: str) -> List[str]:
+        return [
+            match.group(1)
+            for match in re.finditer(
+                r"(?m)^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                text,
+            )
+        ]
+
+    @staticmethod
+    def _extract_python_function(
+        text: str, function_name: Optional[str]
+    ) -> Optional[str]:
+        if not function_name:
+            return None
+        pattern = re.compile(rf"(?m)^([ \t]*)def\s+{re.escape(function_name)}\s*\(")
+        match = pattern.search(text)
+        if match is None:
+            return None
+
+        lines = text[match.start() :].splitlines()
+        if not lines:
+            return None
+        base_indent = len(lines[0]) - len(lines[0].lstrip(" \t"))
+        selected = [lines[0]]
+        for line in lines[1:]:
+            stripped = line.strip()
+            indent = len(line) - len(line.lstrip(" \t"))
+            if stripped and indent <= base_indent:
+                if re.match(r"(def|class)\s+", stripped):
+                    break
+                if re.match(r"<?/?(?:auxiliary|main)>?:?$", stripped, re.I):
+                    break
+                if re.match(
+                    r"(?:auxiliary|aux|main)\s*(?:code|output)?\s*:", stripped, re.I
+                ):
+                    break
+            selected.append(line)
+        return "\n".join(selected).strip()
 
     @staticmethod
     def _clean_centralized_section(text: str) -> str:
