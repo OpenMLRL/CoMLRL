@@ -5,6 +5,11 @@ weight: 3
 
 ---
 
+## Version 1.4.0
+
+- Add online preference-learning methods. ([#68](https://github.com/OpenMLRL/CoMLRL/pull/68)).
+- Add dataset drift logger.
+
 ## Version 1.3.9
 
 - Add offline preference-learning methods, MADPO, MARLHF, etc. ([#67](https://github.com/OpenMLRL/CoMLRL/pull/67)).
