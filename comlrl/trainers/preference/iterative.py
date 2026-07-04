@@ -90,6 +90,12 @@ def _validate_iterative_config(args: Any) -> None:
         if int(args.comparator_num_candidates) < 1:
             raise ValueError("comparator_num_candidates must be >= 1 or null.")
         args.comparator_num_candidates = int(args.comparator_num_candidates)
+    if getattr(args, "comparator_api_max_n_per_request", None) is not None:
+        if int(args.comparator_api_max_n_per_request) < 1:
+            raise ValueError("comparator_api_max_n_per_request must be >= 1 or null.")
+        args.comparator_api_max_n_per_request = int(
+            args.comparator_api_max_n_per_request
+        )
     if args.comparator_policy == "model":
         if args.comparator_model_name is None and args.comparator_agents is None:
             raise ValueError(
@@ -233,6 +239,7 @@ class MADPOIterConfig(MADPOConfig):
     comparator_api_url: Optional[str] = None
     comparator_api_format: str = "generic"
     comparator_api_model: Optional[str] = None
+    comparator_api_max_n_per_request: Optional[int] = None
     comparator_api_timeout: float = 120.0
     comparator_api_headers: Optional[Dict[str, str]] = None
     comparator_api_key: Optional[str] = None
@@ -277,6 +284,7 @@ class MARLHFIterConfig(MARLHFConfig):
     comparator_api_url: Optional[str] = None
     comparator_api_format: str = "generic"
     comparator_api_model: Optional[str] = None
+    comparator_api_max_n_per_request: Optional[int] = None
     comparator_api_timeout: float = 120.0
     comparator_api_headers: Optional[Dict[str, str]] = None
     comparator_api_key: Optional[str] = None
@@ -1745,7 +1753,11 @@ class MADPOIterTrainer(MADPOTrainer):
     ) -> List[str]:
         api_format = str(self.args.comparator_api_format or "generic").lower()
         if api_format in {"openai", "openai_chat", "chat"}:
-            payload = self._build_openai_chat_payload(prompt, num_candidates)
+            return self._call_openai_chat_comparator_api(
+                prompt=prompt,
+                num_candidates=num_candidates,
+                api_format=api_format,
+            )
         else:
             payload = self._build_generic_api_payload(
                 prompt=prompt,
@@ -1754,6 +1766,48 @@ class MADPOIterTrainer(MADPOTrainer):
                 num_candidates=num_candidates,
             )
 
+        response_data = self._send_comparator_api_request(payload)
+        return self._extract_api_completions(response_data, api_format=api_format)
+
+    def _call_openai_chat_comparator_api(
+        self,
+        *,
+        prompt: str,
+        num_candidates: int,
+        api_format: str,
+    ) -> List[str]:
+        max_n = self._comparator_api_max_n_per_request(num_candidates)
+        completions: List[str] = []
+        while len(completions) < num_candidates:
+            request_n = min(max_n, num_candidates - len(completions))
+            payload = self._build_openai_chat_payload(prompt, request_n)
+            response_data = self._send_comparator_api_request(payload)
+            batch_completions = self._extract_api_completions(
+                response_data,
+                api_format=api_format,
+            )
+            if not batch_completions:
+                raise ValueError(
+                    "Comparator API returned no completions for an OpenAI-format "
+                    f"request with n={request_n}."
+                )
+            completions.extend(batch_completions)
+        return completions[:num_candidates]
+
+    def _comparator_api_max_n_per_request(self, num_candidates: int) -> int:
+        configured = getattr(self.args, "comparator_api_max_n_per_request", None)
+        if configured is not None:
+            return min(max(int(configured), 1), int(num_candidates))
+        if self._is_deepseek_comparator_api():
+            return 1
+        return int(num_candidates)
+
+    def _is_deepseek_comparator_api(self) -> bool:
+        api_url = str(getattr(self.args, "comparator_api_url", "") or "").lower()
+        api_model = str(getattr(self.args, "comparator_api_model", "") or "").lower()
+        return "api.deepseek.com" in api_url or api_model.startswith("deepseek-")
+
+    def _send_comparator_api_request(self, payload: Dict[str, Any]) -> Any:
         data = json.dumps(payload).encode("utf-8")
         request = urlrequest.Request(
             str(self.args.comparator_api_url),
@@ -1787,7 +1841,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 f"Comparator API returned non-JSON response: {raw[:500]}"
             ) from exc
 
-        return self._extract_api_completions(response_data, api_format=api_format)
+        return response_data
 
     def _build_generic_api_payload(
         self,
