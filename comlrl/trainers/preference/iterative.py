@@ -3,6 +3,7 @@ import inspect
 import json
 import os
 import random
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from urllib import error as urlerror
@@ -54,6 +55,17 @@ def _normalize_comparator_policy(policy: Optional[str]) -> str:
     raise ValueError("comparator_policy must be one of: current, model, history, api.")
 
 
+def _normalize_comparator_generation_mode(mode: Optional[str]) -> str:
+    value = str(mode or "decentralized").strip().lower()
+    if value in {"decentralized", "decentralised", "multi_agent", "multi-agent"}:
+        return "decentralized"
+    if value in {"centralized", "centralised", "single_agent", "single-agent"}:
+        return "centralized"
+    raise ValueError(
+        "comparator_generation_mode must be one of: decentralized, centralized."
+    )
+
+
 def _normalize_preference_replay_mode(mode: Optional[str]) -> str:
     value = str(mode or "current").strip().lower()
     if value in {"current", "latest", "new"}:
@@ -86,6 +98,24 @@ def _validate_iterative_config(args: Any) -> None:
     )
     _validate_preference_replay_args(args)
     args.comparator_policy = _normalize_comparator_policy(args.comparator_policy)
+    args.comparator_generation_mode = _normalize_comparator_generation_mode(
+        getattr(args, "comparator_generation_mode", "decentralized")
+    )
+    if args.comparator_generation_mode == "centralized":
+        if int(args.num_agents) != 2:
+            raise ValueError(
+                "comparator_generation_mode='centralized' currently requires "
+                "num_agents=2."
+            )
+        if int(args.comparator_centralized_agent_index) < 0:
+            raise ValueError("comparator_centralized_agent_index must be >= 0.")
+        if int(args.comparator_centralized_agent_index) >= int(args.num_agents):
+            raise ValueError(
+                "comparator_centralized_agent_index must be smaller than num_agents."
+            )
+        args.comparator_centralized_agent_index = int(
+            args.comparator_centralized_agent_index
+        )
     if args.comparator_num_candidates is not None:
         if int(args.comparator_num_candidates) < 1:
             raise ValueError("comparator_num_candidates must be >= 1 or null.")
@@ -229,8 +259,11 @@ class MADPOIterConfig(MADPOConfig):
     preference_replay_sample_size: Optional[int] = None
     preference_replay_dir: Optional[str] = None
     log_reward_distribution: bool = False
+    log_comparator_generations: bool = False
     policy_checkpoint_dir: Optional[str] = None
     comparator_policy: str = "current"
+    comparator_generation_mode: str = "decentralized"
+    comparator_centralized_agent_index: int = 0
     comparator_model_name: Optional[str] = None
     comparator_agents: Optional[Sequence[str]] = None
     comparator_devices: Optional[Union[str, Sequence[str]]] = None
@@ -273,9 +306,12 @@ class MARLHFIterConfig(MARLHFConfig):
     preference_replay_sample_size: Optional[int] = None
     preference_replay_dir: Optional[str] = None
     log_reward_distribution: bool = False
+    log_comparator_generations: bool = False
     preference_scoring_reward: str = "task"
     policy_checkpoint_dir: Optional[str] = None
     comparator_policy: str = "current"
+    comparator_generation_mode: str = "decentralized"
+    comparator_centralized_agent_index: int = 0
     comparator_model_name: Optional[str] = None
     comparator_agents: Optional[Sequence[str]] = None
     comparator_devices: Optional[Union[str, Sequence[str]]] = None
@@ -1151,6 +1187,62 @@ class MADPOIterTrainer(MADPOTrainer):
         self._reward_distribution_dir_path = path
         return path
 
+    def _comparator_generation_dir(self) -> str:
+        cached = getattr(self, "_comparator_generation_dir_path", None)
+        if cached:
+            return cached
+
+        path = None
+        if isinstance(self.wandb_config, dict):
+            output_dir = self.wandb_config.get("output_dir")
+            if output_dir:
+                path = os.path.join(str(output_dir), "comparator_generations")
+            else:
+                sections = self.wandb_config.get("config_sections") or {}
+                output_section = (
+                    sections.get("output") if isinstance(sections, dict) else {}
+                )
+                base_dir = None
+                if isinstance(output_section, dict):
+                    base_dir = output_section.get("base_dir")
+                base_dir = base_dir or self.wandb_config.get("dir")
+                if base_dir:
+                    job_id = os.environ.get("SLURM_JOB_ID")
+                    path = (
+                        os.path.join(
+                            str(base_dir), f"job_{job_id}", "comparator_generations"
+                        )
+                        if job_id
+                        else os.path.join(str(base_dir), "comparator_generations")
+                    )
+        if not path:
+            path = os.path.join(os.getcwd(), "comparator_generations")
+
+        path = os.path.abspath(str(path))
+        os.makedirs(path, exist_ok=True)
+        self._comparator_generation_dir_path = path
+        return path
+
+    def _write_comparator_generation_record(
+        self,
+        iteration_idx: int,
+        record: Dict[str, Any],
+    ) -> None:
+        if not getattr(self.args, "log_comparator_generations", False):
+            return
+        path = os.path.join(
+            self._comparator_generation_dir(),
+            f"iteration_{iteration_idx + 1:04d}.jsonl",
+        )
+        payload = {
+            "iteration": int(iteration_idx + 1),
+            "comparator_policy": self.args.comparator_policy,
+            "comparator_generation_mode": self.args.comparator_generation_mode,
+            **record,
+        }
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(self._jsonable(payload), ensure_ascii=False) + "\n")
+
     def _write_iteration_preference_pairs(
         self,
         iteration_idx: int,
@@ -1454,32 +1546,12 @@ class MADPOIterTrainer(MADPOTrainer):
             num_candidates=current_candidates,
             **kwargs,
         )
-        if self.args.comparator_policy == "api":
-            comparator_outputs = self._generate_api_outputs_for_item(
-                batch_item,
-                num_candidates=comparator_candidates,
-            )
-        elif self.args.comparator_policy == "current":
-            comparator_outputs = self._generate_policy_outputs_for_item(
-                self.agents,
-                batch_item,
-                num_candidates=comparator_candidates,
-                **kwargs,
-            )
-        elif self.args.comparator_policy == "history":
-            comparator_outputs = self._generate_history_policy_outputs_for_item(
-                batch_item,
-                iteration_idx=iteration_idx,
-                num_candidates=comparator_candidates,
-                **kwargs,
-            )
-        else:
-            comparator_outputs = self._generate_policy_outputs_for_item(
-                self._get_comparator_agents(),
-                batch_item,
-                num_candidates=comparator_candidates,
-                **kwargs,
-            )
+        comparator_outputs = self._generate_comparator_outputs_for_item(
+            batch_item,
+            iteration_idx=iteration_idx,
+            num_candidates=comparator_candidates,
+            **kwargs,
+        )
 
         current_completions = [
             current_outputs[i]["completions"][0] for i in range(self.num_agents)
@@ -1674,6 +1746,72 @@ class MADPOIterTrainer(MADPOTrainer):
     ) -> Optional[Tuple[List[float], List[float]]]:
         return None
 
+    def _generate_comparator_outputs_for_item(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        iteration_idx: int,
+        num_candidates: int,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        if self.args.comparator_generation_mode == "centralized":
+            return self._generate_centralized_comparator_outputs_for_item(
+                batch_item,
+                iteration_idx=iteration_idx,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+
+        if self.args.comparator_policy == "api":
+            outputs = self._generate_api_outputs_for_item(
+                batch_item,
+                num_candidates=num_candidates,
+            )
+            self._log_decentralized_comparator_outputs(
+                outputs,
+                batch_item=batch_item,
+                iteration_idx=iteration_idx,
+            )
+            return outputs
+        if self.args.comparator_policy == "current":
+            outputs = self._generate_policy_outputs_for_item(
+                self.agents,
+                batch_item,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+            self._log_decentralized_comparator_outputs(
+                outputs,
+                batch_item=batch_item,
+                iteration_idx=iteration_idx,
+            )
+            return outputs
+        if self.args.comparator_policy == "history":
+            outputs = self._generate_history_policy_outputs_for_item(
+                batch_item,
+                iteration_idx=iteration_idx,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+            self._log_decentralized_comparator_outputs(
+                outputs,
+                batch_item=batch_item,
+                iteration_idx=iteration_idx,
+            )
+            return outputs
+        outputs = self._generate_policy_outputs_for_item(
+            self._get_comparator_agents(),
+            batch_item,
+            num_candidates=num_candidates,
+            **kwargs,
+        )
+        self._log_decentralized_comparator_outputs(
+            outputs,
+            batch_item=batch_item,
+            iteration_idx=iteration_idx,
+        )
+        return outputs
+
     def _generate_policy_outputs_for_item(
         self,
         policy_agents: Sequence[Any],
@@ -1693,6 +1831,293 @@ class MADPOIterTrainer(MADPOTrainer):
             )
 
         return self._run_agent_tasks(_generate_agent)
+
+    def _generate_centralized_comparator_outputs_for_item(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        iteration_idx: int,
+        num_candidates: int,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        prompt = self._build_centralized_comparator_prompt(batch_item)
+        if self.args.comparator_policy == "api":
+            completions = self._call_comparator_api(
+                prompt=prompt,
+                agent_idx=self._centralized_comparator_agent_index(),
+                batch_item=batch_item,
+                num_candidates=num_candidates,
+            )
+            return self._split_centralized_comparator_outputs(
+                completions,
+                batch_item=batch_item,
+                prompt=prompt,
+                iteration_idx=iteration_idx,
+            )
+        if self.args.comparator_policy == "current":
+            return self._generate_centralized_policy_outputs_for_item(
+                self.agents,
+                batch_item,
+                prompt=prompt,
+                iteration_idx=iteration_idx,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+        if self.args.comparator_policy == "history":
+            checkpoint_dir = self._history_policy_checkpoint_path(iteration_idx)
+            comparator_agents = self._load_policy_checkpoint_agents(checkpoint_dir)
+            try:
+                return self._generate_centralized_policy_outputs_for_item(
+                    comparator_agents,
+                    batch_item,
+                    prompt=prompt,
+                    iteration_idx=iteration_idx,
+                    num_candidates=num_candidates,
+                    **kwargs,
+                )
+            finally:
+                del comparator_agents
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+        return self._generate_centralized_policy_outputs_for_item(
+            self._get_comparator_agents(),
+            batch_item,
+            prompt=prompt,
+            iteration_idx=iteration_idx,
+            num_candidates=num_candidates,
+            **kwargs,
+        )
+
+    def _generate_centralized_policy_outputs_for_item(
+        self,
+        policy_agents: Sequence[Any],
+        batch_item: Dict[str, Any],
+        *,
+        prompt: str,
+        iteration_idx: int,
+        num_candidates: int,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        agent_idx = self._centralized_comparator_agent_index()
+        generation_output = self._generate_completions(
+            policy_agents[agent_idx],
+            [batch_item],
+            agent_idx=agent_idx,
+            num_return_sequences=num_candidates,
+            max_new_tokens=self.args.max_new_tokens,
+            prompts_override=[prompt],
+            **kwargs,
+        )
+        completions = generation_output["completions"][0]
+        return self._split_centralized_comparator_outputs(
+            completions,
+            batch_item=batch_item,
+            prompt=prompt,
+            iteration_idx=iteration_idx,
+        )
+
+    def _centralized_comparator_agent_index(self) -> int:
+        return int(getattr(self.args, "comparator_centralized_agent_index", 0))
+
+    def _build_centralized_comparator_prompt(self, batch_item: Dict[str, Any]) -> str:
+        if self.num_agents != 2:
+            raise ValueError(
+                "Centralized comparator generation currently supports exactly 2 agents."
+            )
+        auxiliary_prompt = self.formatters[0](batch_item)
+        main_prompt = self.formatters[1](batch_item)
+        return f"""You are acting as one centralized coordinator for two code-generation agents.
+
+Your job is to produce the exact outputs that two decentralized agents would submit:
+one Auxiliary output and one Main output. The two outputs must work together.
+
+Auxiliary agent original prompt:
+{auxiliary_prompt}
+
+Main agent original prompt:
+{main_prompt}
+
+IMPORTANT INSTRUCTIONS:
+- Return exactly two complete code snippets: one for Auxiliary and one for Main.
+- The Auxiliary snippet must define the helper function aux(...).
+- The Main snippet must define only the required main function from the problem.
+- Do not include explanations, examples, tests, markdown fences, or extra text.
+- Use the exact section tags below so the parser can split the two outputs.
+
+<auxiliary>
+def aux(...):
+    # your auxiliary code here
+    return result
+</auxiliary>
+
+<main>
+def required_function(...):
+    # your main code here
+    return result
+</main>
+"""
+
+    def _split_centralized_comparator_outputs(
+        self,
+        completions: Sequence[str],
+        *,
+        batch_item: Dict[str, Any],
+        prompt: str,
+        iteration_idx: int,
+    ) -> List[Dict[str, Any]]:
+        auxiliary_completions: List[str] = []
+        main_completions: List[str] = []
+        for candidate_idx, completion in enumerate(completions):
+            raw_completion = str(completion)
+            try:
+                auxiliary, main = self._parse_centralized_comparator_completion(
+                    raw_completion
+                )
+            except Exception as exc:
+                self._write_comparator_generation_record(
+                    iteration_idx,
+                    {
+                        "candidate_index": int(candidate_idx),
+                        "centralized_agent_index": (
+                            self._centralized_comparator_agent_index()
+                        ),
+                        "batch_item": self._jsonable(batch_item),
+                        "prompt": prompt,
+                        "raw_completion": raw_completion,
+                        "parsed_auxiliary": None,
+                        "parsed_main": None,
+                        "parse_ok": False,
+                        "parse_error": str(exc),
+                    },
+                )
+                raise
+            auxiliary_completions.append(auxiliary)
+            main_completions.append(main)
+            self._write_comparator_generation_record(
+                iteration_idx,
+                {
+                    "candidate_index": int(candidate_idx),
+                    "centralized_agent_index": (
+                        self._centralized_comparator_agent_index()
+                    ),
+                    "batch_item": self._jsonable(batch_item),
+                    "prompt": prompt,
+                    "raw_completion": raw_completion,
+                    "parsed_auxiliary": auxiliary,
+                    "parsed_main": main,
+                    "parse_ok": True,
+                    "parse_error": None,
+                },
+            )
+
+        return [
+            {
+                "prompts": [prompt],
+                "batch_items": [batch_item],
+                "completions": [auxiliary_completions],
+            },
+            {
+                "prompts": [prompt],
+                "batch_items": [batch_item],
+                "completions": [main_completions],
+            },
+        ]
+
+    def _parse_centralized_comparator_completion(self, text: str) -> Tuple[str, str]:
+        auxiliary = self._extract_tagged_section(text, "auxiliary")
+        main = self._extract_tagged_section(text, "main")
+        if auxiliary is not None and main is not None:
+            return (
+                self._clean_centralized_section(auxiliary),
+                self._clean_centralized_section(main),
+            )
+
+        auxiliary, main = self._extract_labeled_centralized_sections(text)
+        if auxiliary is None or main is None:
+            raise ValueError(
+                "Centralized comparator output could not be parsed. Expected "
+                "<auxiliary>...</auxiliary> and <main>...</main> sections."
+            )
+        return (
+            self._clean_centralized_section(auxiliary),
+            self._clean_centralized_section(main),
+        )
+
+    @staticmethod
+    def _extract_tagged_section(text: str, tag: str) -> Optional[str]:
+        pattern = rf"<\s*{tag}\s*>(.*?)<\s*/\s*{tag}\s*>"
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            return match.group(1)
+        return None
+
+    @staticmethod
+    def _extract_labeled_centralized_sections(
+        text: str,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        auxiliary_label = re.search(
+            r"(?im)^\s*(?:#{1,6}\s*)?(?:auxiliary|aux)\s*(?:code|output)?\s*:\s*$",
+            text,
+        )
+        main_label = re.search(
+            r"(?im)^\s*(?:#{1,6}\s*)?main\s*(?:code|output)?\s*:\s*$",
+            text,
+        )
+        if auxiliary_label is None or main_label is None:
+            return None, None
+
+        if auxiliary_label.start() < main_label.start():
+            auxiliary = text[auxiliary_label.end() : main_label.start()]
+            main = text[main_label.end() :]
+        else:
+            main = text[main_label.end() : auxiliary_label.start()]
+            auxiliary = text[auxiliary_label.end() :]
+        return auxiliary, main
+
+    @staticmethod
+    def _clean_centralized_section(text: str) -> str:
+        value = text.strip()
+        fence_match = re.fullmatch(
+            r"```(?:python)?\s*(.*?)```", value, flags=re.IGNORECASE | re.DOTALL
+        )
+        if fence_match:
+            value = fence_match.group(1).strip()
+        return value
+
+    def _log_decentralized_comparator_outputs(
+        self,
+        outputs: Sequence[Dict[str, Any]],
+        *,
+        batch_item: Dict[str, Any],
+        iteration_idx: int,
+    ) -> None:
+        if not getattr(self.args, "log_comparator_generations", False):
+            return
+        for agent_idx, output in enumerate(outputs):
+            prompts = output.get("prompts") if isinstance(output, dict) else None
+            prompt = prompts[0] if isinstance(prompts, list) and prompts else None
+            completions = (
+                output.get("completions") if isinstance(output, dict) else None
+            )
+            candidate_completions = (
+                completions[0] if isinstance(completions, list) and completions else []
+            )
+            for candidate_idx, completion in enumerate(candidate_completions):
+                self._write_comparator_generation_record(
+                    iteration_idx,
+                    {
+                        "agent_idx": int(agent_idx),
+                        "candidate_index": int(candidate_idx),
+                        "batch_item": self._jsonable(batch_item),
+                        "prompt": prompt,
+                        "raw_completion": str(completion),
+                        "parsed_auxiliary": None,
+                        "parsed_main": None,
+                        "parse_ok": True,
+                        "parse_error": None,
+                    },
+                )
 
     def _generate_history_policy_outputs_for_item(
         self,
