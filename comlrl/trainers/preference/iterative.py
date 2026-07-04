@@ -1769,6 +1769,11 @@ class MADPOIterTrainer(MADPOTrainer):
                 raw = response.read().decode("utf-8")
         except urlerror.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 402:
+                raise RuntimeError(
+                    "Comparator API request failed with HTTP 402: insufficient "
+                    f"balance. Provider response: {detail}"
+                ) from exc
             raise ValueError(
                 f"Comparator API request failed with HTTP {exc.code}: {detail}"
             ) from exc
