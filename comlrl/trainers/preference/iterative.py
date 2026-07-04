@@ -726,9 +726,9 @@ class MADPOIterTrainer(MADPOTrainer):
         )
         max_count = max(max_count, 1.0)
 
-        width, height = 440, 280
-        left, right = 58, 20
-        top, bottom = 32, 46
+        width, height = 240, 80
+        left, right = 29, 10
+        top, bottom = 14, 18
         plot_left = left
         plot_right = width - right
         plot_top = top
@@ -740,13 +740,13 @@ class MADPOIterTrainer(MADPOTrainer):
         }
 
         elements: List[str] = [
-            '<div style="max-width:440px;width:100%;overflow:hidden;">',
+            '<div style="max-width:240px;width:100%;overflow:hidden;">',
             f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
             f'height="{height}" viewBox="0 0 {width} {height}" '
             'style="display:block;max-width:100%;height:auto;">',
             '<rect width="100%" height="100%" fill="white"/>',
             (
-                f'<text x="{plot_left}" y="22" font-size="15" '
+                f'<text x="{plot_left}" y="9" font-size="7" '
                 f'font-family="Arial, sans-serif" font-weight="700">'
                 f"{MADPOIterTrainer._xml_escape(title)}</text>"
             ),
@@ -770,7 +770,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 f'y2="{plot_bottom}" stroke="#dddddd" stroke-width="1"/>'
             )
             elements.append(
-                f'<text x="{x_pos}" y="{plot_bottom + 21}" font-size="12" '
+                f'<text x="{x_pos}" y="{plot_bottom + 8}" font-size="5.5" '
                 'font-family="Arial, sans-serif" text-anchor="middle" '
                 'fill="#4d4d4d">'
                 f"{MADPOIterTrainer._format_axis_tick(float(x_tick))}</text>"
@@ -783,32 +783,32 @@ class MADPOIterTrainer(MADPOTrainer):
                 f'y2="{y_pos}" stroke="#dddddd" stroke-width="1"/>'
             )
             elements.append(
-                f'<text x="{plot_left - 8}" y="{y_pos + 4}" font-size="12" '
+                f'<text x="{plot_left - 4}" y="{y_pos + 2}" font-size="6" '
                 'font-family="Arial, sans-serif" text-anchor="end" '
                 'fill="#4d4d4d">'
                 f"{MADPOIterTrainer._format_axis_tick(float(y_tick))}</text>"
             )
         elements.append(
             f'<line x1="{plot_left}" y1="{plot_bottom}" x2="{plot_right}" '
-            f'y2="{plot_bottom}" stroke="#505050" stroke-width="2"/>'
+            f'y2="{plot_bottom}" stroke="#505050" stroke-width="1"/>'
         )
         elements.append(
             f'<line x1="{plot_left}" y1="{plot_top}" x2="{plot_left}" '
-            f'y2="{plot_bottom}" stroke="#505050" stroke-width="2"/>'
+            f'y2="{plot_bottom}" stroke="#505050" stroke-width="1"/>'
         )
         elements.append(
-            f'<text x="{(plot_left + plot_right) / 2:.1f}" y="{height - 13}" '
-            'font-size="12" font-family="Arial, sans-serif" '
+            f'<text x="{(plot_left + plot_right) / 2:.1f}" y="{height - 3}" '
+            'font-size="5.5" font-family="Arial, sans-serif" '
             'text-anchor="middle">reward</text>'
         )
         elements.append(
-            f'<text x="15" y="{(plot_top + plot_bottom) / 2:.1f}" '
-            'font-size="12" font-family="Arial, sans-serif" '
-            'text-anchor="middle" transform="rotate(-90 15 '
+            f'<text x="7" y="{(plot_top + plot_bottom) / 2:.1f}" '
+            'font-size="5.5" font-family="Arial, sans-serif" '
+            'text-anchor="middle" transform="rotate(-90 7 '
             f'{(plot_top + plot_bottom) / 2:.1f})">count</text>'
         )
 
-        legend_y = plot_top + 18
+        legend_y = plot_top + 7
         for label, counts in series:
             if len(counts) == 0:
                 continue
@@ -822,24 +822,24 @@ class MADPOIterTrainer(MADPOTrainer):
             point_string = " ".join(f"{x_pos},{y_pos}" for x_pos, y_pos in points)
             elements.append(
                 f'<polyline points="{point_string}" fill="none" stroke="{color}" '
-                'stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>'
+                'stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/>'
             )
             for x_pos, y_pos in points:
                 elements.append(
-                    f'<circle cx="{x_pos}" cy="{y_pos}" r="2.8" fill="{color}"/>'
+                    f'<circle cx="{x_pos}" cy="{y_pos}" r="1.4" fill="{color}"/>'
                 )
 
             elements.append(
-                f'<line x1="{plot_right - 104}" y1="{legend_y}" '
-                f'x2="{plot_right - 78}" y2="{legend_y}" stroke="{color}" '
-                'stroke-width="2.5" stroke-linecap="round"/>'
+                f'<line x1="{plot_right - 52}" y1="{legend_y}" '
+                f'x2="{plot_right - 39}" y2="{legend_y}" stroke="{color}" '
+                'stroke-width="1.25" stroke-linecap="round"/>'
             )
             elements.append(
-                f'<text x="{plot_right - 72}" y="{legend_y + 4}" '
-                'font-size="12" font-family="Arial, sans-serif">'
+                f'<text x="{plot_right - 36}" y="{legend_y + 2}" '
+                'font-size="6" font-family="Arial, sans-serif">'
                 f"{MADPOIterTrainer._xml_escape(label)}</text>"
             )
-            legend_y += 18
+            legend_y += 8
 
         elements.append("</svg></div>")
         return wandb.Html("".join(elements))
@@ -861,9 +861,9 @@ class MADPOIterTrainer(MADPOTrainer):
         max_count = max(float(np.max(counts)) for _, counts in active_series)
         max_count = max(max_count, 1.0)
 
-        width, height = 440, 280
-        left, right = 58, 20
-        top, bottom = 32, 46
+        width, height = 240, 80
+        left, right = 29, 10
+        top, bottom = 14, 18
         plot_left = left
         plot_right = width - right
         plot_top = top
@@ -875,13 +875,13 @@ class MADPOIterTrainer(MADPOTrainer):
         }
 
         elements: List[str] = [
-            '<div style="max-width:440px;width:100%;overflow:hidden;">',
+            '<div style="max-width:240px;width:100%;overflow:hidden;">',
             f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
             f'height="{height}" viewBox="0 0 {width} {height}" '
             'style="display:block;max-width:100%;height:auto;">',
             '<rect width="100%" height="100%" fill="white"/>',
             (
-                f'<text x="{plot_left}" y="22" font-size="15" '
+                f'<text x="{plot_left}" y="9" font-size="7" '
                 f'font-family="Arial, sans-serif" font-weight="700">'
                 f"{MADPOIterTrainer._xml_escape(title)}</text>"
             ),
@@ -905,7 +905,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 f'y2="{plot_bottom}" stroke="#dddddd" stroke-width="1"/>'
             )
             elements.append(
-                f'<text x="{x_pos}" y="{plot_bottom + 21}" font-size="12" '
+                f'<text x="{x_pos}" y="{plot_bottom + 8}" font-size="5.5" '
                 'font-family="Arial, sans-serif" text-anchor="middle" '
                 'fill="#4d4d4d">'
                 f"{MADPOIterTrainer._format_axis_tick(float(x_tick))}</text>"
@@ -918,7 +918,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 f'y2="{y_pos}" stroke="#dddddd" stroke-width="1"/>'
             )
             elements.append(
-                f'<text x="{plot_left - 8}" y="{y_pos + 4}" font-size="12" '
+                f'<text x="{plot_left - 4}" y="{y_pos + 2}" font-size="6" '
                 'font-family="Arial, sans-serif" text-anchor="end" '
                 'fill="#4d4d4d">'
                 f"{MADPOIterTrainer._format_axis_tick(float(y_tick))}</text>"
@@ -939,43 +939,43 @@ class MADPOIterTrainer(MADPOTrainer):
                 bar_height = max(plot_bottom - bar_y, 0.0)
                 elements.append(
                     f'<rect x="{bar_x:.1f}" y="{bar_y:.1f}" '
-                    f'width="{max(bar_width - 1.0, 1.0):.1f}" '
+                    f'width="{max(bar_width - 0.5, 0.5):.1f}" '
                     f'height="{bar_height:.1f}" fill="{color}" opacity="0.82"/>'
                 )
 
         elements.append(
             f'<line x1="{plot_left}" y1="{plot_bottom}" x2="{plot_right}" '
-            f'y2="{plot_bottom}" stroke="#505050" stroke-width="2"/>'
+            f'y2="{plot_bottom}" stroke="#505050" stroke-width="1"/>'
         )
         elements.append(
             f'<line x1="{plot_left}" y1="{plot_top}" x2="{plot_left}" '
-            f'y2="{plot_bottom}" stroke="#505050" stroke-width="2"/>'
+            f'y2="{plot_bottom}" stroke="#505050" stroke-width="1"/>'
         )
         elements.append(
-            f'<text x="{(plot_left + plot_right) / 2:.1f}" y="{height - 13}" '
-            'font-size="12" font-family="Arial, sans-serif" '
+            f'<text x="{(plot_left + plot_right) / 2:.1f}" y="{height - 3}" '
+            'font-size="5.5" font-family="Arial, sans-serif" '
             'text-anchor="middle">reward</text>'
         )
         elements.append(
-            f'<text x="15" y="{(plot_top + plot_bottom) / 2:.1f}" '
-            'font-size="12" font-family="Arial, sans-serif" '
-            'text-anchor="middle" transform="rotate(-90 15 '
+            f'<text x="7" y="{(plot_top + plot_bottom) / 2:.1f}" '
+            'font-size="5.5" font-family="Arial, sans-serif" '
+            'text-anchor="middle" transform="rotate(-90 7 '
             f'{(plot_top + plot_bottom) / 2:.1f})">count</text>'
         )
 
-        legend_y = plot_top + 18
+        legend_y = plot_top + 7
         for label, _ in active_series:
             color = palette.get(label, "#2878d6")
             elements.append(
-                f'<rect x="{plot_right - 104}" y="{legend_y - 8}" '
-                f'width="24" height="10" fill="{color}" opacity="0.82"/>'
+                f'<rect x="{plot_right - 52}" y="{legend_y - 4}" '
+                f'width="12" height="5" fill="{color}" opacity="0.82"/>'
             )
             elements.append(
-                f'<text x="{plot_right - 72}" y="{legend_y + 2}" '
-                'font-size="12" font-family="Arial, sans-serif">'
+                f'<text x="{plot_right - 36}" y="{legend_y + 1}" '
+                'font-size="6" font-family="Arial, sans-serif">'
                 f"{MADPOIterTrainer._xml_escape(label)}</text>"
             )
-            legend_y += 18
+            legend_y += 8
 
         elements.append("</svg></div>")
         return wandb.Html("".join(elements))
