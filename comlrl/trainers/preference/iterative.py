@@ -218,7 +218,7 @@ def _validate_preference_replay_args(args: Any) -> None:
 class MADPOIterConfig(MADPOConfig):
     """Configuration for iterative MADPO preference refresh."""
 
-    num_iterations: int = 4
+    num_iterations: int = 6
     num_train_epochs: int = 1
     preference_num_candidates: int = 20
     preference_pairs_per_sample: Optional[int] = 4
@@ -261,7 +261,7 @@ class MADPOIterConfig(MADPOConfig):
 class MARLHFIterConfig(MARLHFConfig):
     """Configuration for iterative MARLHF preference and reward refresh."""
 
-    num_iterations: int = 4
+    num_iterations: int = 6
     num_train_epochs: int = 2
     preference_num_candidates: int = 20
     preference_pairs_per_sample: Optional[int] = 4
