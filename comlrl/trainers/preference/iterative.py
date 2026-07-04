@@ -342,7 +342,7 @@ class MADPOIterTrainer(MADPOTrainer):
             total_pairs += len(train_pairs)
             self._log_iteration_replay(
                 iteration_idx,
-                current_pairs=preference_pairs,
+                train_pairs=train_pairs,
                 current_pair_count=current_pair_count,
                 train_pair_count=len(train_pairs),
             )
@@ -411,7 +411,7 @@ class MADPOIterTrainer(MADPOTrainer):
         self,
         iteration_idx: int,
         *,
-        current_pairs: Sequence[PreferencePair],
+        train_pairs: Sequence[PreferencePair],
         current_pair_count: int,
         train_pair_count: int,
     ) -> None:
@@ -426,7 +426,13 @@ class MADPOIterTrainer(MADPOTrainer):
             ),
             "iter/train_preference_pairs": float(train_pair_count),
         }
-        metrics.update(self._iteration_reward_distribution_metrics())
+        metrics.update(self._iteration_reward_distribution_metrics(iteration_idx))
+        metrics.update(
+            self._selected_reward_distribution_metrics(
+                iteration_idx,
+                train_pairs,
+            )
+        )
         wandb.log(metrics, step=int(self.env_step))
 
     def _reset_iteration_reward_distribution(self) -> None:
@@ -457,7 +463,10 @@ class MADPOIterTrainer(MADPOTrainer):
                 result.append(float_value)
         return result
 
-    def _iteration_reward_distribution_metrics(self) -> Dict[str, Any]:
+    def _iteration_reward_distribution_metrics(
+        self,
+        iteration_idx: int,
+    ) -> Dict[str, Any]:
         distribution = getattr(self, "_iteration_reward_distribution", None)
         if not distribution:
             return {}
@@ -480,28 +489,17 @@ class MADPOIterTrainer(MADPOTrainer):
             comparator_rewards,
             bin_edges,
         )
-        bin_centers = ((edges[:-1] + edges[1:]) / 2.0).tolist()
-
-        table = wandb.Table(columns=["reward_bin", "target_count", "comparator_count"])
-        for reward_bin, target_count, comparator_count in zip(
-            bin_centers,
-            target_counts.tolist(),
-            comparator_counts.tolist(),
-        ):
-            table.add_data(
-                float(reward_bin),
-                int(target_count),
-                int(comparator_count),
-            )
+        iteration = int(iteration_idx) + 1
+        histogram_prefix = f"iter/reward_distribution/iteration_{iteration:04d}"
 
         metrics: Dict[str, Any] = {
-            "iter/reward_distribution/target_histogram": wandb.Histogram(
+            "iter/reward_distribution/current_iteration": float(iteration),
+            f"{histogram_prefix}/target_histogram": wandb.Histogram(
                 np_histogram=(target_counts, edges)
             ),
-            "iter/reward_distribution/comparator_histogram": wandb.Histogram(
+            f"{histogram_prefix}/comparator_histogram": wandb.Histogram(
                 np_histogram=(comparator_counts, edges)
             ),
-            "iter/reward_distribution/table": table,
             "iter/reward_distribution/target_sample_count": float(len(target_rewards)),
             "iter/reward_distribution/comparator_sample_count": float(
                 len(comparator_rewards)
@@ -515,18 +513,81 @@ class MADPOIterTrainer(MADPOTrainer):
             metrics["iter/reward_distribution/comparator_mean"] = float(
                 np.mean(comparator_rewards)
             )
-
-        try:
-            metrics["iter/reward_distribution/chart"] = wandb.plot.line_series(
-                xs=bin_centers,
-                ys=[target_counts.tolist(), comparator_counts.tolist()],
-                keys=["target", "comparator"],
-                title="Candidate Reward Distribution",
-                xname="reward",
-            )
-        except Exception:
-            pass
         return metrics
+
+    def _selected_reward_distribution_metrics(
+        self,
+        iteration_idx: int,
+        selected_pairs: Sequence[PreferencePair],
+    ) -> Dict[str, Any]:
+        if not selected_pairs:
+            return {}
+
+        winner_rewards, loser_rewards = self._selected_pair_reward_values(
+            selected_pairs
+        )
+        if not winner_rewards and not loser_rewards:
+            return {}
+
+        bin_edges = np.linspace(
+            _REWARD_DISTRIBUTION_MIN,
+            _REWARD_DISTRIBUTION_MAX,
+            _REWARD_DISTRIBUTION_BINS + 1,
+        )
+        winner_counts, edges = self._reward_distribution_counts(
+            winner_rewards,
+            bin_edges,
+        )
+        loser_counts, _ = self._reward_distribution_counts(
+            loser_rewards,
+            bin_edges,
+        )
+        iteration = int(iteration_idx) + 1
+        histogram_prefix = (
+            f"iter/selected_reward_distribution/iteration_{iteration:04d}"
+        )
+
+        metrics: Dict[str, Any] = {
+            "iter/selected_reward_distribution/current_iteration": float(iteration),
+            f"{histogram_prefix}/winner_histogram": wandb.Histogram(
+                np_histogram=(winner_counts, edges)
+            ),
+            f"{histogram_prefix}/loser_histogram": wandb.Histogram(
+                np_histogram=(loser_counts, edges)
+            ),
+            "iter/selected_reward_distribution/pair_count": float(len(selected_pairs)),
+            "iter/selected_reward_distribution/winner_sample_count": float(
+                len(winner_rewards)
+            ),
+            "iter/selected_reward_distribution/loser_sample_count": float(
+                len(loser_rewards)
+            ),
+        }
+        if winner_rewards:
+            metrics["iter/selected_reward_distribution/winner_mean"] = float(
+                np.mean(winner_rewards)
+            )
+        if loser_rewards:
+            metrics["iter/selected_reward_distribution/loser_mean"] = float(
+                np.mean(loser_rewards)
+            )
+        return metrics
+
+    def _selected_pair_reward_values(
+        self,
+        selected_pairs: Sequence[PreferencePair],
+    ) -> Tuple[List[float], List[float]]:
+        winner_rewards: List[float] = []
+        loser_rewards: List[float] = []
+        for pair in selected_pairs:
+            raw_rewards = pair.raw_rewards or []
+            if len(raw_rewards) >= 2:
+                winner_rewards.extend(self._finite_floats([raw_rewards[0]]))
+                loser_rewards.extend(self._finite_floats([raw_rewards[1]]))
+                continue
+            winner_rewards.extend(self._finite_floats([pair.winner_reward]))
+            loser_rewards.extend(self._finite_floats([pair.loser_reward]))
+        return winner_rewards, loser_rewards
 
     def _reward_distribution_counts(
         self,
@@ -1636,7 +1697,7 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
             total_pairs += len(train_pairs)
             self._log_iteration_replay(
                 iteration_idx,
-                current_pairs=preference_pairs,
+                train_pairs=train_pairs,
                 current_pair_count=current_pair_count,
                 train_pair_count=len(train_pairs),
             )
