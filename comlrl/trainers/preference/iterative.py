@@ -222,6 +222,7 @@ class MADPOIterConfig(MADPOConfig):
     preference_replay_lambda: Optional[float] = None
     preference_replay_sample_size: Optional[int] = None
     preference_replay_dir: Optional[str] = None
+    log_reward_distribution: bool = False
     policy_checkpoint_dir: Optional[str] = None
     comparator_policy: str = "current"
     comparator_model_name: Optional[str] = None
@@ -264,6 +265,7 @@ class MARLHFIterConfig(MARLHFConfig):
     preference_replay_lambda: Optional[float] = None
     preference_replay_sample_size: Optional[int] = None
     preference_replay_dir: Optional[str] = None
+    log_reward_distribution: bool = False
     preference_scoring_reward: str = "task"
     policy_checkpoint_dir: Optional[str] = None
     comparator_policy: str = "current"
@@ -415,6 +417,9 @@ class MADPOIterTrainer(MADPOTrainer):
         current_pair_count: int,
         train_pair_count: int,
     ) -> None:
+        log_distribution = self._log_reward_distribution_enabled()
+        if log_distribution:
+            self._write_iteration_reward_distribution(iteration_idx, train_pairs)
         if not (self.wandb_initialized and wandb.run is not None):
             return
         shards = getattr(self, "_preference_replay_shards_state", [])
@@ -426,14 +431,18 @@ class MADPOIterTrainer(MADPOTrainer):
             ),
             "iter/train_preference_pairs": float(train_pair_count),
         }
-        metrics.update(self._iteration_reward_distribution_metrics(iteration_idx))
-        metrics.update(
-            self._selected_reward_distribution_metrics(
-                iteration_idx,
-                train_pairs,
+        if log_distribution:
+            metrics.update(self._iteration_reward_distribution_metrics(iteration_idx))
+            metrics.update(
+                self._selected_reward_distribution_metrics(
+                    iteration_idx,
+                    train_pairs,
+                )
             )
-        )
         wandb.log(metrics, step=int(self.env_step))
+
+    def _log_reward_distribution_enabled(self) -> bool:
+        return bool(getattr(self.args, "log_reward_distribution", False))
 
     def _reset_iteration_reward_distribution(self) -> None:
         self._iteration_reward_distribution = {
@@ -447,6 +456,8 @@ class MADPOIterTrainer(MADPOTrainer):
         target_rewards: Sequence[float],
         comparator_rewards: Sequence[float],
     ) -> None:
+        if not self._log_reward_distribution_enabled():
+            return
         distribution = getattr(self, "_iteration_reward_distribution", None)
         if distribution is None:
             self._reset_iteration_reward_distribution()
@@ -490,16 +501,10 @@ class MADPOIterTrainer(MADPOTrainer):
             bin_edges,
         )
         iteration = int(iteration_idx) + 1
-        histogram_prefix = f"iter/reward_distribution/iteration_{iteration:04d}"
+        distribution_prefix = f"iter/reward_distribution/iteration_{iteration:04d}"
 
         metrics: Dict[str, Any] = {
             "iter/reward_distribution/current_iteration": float(iteration),
-            f"{histogram_prefix}/target_histogram": wandb.Histogram(
-                np_histogram=(target_counts, edges)
-            ),
-            f"{histogram_prefix}/comparator_histogram": wandb.Histogram(
-                np_histogram=(comparator_counts, edges)
-            ),
             "iter/reward_distribution/target_sample_count": float(len(target_rewards)),
             "iter/reward_distribution/comparator_sample_count": float(
                 len(comparator_rewards)
@@ -514,7 +519,17 @@ class MADPOIterTrainer(MADPOTrainer):
             ],
         )
         if line_image is not None:
-            metrics[f"{histogram_prefix}/line_plot"] = line_image
+            metrics[f"{distribution_prefix}/line_plot"] = line_image
+        bar_image = self._reward_distribution_bar_image(
+            title="Candidate Reward Distribution",
+            edges=edges,
+            series=[
+                ("target", target_counts),
+                ("comparator", comparator_counts),
+            ],
+        )
+        if bar_image is not None:
+            metrics[f"{distribution_prefix}/bar_plot"] = bar_image
         if target_rewards:
             metrics["iter/reward_distribution/target_mean"] = float(
                 np.mean(target_rewards)
@@ -553,18 +568,12 @@ class MADPOIterTrainer(MADPOTrainer):
             bin_edges,
         )
         iteration = int(iteration_idx) + 1
-        histogram_prefix = (
+        distribution_prefix = (
             f"iter/selected_reward_distribution/iteration_{iteration:04d}"
         )
 
         metrics: Dict[str, Any] = {
             "iter/selected_reward_distribution/current_iteration": float(iteration),
-            f"{histogram_prefix}/target_histogram": wandb.Histogram(
-                np_histogram=(target_counts, edges)
-            ),
-            f"{histogram_prefix}/comparator_histogram": wandb.Histogram(
-                np_histogram=(comparator_counts, edges)
-            ),
             "iter/selected_reward_distribution/pair_count": float(len(selected_pairs)),
             "iter/selected_reward_distribution/target_sample_count": float(
                 len(target_rewards)
@@ -582,7 +591,17 @@ class MADPOIterTrainer(MADPOTrainer):
             ],
         )
         if line_image is not None:
-            metrics[f"{histogram_prefix}/line_plot"] = line_image
+            metrics[f"{distribution_prefix}/line_plot"] = line_image
+        bar_image = self._reward_distribution_bar_image(
+            title="Selected Preference Reward Distribution",
+            edges=edges,
+            series=[
+                ("target", target_counts),
+                ("comparator", comparator_counts),
+            ],
+        )
+        if bar_image is not None:
+            metrics[f"{distribution_prefix}/bar_plot"] = bar_image
         if target_rewards:
             metrics["iter/selected_reward_distribution/target_mean"] = float(
                 np.mean(target_rewards)
@@ -606,6 +625,91 @@ class MADPOIterTrainer(MADPOTrainer):
             comparator_rewards.extend(self._finite_floats([pair.comparator_raw_reward]))
         return target_rewards, comparator_rewards
 
+    def _write_iteration_reward_distribution(
+        self,
+        iteration_idx: int,
+        selected_pairs: Sequence[PreferencePair],
+    ) -> None:
+        distribution = getattr(self, "_iteration_reward_distribution", None) or {}
+        candidate_target = distribution.get("target", [])
+        candidate_comparator = distribution.get("comparator", [])
+        selected_target, selected_comparator = self._selected_pair_reward_values(
+            selected_pairs
+        )
+        if (
+            not candidate_target
+            and not candidate_comparator
+            and not selected_target
+            and not selected_comparator
+        ):
+            return
+
+        bin_edges = np.linspace(
+            _REWARD_DISTRIBUTION_MIN,
+            _REWARD_DISTRIBUTION_MAX,
+            _REWARD_DISTRIBUTION_BINS + 1,
+        )
+        iteration = int(iteration_idx) + 1
+        payload = {
+            "iteration": iteration,
+            "reward_min": float(_REWARD_DISTRIBUTION_MIN),
+            "reward_max": float(_REWARD_DISTRIBUTION_MAX),
+            "num_bins": int(_REWARD_DISTRIBUTION_BINS),
+            "bin_edges": [float(value) for value in bin_edges.tolist()],
+            "bin_centers": [
+                float(value)
+                for value in ((bin_edges[:-1] + bin_edges[1:]) / 2.0).tolist()
+            ],
+            "candidate": self._reward_distribution_json_section(
+                candidate_target,
+                candidate_comparator,
+                bin_edges,
+            ),
+            "selected": self._reward_distribution_json_section(
+                selected_target,
+                selected_comparator,
+                bin_edges,
+            ),
+        }
+
+        output_dir = self._reward_distribution_dir()
+        path = os.path.join(output_dir, f"iteration_{iteration:04d}.json")
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+
+    def _reward_distribution_json_section(
+        self,
+        target_rewards: Sequence[float],
+        comparator_rewards: Sequence[float],
+        bin_edges: np.ndarray,
+    ) -> Dict[str, Any]:
+        return {
+            "target": self._reward_distribution_json_series(
+                target_rewards,
+                bin_edges,
+            ),
+            "comparator": self._reward_distribution_json_series(
+                comparator_rewards,
+                bin_edges,
+            ),
+        }
+
+    def _reward_distribution_json_series(
+        self,
+        rewards: Sequence[float],
+        bin_edges: np.ndarray,
+    ) -> Dict[str, Any]:
+        finite_rewards = self._finite_floats(rewards)
+        counts, _ = self._reward_distribution_counts(finite_rewards, bin_edges)
+        return {
+            "sample_count": int(len(finite_rewards)),
+            "mean": float(np.mean(finite_rewards)) if finite_rewards else None,
+            "counts": [int(value) for value in counts.tolist()],
+            "raw_rewards": [float(value) for value in finite_rewards],
+        }
+
     @staticmethod
     def _reward_distribution_line_image(
         *,
@@ -622,9 +726,9 @@ class MADPOIterTrainer(MADPOTrainer):
         )
         max_count = max(max_count, 1.0)
 
-        width, height = 720, 480
-        left, right = 70, 30
-        top, bottom = 30, 60
+        width, height = 440, 280
+        left, right = 58, 20
+        top, bottom = 32, 46
         plot_left = left
         plot_right = width - right
         plot_top = top
@@ -636,26 +740,53 @@ class MADPOIterTrainer(MADPOTrainer):
         }
 
         elements: List[str] = [
+            '<div style="max-width:440px;width:100%;overflow:hidden;">',
             f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
-            f'height="{height}" viewBox="0 0 {width} {height}">',
+            f'height="{height}" viewBox="0 0 {width} {height}" '
+            'style="display:block;max-width:100%;height:auto;">',
             '<rect width="100%" height="100%" fill="white"/>',
             (
-                f'<text x="{plot_left}" y="22" font-size="20" '
+                f'<text x="{plot_left}" y="22" font-size="15" '
                 f'font-family="Arial, sans-serif" font-weight="700">'
                 f"{MADPOIterTrainer._xml_escape(title)}</text>"
             ),
         ]
-        for x_grid in np.linspace(plot_left, plot_right, 5):
-            x_pos = int(round(x_grid))
+
+        x_min = float(edges[0])
+        x_range = max(float(edges[-1] - edges[0]), 1e-12)
+
+        def x_position(value: float) -> float:
+            return plot_left + ((float(value) - x_min) / x_range) * (
+                plot_right - plot_left
+            )
+
+        def y_position(value: float) -> float:
+            return plot_bottom - (float(value) / max_count) * (plot_bottom - plot_top)
+
+        for x_tick in np.linspace(float(edges[0]), float(edges[-1]), 5):
+            x_pos = int(round(x_position(float(x_tick))))
             elements.append(
                 f'<line x1="{x_pos}" y1="{plot_top}" x2="{x_pos}" '
                 f'y2="{plot_bottom}" stroke="#dddddd" stroke-width="1"/>'
             )
-        for y_grid in np.linspace(plot_top, plot_bottom, 5):
-            y_pos = int(round(y_grid))
+            elements.append(
+                f'<text x="{x_pos}" y="{plot_bottom + 21}" font-size="12" '
+                'font-family="Arial, sans-serif" text-anchor="middle" '
+                'fill="#4d4d4d">'
+                f"{MADPOIterTrainer._format_axis_tick(float(x_tick))}</text>"
+            )
+
+        for y_tick in np.linspace(0.0, max_count, 5):
+            y_pos = int(round(y_position(float(y_tick))))
             elements.append(
                 f'<line x1="{plot_left}" y1="{y_pos}" x2="{plot_right}" '
                 f'y2="{y_pos}" stroke="#dddddd" stroke-width="1"/>'
+            )
+            elements.append(
+                f'<text x="{plot_left - 8}" y="{y_pos + 4}" font-size="12" '
+                'font-family="Arial, sans-serif" text-anchor="end" '
+                'fill="#4d4d4d">'
+                f"{MADPOIterTrainer._format_axis_tick(float(y_tick))}</text>"
             )
         elements.append(
             f'<line x1="{plot_left}" y1="{plot_bottom}" x2="{plot_right}" '
@@ -666,14 +797,14 @@ class MADPOIterTrainer(MADPOTrainer):
             f'y2="{plot_bottom}" stroke="#505050" stroke-width="2"/>'
         )
         elements.append(
-            f'<text x="{(plot_left + plot_right) / 2:.1f}" y="{height - 18}" '
-            'font-size="16" font-family="Arial, sans-serif" '
+            f'<text x="{(plot_left + plot_right) / 2:.1f}" y="{height - 13}" '
+            'font-size="12" font-family="Arial, sans-serif" '
             'text-anchor="middle">reward</text>'
         )
         elements.append(
-            f'<text x="20" y="{(plot_top + plot_bottom) / 2:.1f}" '
-            'font-size="16" font-family="Arial, sans-serif" '
-            'text-anchor="middle" transform="rotate(-90 20 '
+            f'<text x="15" y="{(plot_top + plot_bottom) / 2:.1f}" '
+            'font-size="12" font-family="Arial, sans-serif" '
+            'text-anchor="middle" transform="rotate(-90 15 '
             f'{(plot_top + plot_bottom) / 2:.1f})">count</text>'
         )
 
@@ -684,39 +815,176 @@ class MADPOIterTrainer(MADPOTrainer):
             color = palette.get(label, "#2878d6")
             points: List[Tuple[int, int]] = []
             for reward_value, count in zip(xs, counts.tolist()):
-                x_pos = plot_left + (
-                    (float(reward_value) - float(edges[0]))
-                    / max(float(edges[-1] - edges[0]), 1e-12)
-                ) * (plot_right - plot_left)
-                y_pos = plot_bottom - (float(count) / max_count) * (
-                    plot_bottom - plot_top
-                )
+                x_pos = x_position(float(reward_value))
+                y_pos = y_position(float(count))
                 points.append((int(round(x_pos)), int(round(y_pos))))
 
             point_string = " ".join(f"{x_pos},{y_pos}" for x_pos, y_pos in points)
             elements.append(
                 f'<polyline points="{point_string}" fill="none" stroke="{color}" '
-                'stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>'
+                'stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>'
             )
             for x_pos, y_pos in points:
                 elements.append(
-                    f'<circle cx="{x_pos}" cy="{y_pos}" r="3.5" fill="{color}"/>'
+                    f'<circle cx="{x_pos}" cy="{y_pos}" r="2.8" fill="{color}"/>'
                 )
 
             elements.append(
-                f'<line x1="{plot_right - 130}" y1="{legend_y}" '
-                f'x2="{plot_right - 95}" y2="{legend_y}" stroke="{color}" '
-                'stroke-width="3" stroke-linecap="round"/>'
+                f'<line x1="{plot_right - 104}" y1="{legend_y}" '
+                f'x2="{plot_right - 78}" y2="{legend_y}" stroke="{color}" '
+                'stroke-width="2.5" stroke-linecap="round"/>'
             )
             elements.append(
-                f'<text x="{plot_right - 88}" y="{legend_y + 5}" '
-                'font-size="14" font-family="Arial, sans-serif">'
+                f'<text x="{plot_right - 72}" y="{legend_y + 4}" '
+                'font-size="12" font-family="Arial, sans-serif">'
                 f"{MADPOIterTrainer._xml_escape(label)}</text>"
             )
-            legend_y += 22
+            legend_y += 18
 
-        elements.append("</svg>")
+        elements.append("</svg></div>")
         return wandb.Html("".join(elements))
+
+    @staticmethod
+    def _reward_distribution_bar_image(
+        *,
+        title: str,
+        edges: np.ndarray,
+        series: Sequence[Tuple[str, np.ndarray]],
+    ) -> Optional[Any]:
+        if not series:
+            return None
+
+        active_series = [(label, counts) for label, counts in series if len(counts) > 0]
+        if not active_series:
+            return None
+
+        max_count = max(float(np.max(counts)) for _, counts in active_series)
+        max_count = max(max_count, 1.0)
+
+        width, height = 440, 280
+        left, right = 58, 20
+        top, bottom = 32, 46
+        plot_left = left
+        plot_right = width - right
+        plot_top = top
+        plot_bottom = height - bottom
+
+        palette = {
+            "target": "#e87030",
+            "comparator": "#6e6e6e",
+        }
+
+        elements: List[str] = [
+            '<div style="max-width:440px;width:100%;overflow:hidden;">',
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
+            f'height="{height}" viewBox="0 0 {width} {height}" '
+            'style="display:block;max-width:100%;height:auto;">',
+            '<rect width="100%" height="100%" fill="white"/>',
+            (
+                f'<text x="{plot_left}" y="22" font-size="15" '
+                f'font-family="Arial, sans-serif" font-weight="700">'
+                f"{MADPOIterTrainer._xml_escape(title)}</text>"
+            ),
+        ]
+
+        x_min = float(edges[0])
+        x_range = max(float(edges[-1] - edges[0]), 1e-12)
+
+        def x_position(value: float) -> float:
+            return plot_left + ((float(value) - x_min) / x_range) * (
+                plot_right - plot_left
+            )
+
+        def y_position(value: float) -> float:
+            return plot_bottom - (float(value) / max_count) * (plot_bottom - plot_top)
+
+        for x_tick in np.linspace(float(edges[0]), float(edges[-1]), 5):
+            x_pos = int(round(x_position(float(x_tick))))
+            elements.append(
+                f'<line x1="{x_pos}" y1="{plot_top}" x2="{x_pos}" '
+                f'y2="{plot_bottom}" stroke="#dddddd" stroke-width="1"/>'
+            )
+            elements.append(
+                f'<text x="{x_pos}" y="{plot_bottom + 21}" font-size="12" '
+                'font-family="Arial, sans-serif" text-anchor="middle" '
+                'fill="#4d4d4d">'
+                f"{MADPOIterTrainer._format_axis_tick(float(x_tick))}</text>"
+            )
+
+        for y_tick in np.linspace(0.0, max_count, 5):
+            y_pos = int(round(y_position(float(y_tick))))
+            elements.append(
+                f'<line x1="{plot_left}" y1="{y_pos}" x2="{plot_right}" '
+                f'y2="{y_pos}" stroke="#dddddd" stroke-width="1"/>'
+            )
+            elements.append(
+                f'<text x="{plot_left - 8}" y="{y_pos + 4}" font-size="12" '
+                'font-family="Arial, sans-serif" text-anchor="end" '
+                'fill="#4d4d4d">'
+                f"{MADPOIterTrainer._format_axis_tick(float(y_tick))}</text>"
+            )
+
+        for bin_idx in range(len(edges) - 1):
+            bin_left = x_position(float(edges[bin_idx]))
+            bin_right = x_position(float(edges[bin_idx + 1]))
+            bin_width = max(bin_right - bin_left, 1.0)
+            group_left = bin_left + bin_width * 0.12
+            group_width = bin_width * 0.76
+            bar_width = group_width / max(len(active_series), 1)
+            for series_idx, (label, counts) in enumerate(active_series):
+                color = palette.get(label, "#2878d6")
+                count = float(counts[bin_idx])
+                bar_x = group_left + series_idx * bar_width
+                bar_y = y_position(count)
+                bar_height = max(plot_bottom - bar_y, 0.0)
+                elements.append(
+                    f'<rect x="{bar_x:.1f}" y="{bar_y:.1f}" '
+                    f'width="{max(bar_width - 1.0, 1.0):.1f}" '
+                    f'height="{bar_height:.1f}" fill="{color}" opacity="0.82"/>'
+                )
+
+        elements.append(
+            f'<line x1="{plot_left}" y1="{plot_bottom}" x2="{plot_right}" '
+            f'y2="{plot_bottom}" stroke="#505050" stroke-width="2"/>'
+        )
+        elements.append(
+            f'<line x1="{plot_left}" y1="{plot_top}" x2="{plot_left}" '
+            f'y2="{plot_bottom}" stroke="#505050" stroke-width="2"/>'
+        )
+        elements.append(
+            f'<text x="{(plot_left + plot_right) / 2:.1f}" y="{height - 13}" '
+            'font-size="12" font-family="Arial, sans-serif" '
+            'text-anchor="middle">reward</text>'
+        )
+        elements.append(
+            f'<text x="15" y="{(plot_top + plot_bottom) / 2:.1f}" '
+            'font-size="12" font-family="Arial, sans-serif" '
+            'text-anchor="middle" transform="rotate(-90 15 '
+            f'{(plot_top + plot_bottom) / 2:.1f})">count</text>'
+        )
+
+        legend_y = plot_top + 18
+        for label, _ in active_series:
+            color = palette.get(label, "#2878d6")
+            elements.append(
+                f'<rect x="{plot_right - 104}" y="{legend_y - 8}" '
+                f'width="24" height="10" fill="{color}" opacity="0.82"/>'
+            )
+            elements.append(
+                f'<text x="{plot_right - 72}" y="{legend_y + 2}" '
+                'font-size="12" font-family="Arial, sans-serif">'
+                f"{MADPOIterTrainer._xml_escape(label)}</text>"
+            )
+            legend_y += 18
+
+        elements.append("</svg></div>")
+        return wandb.Html("".join(elements))
+
+    @staticmethod
+    def _format_axis_tick(value: float) -> str:
+        if abs(value - round(value)) < 1e-9:
+            return str(int(round(value)))
+        return f"{value:.1f}"
 
     @staticmethod
     def _xml_escape(value: str) -> str:
@@ -837,6 +1105,42 @@ class MADPOIterTrainer(MADPOTrainer):
         path = os.path.abspath(str(path))
         os.makedirs(path, exist_ok=True)
         self._preference_replay_dir_path = path
+        return path
+
+    def _reward_distribution_dir(self) -> str:
+        cached = getattr(self, "_reward_distribution_dir_path", None)
+        if cached:
+            return cached
+
+        path = None
+        if isinstance(self.wandb_config, dict):
+            output_dir = self.wandb_config.get("output_dir")
+            if output_dir:
+                path = os.path.join(str(output_dir), "reward_distributions")
+            else:
+                sections = self.wandb_config.get("config_sections") or {}
+                output_section = (
+                    sections.get("output") if isinstance(sections, dict) else {}
+                )
+                base_dir = None
+                if isinstance(output_section, dict):
+                    base_dir = output_section.get("base_dir")
+                base_dir = base_dir or self.wandb_config.get("dir")
+                if base_dir:
+                    job_id = os.environ.get("SLURM_JOB_ID")
+                    path = (
+                        os.path.join(
+                            str(base_dir), f"job_{job_id}", "reward_distributions"
+                        )
+                        if job_id
+                        else os.path.join(str(base_dir), "reward_distributions")
+                    )
+        if not path:
+            path = os.path.join(os.getcwd(), "reward_distributions")
+
+        path = os.path.abspath(str(path))
+        os.makedirs(path, exist_ok=True)
+        self._reward_distribution_dir_path = path
         return path
 
     def _write_iteration_preference_pairs(
