@@ -13,7 +13,8 @@ import numpy as np
 import torch
 import wandb
 from tqdm import tqdm  # type: ignore
-from transformers import AutoModelForCausalLM
+
+from comlrl.trainers.model_loading import load_causal_lm_on_device
 
 from comlrl.schedulers import DeviceScheduler
 from comlrl.utils.distributed import unwrap_model
@@ -2626,14 +2627,19 @@ def aux(...):
         model_kwargs = self._comparator_model_kwargs()
         if sources and all(isinstance(src, str) for src in sources):
             comparator_agents = [
-                AutoModelForCausalLM.from_pretrained(name, **model_kwargs)
-                for name in sources
+                load_causal_lm_on_device(
+                    name,
+                    comparator_devices[agent_idx],
+                    model_kwargs,
+                )
+                for agent_idx, name in enumerate(sources)
             ]
         else:
             comparator_agents = list(sources)
 
         for agent_idx, comparator_agent in enumerate(comparator_agents):
-            comparator_agent.to(comparator_devices[agent_idx])
+            if not isinstance(sources[agent_idx], str):
+                comparator_agent.to(comparator_devices[agent_idx])
             comparator_agent.eval()
             for param in comparator_agent.parameters():
                 param.requires_grad = False
@@ -2644,12 +2650,17 @@ def aux(...):
     def _load_single_frozen_policy_agent(self, source: Any, agent_idx: int) -> Any:
         model_kwargs = self._comparator_model_kwargs()
         comparator_agent = (
-            AutoModelForCausalLM.from_pretrained(source, **model_kwargs)
+            load_causal_lm_on_device(
+                source,
+                self._resolve_comparator_devices()[agent_idx],
+                model_kwargs,
+            )
             if isinstance(source, str)
             else source
         )
         comparator_device = self._resolve_comparator_devices()[agent_idx]
-        comparator_agent.to(comparator_device)
+        if not isinstance(source, str):
+            comparator_agent.to(comparator_device)
         comparator_agent.eval()
         for param in comparator_agent.parameters():
             param.requires_grad = False
