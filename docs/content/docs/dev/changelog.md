@@ -7,17 +7,17 @@ weight: 3
 
 ## Version 1.4.1
 
-- Support comparator to be a centralized coordinator. ([#69](https://github.com/OpenMLRL/CoMLRL/pull/69)).
-- Allow to deploy LLM agents, reward model and comparator in different devices.
+- Support comparator to be a centralized coordinator (PR [#69](https://github.com/OpenMLRL/CoMLRL/pull/69)).
+- Allow to deploy LLM agents, reward model and comparator in different devices (commit [7cbb792](https://github.com/OpenMLRL/CoMLRL/commit/7cbb7928e4569359021f094686d3a01c197e2223)).
 
 ## Version 1.4.0
 
-- Add online preference-learning methods. ([#68](https://github.com/OpenMLRL/CoMLRL/pull/68)).
+- Add online preference-learning methods (PR [#68](https://github.com/OpenMLRL/CoMLRL/pull/68)).
 - Add dataset drift logger.
 
 ## Version 1.3.9
 
-- Add offline preference-learning methods, MADPO, MARLHF, etc. ([#67](https://github.com/OpenMLRL/CoMLRL/pull/67)).
+- Add offline preference-learning methods, MADPO, MARLHF, etc. (PR [#67](https://github.com/OpenMLRL/CoMLRL/pull/67)).
 
 ## Version 1.3.8
 
