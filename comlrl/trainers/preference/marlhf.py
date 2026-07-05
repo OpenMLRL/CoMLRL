@@ -1,3 +1,4 @@
+import gc
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Union
 
@@ -439,6 +440,17 @@ class MARLHFTrainer(MADPOTrainer):
             self.reward_model.parameters(),
             lr=float(self.args.reward_learning_rate),
         )
+
+    def _clear_reward_model(self) -> None:
+        if self.reward_optimizer is not None:
+            self.reward_optimizer.zero_grad(set_to_none=True)
+        self.reward_optimizer = None
+        self.reward_model = None
+        self.reward_tokenizer = None
+        self._reward_model_active = False
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _resolve_reward_model_device(self) -> torch.device:
         configured = getattr(self.args, "reward_model_device", "cuda:0")

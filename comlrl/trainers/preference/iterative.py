@@ -369,7 +369,7 @@ class MADPOIterTrainer(MADPOTrainer):
             agent.to(self.agent_devices[agent_idx])
             agent.train()
 
-        self._save_initial_policy_checkpoint()
+        self._maybe_save_initial_policy_checkpoint()
         updates_seen = 0
         total_pairs = 0
         for iteration_idx in range(int(self.args.num_iterations)):
@@ -398,7 +398,7 @@ class MADPOIterTrainer(MADPOTrainer):
                         f"for iteration {iteration_idx + 1} "
                         f"(current generated {current_pair_count})."
                     )
-                self._save_iteration_policy_checkpoint(iteration_idx)
+                self._maybe_save_iteration_policy_checkpoint(iteration_idx)
                 continue
 
             updates_seen = self._train_preference_pairs(
@@ -406,7 +406,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 iteration_idx=iteration_idx,
                 updates_seen=updates_seen,
             )
-            self._save_iteration_policy_checkpoint(iteration_idx)
+            self._maybe_save_iteration_policy_checkpoint(iteration_idx)
 
         if total_pairs == 0 and self.verbose:
             print("MADPOIter: no non-tied preference pairs were generated.")
@@ -1425,6 +1425,24 @@ class MADPOIterTrainer(MADPOTrainer):
             os.path.isdir(os.path.join(checkpoint_dir, f"agent_{agent_idx}"))
             for agent_idx in range(self.num_agents)
         )
+
+    def _policy_checkpoints_enabled(self) -> bool:
+        return bool(getattr(self.args, "policy_checkpoint_dir", None)) or (
+            getattr(self.args, "comparator_policy", None) == "history"
+        )
+
+    def _maybe_save_initial_policy_checkpoint(self) -> Optional[str]:
+        if not self._policy_checkpoints_enabled():
+            return None
+        return self._save_initial_policy_checkpoint()
+
+    def _maybe_save_iteration_policy_checkpoint(
+        self,
+        iteration_idx: int,
+    ) -> Optional[str]:
+        if not self._policy_checkpoints_enabled():
+            return None
+        return self._save_iteration_policy_checkpoint(iteration_idx)
 
     def _train_preference_pairs(
         self,
@@ -2719,11 +2737,13 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
         if self.wandb_config is not None and not self.wandb_initialized:
             self._init_wandb()
 
-        self._save_initial_policy_checkpoint()
+        self._maybe_save_initial_policy_checkpoint()
         total_pairs = 0
         for iteration_idx in range(int(self.args.num_iterations)):
             self._reward_model_active = False
             self._evaluating_with_task_reward = False
+            if self.args.preference_scoring_reward != "reward_model":
+                self._clear_reward_model()
             self._reset_iteration_reward_distribution()
             preference_pairs = self._build_preference_dataset(
                 iteration_idx=iteration_idx,
@@ -2749,14 +2769,10 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
                         f"for iteration {iteration_idx + 1} "
                         f"(current generated {current_pair_count})."
                     )
-                self._save_iteration_policy_checkpoint(iteration_idx)
+                self._maybe_save_iteration_policy_checkpoint(iteration_idx)
                 continue
 
-            self.reward_model = None
-            self.reward_tokenizer = None
-            self.reward_optimizer = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            self._clear_reward_model()
             self._init_reward_model()
             self._train_reward_model(train_pairs)
             self._reward_model_active = True
@@ -2765,12 +2781,16 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
                 _apply_magrpo_family_args(self.args)
                 self.advantage_mode = self.args.advantage_mode
                 MAGRPOTrainer.train(self, **kwargs)
-                self._save_iteration_policy_checkpoint(iteration_idx)
+                self._maybe_save_iteration_policy_checkpoint(iteration_idx)
+                if self.args.preference_scoring_reward != "reward_model":
+                    self._clear_reward_model()
                 continue
 
             if self.args.rl_algorithm in _ACTOR_CRITIC_ALGORITHMS:
                 self._train_actor_critic_rl(**kwargs)
-                self._save_iteration_policy_checkpoint(iteration_idx)
+                self._maybe_save_iteration_policy_checkpoint(iteration_idx)
+                if self.args.preference_scoring_reward != "reward_model":
+                    self._clear_reward_model()
                 continue
 
             raise ValueError(f"Unsupported rl_algorithm: {self.args.rl_algorithm}")
