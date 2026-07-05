@@ -84,6 +84,7 @@ class MARLHFConfig(MADPOConfig):
 
     rl_algorithm: str = "magrpo"
     reward_model_name: Optional[str] = None
+    reward_model_device: Optional[str] = "cuda:0"
     reward_learning_rate: float = 1.0e-5
     reward_num_train_epochs: int = 1
     reward_train_batch_size: int = 2
@@ -129,6 +130,8 @@ class MARLHFConfig(MADPOConfig):
             raise ValueError("reward_train_batch_size must be >= 1.")
         if self.reward_max_length is not None and self.reward_max_length < 1:
             raise ValueError("reward_max_length must be >= 1 or null.")
+        if self.reward_model_device is not None:
+            self.reward_model_device = str(self.reward_model_device)
         if self.critic_learning_rate is not None and self.critic_learning_rate <= 0:
             raise ValueError("critic_learning_rate must be > 0 or null.")
         critic_type = str(self.critic_type or "v").strip().lower()
@@ -171,6 +174,7 @@ class MARLHFTrainer(MADPOTrainer):
         self.reward_model: Optional[JointRewardModel] = None
         self.reward_tokenizer: Optional[PreTrainedTokenizerBase] = None
         self.reward_optimizer: Optional[torch.optim.Optimizer] = None
+        self.reward_device = self._resolve_reward_model_device()
         self._reward_model_active = False
         self._evaluating_with_task_reward = False
 
@@ -429,12 +433,18 @@ class MARLHFTrainer(MADPOTrainer):
         self.reward_model = JointRewardModel(
             backbone,
             freeze_backbone=self.args.reward_freeze_backbone,
-        ).to(self.device)
+        ).to(self.reward_device)
         self.reward_tokenizer = tokenizer
         self.reward_optimizer = torch.optim.AdamW(
             self.reward_model.parameters(),
             lr=float(self.args.reward_learning_rate),
         )
+
+    def _resolve_reward_model_device(self) -> torch.device:
+        configured = getattr(self.args, "reward_model_device", "cuda:0")
+        if configured is None:
+            return self.device
+        return torch.device(str(configured))
 
     def _train_reward_model(self, preference_pairs: List[PreferencePair]) -> None:
         if self.reward_model is None or self.reward_optimizer is None:
@@ -528,7 +538,7 @@ class MARLHFTrainer(MADPOTrainer):
             max_length=self.args.reward_max_length,
             return_tensors="pt",
         )
-        encoded = {key: value.to(self.device) for key, value in encoded.items()}
+        encoded = {key: value.to(self.reward_device) for key, value in encoded.items()}
         return self.reward_model(
             input_ids=encoded["input_ids"],
             attention_mask=encoded["attention_mask"],

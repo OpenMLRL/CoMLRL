@@ -7,7 +7,8 @@ weight: 3
 
 ## Version 1.4.1
 
-- Allow comparator as a centralized coordinator. ([#69](https://github.com/OpenMLRL/CoMLRL/pull/69)).
+- Support comparator to be a centralized coordinator. ([#69](https://github.com/OpenMLRL/CoMLRL/pull/69)).
+- Allow to deploy LLM agents, reward model and comparator in different devices.
 
 ## Version 1.4.0
 
@@ -66,23 +67,21 @@ weight: 3
 
 ## Version 1.3.0
 
-Use TD error as critic update target in IACTrainer and MAACTrainer.
+- Use TD error as critic update target in IACTrainer and MAACTrainer.
 
 ## Version 1.2.9
 
-Add MAACTrainer (separated centralized critic), now both IACTrainer and MAACTrainer can support single-turn training.
+- Add MAACTrainer (separated centralized critic), now both IACTrainer and MAACTrainer can support single-turn training.
 
 ## Version 1.2.8
 
-The critic in IACTrainer now estimate V rather than Q.
+- The critic in IACTrainer now estimate V rather than Q.
 
 ## Version 1.2.7
 
-Change the IPPOTrainer to be IACTrainer.
+- Change the IPPOTrainer to be IACTrainer.
 
 ## Version 1.2.6
-
-The first release of CoMLRL:
 
 - Including MAGRPO, MAREINFORCE, MARLOO, MAREMAX, and IPPO trainers for multi-agent reinforcement learning with LLMs.
 - Support for multi-turn training with custom external feedback mechanisms.

@@ -136,3 +136,4 @@ def test_marlhf_config_constraints():
 
     MARLHFConfig(agent_devices="cpu")
     MARLHFConfig(agent_devices="cpu", rl_algorithm="maac")
+    MARLHFConfig(agent_devices="cpu", reward_model_device="cpu")
