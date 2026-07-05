@@ -3,6 +3,7 @@ import inspect
 import json
 import os
 import random
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from urllib import error as urlerror
@@ -54,6 +55,17 @@ def _normalize_comparator_policy(policy: Optional[str]) -> str:
     raise ValueError("comparator_policy must be one of: current, model, history, api.")
 
 
+def _normalize_comparator_generation_mode(mode: Optional[str]) -> str:
+    value = str(mode or "decentralized").strip().lower()
+    if value in {"decentralized", "decentralised", "multi_agent", "multi-agent"}:
+        return "decentralized"
+    if value in {"centralized", "centralised", "single_agent", "single-agent"}:
+        return "centralized"
+    raise ValueError(
+        "comparator_generation_mode must be one of: decentralized, centralized."
+    )
+
+
 def _normalize_preference_replay_mode(mode: Optional[str]) -> str:
     value = str(mode or "current").strip().lower()
     if value in {"current", "latest", "new"}:
@@ -86,6 +98,24 @@ def _validate_iterative_config(args: Any) -> None:
     )
     _validate_preference_replay_args(args)
     args.comparator_policy = _normalize_comparator_policy(args.comparator_policy)
+    args.comparator_generation_mode = _normalize_comparator_generation_mode(
+        getattr(args, "comparator_generation_mode", "decentralized")
+    )
+    if args.comparator_generation_mode == "centralized":
+        if int(args.num_agents) != 2:
+            raise ValueError(
+                "comparator_generation_mode='centralized' currently requires "
+                "num_agents=2."
+            )
+        if int(args.comparator_centralized_agent_index) < 0:
+            raise ValueError("comparator_centralized_agent_index must be >= 0.")
+        if int(args.comparator_centralized_agent_index) >= int(args.num_agents):
+            raise ValueError(
+                "comparator_centralized_agent_index must be smaller than num_agents."
+            )
+        args.comparator_centralized_agent_index = int(
+            args.comparator_centralized_agent_index
+        )
     if args.comparator_num_candidates is not None:
         if int(args.comparator_num_candidates) < 1:
             raise ValueError("comparator_num_candidates must be >= 1 or null.")
@@ -231,6 +261,8 @@ class MADPOIterConfig(MADPOConfig):
     log_reward_distribution: bool = False
     policy_checkpoint_dir: Optional[str] = None
     comparator_policy: str = "current"
+    comparator_generation_mode: str = "decentralized"
+    comparator_centralized_agent_index: int = 0
     comparator_model_name: Optional[str] = None
     comparator_agents: Optional[Sequence[str]] = None
     comparator_devices: Optional[Union[str, Sequence[str]]] = None
@@ -276,6 +308,8 @@ class MARLHFIterConfig(MARLHFConfig):
     preference_scoring_reward: str = "task"
     policy_checkpoint_dir: Optional[str] = None
     comparator_policy: str = "current"
+    comparator_generation_mode: str = "decentralized"
+    comparator_centralized_agent_index: int = 0
     comparator_model_name: Optional[str] = None
     comparator_agents: Optional[Sequence[str]] = None
     comparator_devices: Optional[Union[str, Sequence[str]]] = None
@@ -1454,32 +1488,12 @@ class MADPOIterTrainer(MADPOTrainer):
             num_candidates=current_candidates,
             **kwargs,
         )
-        if self.args.comparator_policy == "api":
-            comparator_outputs = self._generate_api_outputs_for_item(
-                batch_item,
-                num_candidates=comparator_candidates,
-            )
-        elif self.args.comparator_policy == "current":
-            comparator_outputs = self._generate_policy_outputs_for_item(
-                self.agents,
-                batch_item,
-                num_candidates=comparator_candidates,
-                **kwargs,
-            )
-        elif self.args.comparator_policy == "history":
-            comparator_outputs = self._generate_history_policy_outputs_for_item(
-                batch_item,
-                iteration_idx=iteration_idx,
-                num_candidates=comparator_candidates,
-                **kwargs,
-            )
-        else:
-            comparator_outputs = self._generate_policy_outputs_for_item(
-                self._get_comparator_agents(),
-                batch_item,
-                num_candidates=comparator_candidates,
-                **kwargs,
-            )
+        comparator_outputs = self._generate_comparator_outputs_for_item(
+            batch_item,
+            iteration_idx=iteration_idx,
+            num_candidates=comparator_candidates,
+            **kwargs,
+        )
 
         current_completions = [
             current_outputs[i]["completions"][0] for i in range(self.num_agents)
@@ -1674,6 +1688,48 @@ class MADPOIterTrainer(MADPOTrainer):
     ) -> Optional[Tuple[List[float], List[float]]]:
         return None
 
+    def _generate_comparator_outputs_for_item(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        iteration_idx: int,
+        num_candidates: int,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        if self.args.comparator_generation_mode == "centralized":
+            return self._generate_centralized_comparator_outputs_for_item(
+                batch_item,
+                iteration_idx=iteration_idx,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+
+        if self.args.comparator_policy == "api":
+            return self._generate_api_outputs_for_item(
+                batch_item,
+                num_candidates=num_candidates,
+            )
+        if self.args.comparator_policy == "current":
+            return self._generate_policy_outputs_for_item(
+                self.agents,
+                batch_item,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+        if self.args.comparator_policy == "history":
+            return self._generate_history_policy_outputs_for_item(
+                batch_item,
+                iteration_idx=iteration_idx,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+        return self._generate_policy_outputs_for_item(
+            self._get_comparator_agents(),
+            batch_item,
+            num_candidates=num_candidates,
+            **kwargs,
+        )
+
     def _generate_policy_outputs_for_item(
         self,
         policy_agents: Sequence[Any],
@@ -1693,6 +1749,401 @@ class MADPOIterTrainer(MADPOTrainer):
             )
 
         return self._run_agent_tasks(_generate_agent)
+
+    def _generate_centralized_comparator_outputs_for_item(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        iteration_idx: int,
+        num_candidates: int,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        prompt = self._build_centralized_comparator_prompt(batch_item)
+        if self.args.comparator_policy == "api":
+            completions = self._call_comparator_api(
+                prompt=prompt,
+                agent_idx=self._centralized_comparator_agent_index(),
+                batch_item=batch_item,
+                num_candidates=num_candidates,
+            )
+            return self._split_centralized_comparator_outputs(
+                completions,
+                batch_item=batch_item,
+                prompt=prompt,
+            )
+        if self.args.comparator_policy == "current":
+            return self._generate_centralized_policy_output_for_agent(
+                self.agents[self._centralized_comparator_agent_index()],
+                batch_item,
+                prompt=prompt,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+        if self.args.comparator_policy == "history":
+            checkpoint_dir = self._history_policy_checkpoint_path(iteration_idx)
+            agent_idx = self._centralized_comparator_agent_index()
+            comparator_agent = self._load_single_policy_checkpoint_agent(
+                checkpoint_dir,
+                agent_idx,
+            )
+            try:
+                return self._generate_centralized_policy_output_for_agent(
+                    comparator_agent,
+                    batch_item,
+                    prompt=prompt,
+                    num_candidates=num_candidates,
+                    **kwargs,
+                )
+            finally:
+                del comparator_agent
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+        return self._generate_centralized_policy_output_for_agent(
+            self._get_centralized_comparator_agent(),
+            batch_item,
+            prompt=prompt,
+            num_candidates=num_candidates,
+            **kwargs,
+        )
+
+    def _generate_centralized_policy_output_for_agent(
+        self,
+        policy_agent: Any,
+        batch_item: Dict[str, Any],
+        *,
+        prompt: str,
+        num_candidates: int,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        agent_idx = self._centralized_comparator_agent_index()
+        generation_output = self._generate_completions(
+            policy_agent,
+            [batch_item],
+            agent_idx=agent_idx,
+            num_return_sequences=num_candidates,
+            max_new_tokens=self.args.max_new_tokens,
+            prompts_override=[prompt],
+            **kwargs,
+        )
+        completions = generation_output["completions"][0]
+        return self._split_centralized_comparator_outputs(
+            completions,
+            batch_item=batch_item,
+            prompt=prompt,
+        )
+
+    def _centralized_comparator_agent_index(self) -> int:
+        return int(getattr(self.args, "comparator_centralized_agent_index", 0))
+
+    def _build_centralized_comparator_prompt(self, batch_item: Dict[str, Any]) -> str:
+        if self.num_agents != 2:
+            raise ValueError(
+                "Centralized comparator generation currently supports exactly 2 agents."
+            )
+        auxiliary_prompt = self.formatters[0](batch_item)
+        main_prompt = self.formatters[1](batch_item)
+        entry_signature = self._centralized_main_signature(batch_item)
+        return f"""You are acting as one centralized coordinator for two code-generation agents.
+
+Your job is to produce the exact outputs that two decentralized agents would submit:
+one Auxiliary output and one Main output. The two outputs must work together.
+
+Auxiliary agent original prompt:
+{auxiliary_prompt}
+
+Main agent original prompt:
+{main_prompt}
+
+IMPORTANT INSTRUCTIONS:
+- Return exactly two complete code snippets: one for Auxiliary and one for Main.
+- The Auxiliary snippet must define the helper function aux(...).
+- The Main snippet must define only the required main function from the problem.
+- Do not copy placeholders such as required_function, ..., result, or pass.
+- Do not include explanations, examples, tests, markdown fences, or extra text.
+- Use the exact section tags below so the parser can split the two outputs.
+
+<auxiliary>
+def aux(...):
+    # your auxiliary code here
+    return result
+</auxiliary>
+
+<main>
+{entry_signature}:
+    # your main code here
+    return result
+</main>
+"""
+
+    @staticmethod
+    def _centralized_main_signature(batch_item: Dict[str, Any]) -> str:
+        entry_point = str(batch_item.get("entry_point") or "").strip()
+        prompt = str(batch_item.get("prompt") or "")
+        if entry_point:
+            pattern = rf"def\s+{re.escape(entry_point)}\s*\(([^)]*)\)"
+            match = re.search(pattern, prompt)
+            if match:
+                return f"def {entry_point}({match.group(1).strip()})"
+            return f"def {entry_point}(...)"
+        match = re.search(r"def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)", prompt)
+        if match:
+            return f"def {match.group(1)}({match.group(2).strip()})"
+        return "def main(...)"
+
+    def _split_centralized_comparator_outputs(
+        self,
+        completions: Sequence[str],
+        *,
+        batch_item: Dict[str, Any],
+        prompt: str,
+    ) -> List[Dict[str, Any]]:
+        auxiliary_completions: List[str] = []
+        main_completions: List[str] = []
+        for completion in completions:
+            raw_completion = str(completion)
+            auxiliary, main = self._parse_centralized_comparator_completion(
+                raw_completion,
+                batch_item=batch_item,
+            )
+            auxiliary_completions.append(auxiliary)
+            main_completions.append(main)
+
+        if not auxiliary_completions:
+            raise ValueError("Centralized comparator produced no candidates.")
+
+        return [
+            {
+                "prompts": [prompt],
+                "batch_items": [batch_item],
+                "completions": [auxiliary_completions],
+            },
+            {
+                "prompts": [prompt],
+                "batch_items": [batch_item],
+                "completions": [main_completions],
+            },
+        ]
+
+    def _parse_centralized_comparator_completion(
+        self,
+        text: str,
+        *,
+        batch_item: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, str]:
+        partial_auxiliary: Optional[str] = None
+        partial_main: Optional[str] = None
+
+        def _remember(
+            auxiliary: Optional[str],
+            main: Optional[str],
+        ) -> Optional[Tuple[str, str]]:
+            nonlocal partial_auxiliary, partial_main
+            clean_auxiliary = (
+                self._clean_centralized_section(auxiliary)
+                if auxiliary is not None
+                else None
+            )
+            clean_main = (
+                self._clean_centralized_section(main) if main is not None else None
+            )
+            if clean_auxiliary is not None and partial_auxiliary is None:
+                partial_auxiliary = clean_auxiliary
+            if clean_main is not None and partial_main is None:
+                partial_main = clean_main
+            if clean_auxiliary is not None and clean_main is not None:
+                return clean_auxiliary, clean_main
+            return None
+
+        auxiliary = self._extract_tagged_section(text, "auxiliary")
+        main = self._extract_tagged_section(text, "main")
+        result = _remember(auxiliary, main)
+        if result is not None:
+            return result
+
+        auxiliary, main = self._extract_labeled_centralized_sections(text)
+        result = _remember(auxiliary, main)
+        if result is not None:
+            return result
+
+        auxiliary, main = self._extract_json_centralized_sections(text)
+        result = _remember(auxiliary, main)
+        if result is not None:
+            return result
+
+        auxiliary, main = self._extract_fenced_code_centralized_sections(text)
+        result = _remember(auxiliary, main)
+        if result is not None:
+            return result
+
+        auxiliary, main = self._extract_function_centralized_sections(
+            text,
+            batch_item=batch_item,
+        )
+        result = _remember(auxiliary, main)
+        if result is not None:
+            return result
+
+        if partial_auxiliary is not None or partial_main is not None:
+            return partial_auxiliary or "", partial_main or ""
+
+        return "", ""
+
+    @staticmethod
+    def _extract_tagged_section(text: str, tag: str) -> Optional[str]:
+        pattern = rf"<\s*{tag}\s*>(.*?)<\s*/\s*{tag}\s*>"
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            return match.group(1)
+        return None
+
+    @staticmethod
+    def _extract_labeled_centralized_sections(
+        text: str,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        auxiliary_label = re.search(
+            r"(?im)^\s*(?:#{1,6}\s*)?(?:auxiliary|aux)\s*(?:code|output)?\s*:\s*$",
+            text,
+        )
+        main_label = re.search(
+            r"(?im)^\s*(?:#{1,6}\s*)?main\s*(?:code|output)?\s*:\s*$",
+            text,
+        )
+        if auxiliary_label is None or main_label is None:
+            if auxiliary_label is not None:
+                return text[auxiliary_label.end() :], None
+            if main_label is not None:
+                return None, text[main_label.end() :]
+            return None, None
+
+        if auxiliary_label.start() < main_label.start():
+            auxiliary = text[auxiliary_label.end() : main_label.start()]
+            main = text[main_label.end() :]
+        else:
+            main = text[main_label.end() : auxiliary_label.start()]
+            auxiliary = text[auxiliary_label.end() :]
+        return auxiliary, main
+
+    @staticmethod
+    def _extract_json_centralized_sections(
+        text: str,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        value = text.strip()
+        fence_match = re.fullmatch(
+            r"```(?:json)?\s*(.*?)```", value, flags=re.IGNORECASE | re.DOTALL
+        )
+        if fence_match:
+            value = fence_match.group(1).strip()
+
+        candidates = [value]
+        start = value.find("{")
+        end = value.rfind("}")
+        if start >= 0 and end > start:
+            candidates.append(value[start : end + 1])
+
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            auxiliary = parsed.get("auxiliary")
+            if auxiliary is None:
+                auxiliary = parsed.get("aux")
+            main = parsed.get("main")
+            if auxiliary is not None or main is not None:
+                return (
+                    str(auxiliary) if auxiliary is not None else None,
+                    str(main) if main is not None else None,
+                )
+        return None, None
+
+    @staticmethod
+    def _extract_fenced_code_centralized_sections(
+        text: str,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        blocks = re.findall(
+            r"```(?:python)?\s*(.*?)```",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if len(blocks) >= 2:
+            return blocks[0], blocks[1]
+        return None, None
+
+    @classmethod
+    def _extract_function_centralized_sections(
+        cls,
+        text: str,
+        *,
+        batch_item: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Optional[str], Optional[str]]:
+        entry_point = None
+        if isinstance(batch_item, dict):
+            value = batch_item.get("entry_point")
+            if value is not None:
+                entry_point = str(value).strip() or None
+
+        auxiliary = cls._extract_python_function(text, "aux")
+        main = cls._extract_python_function(text, entry_point) if entry_point else None
+        if main is None:
+            for name in cls._python_function_names(text):
+                if name != "aux":
+                    main = cls._extract_python_function(text, name)
+                    break
+        return auxiliary, main
+
+    @staticmethod
+    def _python_function_names(text: str) -> List[str]:
+        return [
+            match.group(1)
+            for match in re.finditer(
+                r"(?m)^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                text,
+            )
+        ]
+
+    @staticmethod
+    def _extract_python_function(
+        text: str, function_name: Optional[str]
+    ) -> Optional[str]:
+        if not function_name:
+            return None
+        pattern = re.compile(rf"(?m)^([ \t]*)def\s+{re.escape(function_name)}\s*\(")
+        match = pattern.search(text)
+        if match is None:
+            return None
+
+        lines = text[match.start() :].splitlines()
+        if not lines:
+            return None
+        base_indent = len(lines[0]) - len(lines[0].lstrip(" \t"))
+        selected = [lines[0]]
+        for line in lines[1:]:
+            stripped = line.strip()
+            indent = len(line) - len(line.lstrip(" \t"))
+            if stripped and indent <= base_indent:
+                if re.match(r"(def|class)\s+", stripped):
+                    break
+                if re.match(r"<?/?(?:auxiliary|main)>?:?$", stripped, re.I):
+                    break
+                if re.match(
+                    r"(?:auxiliary|aux|main)\s*(?:code|output)?\s*:", stripped, re.I
+                ):
+                    break
+            selected.append(line)
+        return "\n".join(selected).strip()
+
+    @staticmethod
+    def _clean_centralized_section(text: str) -> str:
+        value = text.strip()
+        fence_match = re.fullmatch(
+            r"```(?:python)?\s*(.*?)```", value, flags=re.IGNORECASE | re.DOTALL
+        )
+        if fence_match:
+            value = fence_match.group(1).strip()
+        return value
 
     def _generate_history_policy_outputs_for_item(
         self,
@@ -2082,6 +2533,39 @@ class MADPOIterTrainer(MADPOTrainer):
             self._comparator_agents = self._load_comparator_agents()
         return self._comparator_agents
 
+    def _get_centralized_comparator_agent(self) -> Any:
+        if self.args.comparator_policy == "current":
+            return self.agents[self._centralized_comparator_agent_index()]
+        if self.args.comparator_policy == "history":
+            raise ValueError("History comparator agents must be loaded per iteration.")
+        if getattr(self, "_centralized_comparator_agent", None) is None:
+            source = self._centralized_comparator_source()
+            self._centralized_comparator_agent = self._load_single_frozen_policy_agent(
+                source,
+                self._centralized_comparator_agent_index(),
+            )
+        return self._centralized_comparator_agent
+
+    def _centralized_comparator_source(self) -> Any:
+        if self.args.comparator_agents is not None:
+            sources = self.args.comparator_agents
+            if isinstance(sources, (str, bytes)) or not isinstance(sources, Sequence):
+                raise ValueError("comparator_agents must be a non-empty sequence.")
+            if len(sources) == 1:
+                return list(sources)[0]
+            if len(sources) == self.num_agents:
+                return list(sources)[self._centralized_comparator_agent_index()]
+            raise ValueError(
+                "comparator_agents length must be 1 or num_agents when "
+                "comparator_generation_mode='centralized'."
+            )
+        if self.args.comparator_model_name is None:
+            raise ValueError(
+                "comparator_model_name or comparator_agents is required when "
+                "comparator_policy='model'."
+            )
+        return self.args.comparator_model_name
+
     def _load_comparator_agents(self) -> List[Any]:
         comparator_sources, _ = resolve_model_sources(
             kind="comparator_agents",
@@ -2106,6 +2590,19 @@ class MADPOIterTrainer(MADPOTrainer):
             )
         return self._load_frozen_policy_agents(checkpoint_sources)
 
+    def _load_single_policy_checkpoint_agent(
+        self,
+        checkpoint_dir: str,
+        agent_idx: int,
+    ) -> Any:
+        checkpoint_source = os.path.join(checkpoint_dir, f"agent_{agent_idx}")
+        if not os.path.isdir(checkpoint_source):
+            raise ValueError(
+                "Missing comparator history checkpoint agent directory: "
+                f"{checkpoint_source}."
+            )
+        return self._load_single_frozen_policy_agent(checkpoint_source, agent_idx)
+
     def _load_frozen_policy_agents(self, sources: Sequence[Any]) -> List[Any]:
         comparator_devices = self._resolve_comparator_devices()
         model_kwargs = self._comparator_model_kwargs()
@@ -2125,6 +2622,21 @@ class MADPOIterTrainer(MADPOTrainer):
             apply_tokenizer_specials(self.tokenizers[agent_idx], [comparator_agent])
 
         return comparator_agents
+
+    def _load_single_frozen_policy_agent(self, source: Any, agent_idx: int) -> Any:
+        model_kwargs = self._comparator_model_kwargs()
+        comparator_agent = (
+            AutoModelForCausalLM.from_pretrained(source, **model_kwargs)
+            if isinstance(source, str)
+            else source
+        )
+        comparator_device = self._resolve_comparator_devices()[agent_idx]
+        comparator_agent.to(comparator_device)
+        comparator_agent.eval()
+        for param in comparator_agent.parameters():
+            param.requires_grad = False
+        apply_tokenizer_specials(self.tokenizers[agent_idx], [comparator_agent])
+        return comparator_agent
 
     def _resolve_comparator_devices(self) -> List[torch.device]:
         return DeviceScheduler.resolve_devices(
