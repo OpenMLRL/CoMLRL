@@ -7,9 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm  # type: ignore
-from transformers import AutoTokenizer, PreTrainedTokenizerBase
+from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
 
-from comlrl.trainers.model_loading import load_causal_lm_on_device
 from comlrl.utils.tokenizer_utils import ensure_pad_token
 
 from .madpo import MADPOConfig, MADPOTrainer, PreferencePair
@@ -431,11 +430,11 @@ class MARLHFTrainer(MADPOTrainer):
         tokenizer = AutoTokenizer.from_pretrained(source)
         tokenizer = ensure_pad_token(tokenizer)
         model_kwargs = self._model_kwargs_from_config()
-        backbone = load_causal_lm_on_device(source, self.reward_device, model_kwargs)
+        backbone = AutoModelForCausalLM.from_pretrained(source, **model_kwargs)
         self.reward_model = JointRewardModel(
             backbone,
             freeze_backbone=self.args.reward_freeze_backbone,
-        )
+        ).to(self.reward_device)
         self.reward_tokenizer = tokenizer
         self.reward_optimizer = torch.optim.AdamW(
             self.reward_model.parameters(),
