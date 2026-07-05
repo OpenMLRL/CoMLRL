@@ -7,6 +7,10 @@ weight: 3
 
 ## Version 1.4.0
 
+- Allow comparator with centralized coordinator. ([#69](https://github.com/OpenMLRL/CoMLRL/pull/69)).
+
+## Version 1.4.0
+
 - Add online preference-learning methods. ([#68](https://github.com/OpenMLRL/CoMLRL/pull/68)).
 - Add dataset drift logger.
 
