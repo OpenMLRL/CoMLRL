@@ -7,7 +7,7 @@ weight: 3
 
 ## Version 1.4.1
 
-- Allow comparator with centralized coordinator. ([#69](https://github.com/OpenMLRL/CoMLRL/pull/69)).
+- Allow comparator as a centralized coordinator. ([#69](https://github.com/OpenMLRL/CoMLRL/pull/69)).
 
 ## Version 1.4.0
 
