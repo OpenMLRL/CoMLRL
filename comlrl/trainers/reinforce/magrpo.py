@@ -249,19 +249,6 @@ class MAGRPOTrainer:
             )
         if torch_dtype is not None:
             model_kwargs["torch_dtype"] = torch_dtype
-        if isinstance(self.model_config, dict):
-            extra_model_kwargs = self.model_config.get("model_kwargs")
-            if isinstance(extra_model_kwargs, dict):
-                model_kwargs.update(
-                    {
-                        key: value
-                        for key, value in extra_model_kwargs.items()
-                        if value is not None
-                    }
-                )
-            attn_implementation = self.model_config.get("attn_implementation")
-            if attn_implementation is not None:
-                model_kwargs["attn_implementation"] = attn_implementation
         if actor_sources and all(isinstance(src, str) for src in actor_sources):
             from transformers import AutoModelForCausalLM
 
