@@ -1222,7 +1222,6 @@ class MAGRPOTrainer:
                 "input_ids": prompt_input_ids,
                 "attention_mask": prompt_attention_mask,
                 "max_new_tokens": max_new_tokens,
-                "output_scores": True,
                 "return_dict_in_generate": True,
             }
 
@@ -1241,14 +1240,15 @@ class MAGRPOTrainer:
 
             kwargs.pop("do_sample", None)
             generation_kwargs.update(kwargs)
-            generation_output = agent_module.generate(**generation_kwargs)
+            with torch.inference_mode():
+                generation_output = agent_module.generate(**generation_kwargs)
         except Exception as e:
             raise ValueError(f"Generation failed: {str(e)}")
-
-        agent.train(training_mode)
-        for name, param in agent.named_parameters():
-            if name in original_requires_grad:
-                param.requires_grad = original_requires_grad[name]
+        finally:
+            agent.train(training_mode)
+            for name, param in agent.named_parameters():
+                if name in original_requires_grad:
+                    param.requires_grad = original_requires_grad[name]
 
         completion_input_ids = generation_output.sequences
 
@@ -1294,9 +1294,6 @@ class MAGRPOTrainer:
             batch_masks.append(mask)
         completion_attention_masks.append(batch_masks)
 
-        logits = (
-            generation_output.scores if hasattr(generation_output, "scores") else []
-        )
         reference_kls = self._reference_kl_values(
             agent_idx,
             agent_module,
@@ -1316,7 +1313,6 @@ class MAGRPOTrainer:
             "completion_attention_mask": completion_attention_masks,
             "response_lens": batch_response_lens,
             "reference_kls": reference_kls,
-            "logits": logits,
         }
 
     def _generate_completions_with_external_prompts(
