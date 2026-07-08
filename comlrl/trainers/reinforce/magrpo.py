@@ -1701,6 +1701,7 @@ class MAGRPOTrainer:
                 outputs = agent(
                     input_ids=input_ids.unsqueeze(0),  # Add batch dimension
                     attention_mask=attention_mask.unsqueeze(0),  # Add batch dimension
+                    use_cache=False,
                 )
 
                 # Get logits for the completion part (excluding prompt)
