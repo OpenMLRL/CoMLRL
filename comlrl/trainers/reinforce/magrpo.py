@@ -249,6 +249,18 @@ class MAGRPOTrainer:
             )
         if torch_dtype is not None:
             model_kwargs["torch_dtype"] = torch_dtype
+        attn_implementation = "sdpa"
+        if isinstance(self.model_config, dict):
+            nested_model_kwargs = self.model_config.get("model_kwargs")
+            if "attn_implementation" in self.model_config:
+                attn_implementation = self.model_config.get("attn_implementation")
+            elif (
+                isinstance(nested_model_kwargs, dict)
+                and "attn_implementation" in nested_model_kwargs
+            ):
+                attn_implementation = nested_model_kwargs.get("attn_implementation")
+        if attn_implementation is not None:
+            model_kwargs["attn_implementation"] = attn_implementation
         if actor_sources and all(isinstance(src, str) for src in actor_sources):
             from transformers import AutoModelForCausalLM
 
@@ -1210,7 +1222,6 @@ class MAGRPOTrainer:
                 "input_ids": prompt_input_ids,
                 "attention_mask": prompt_attention_mask,
                 "max_new_tokens": max_new_tokens,
-                "output_scores": True,
                 "return_dict_in_generate": True,
             }
 
@@ -1229,14 +1240,15 @@ class MAGRPOTrainer:
 
             kwargs.pop("do_sample", None)
             generation_kwargs.update(kwargs)
-            generation_output = agent_module.generate(**generation_kwargs)
+            with torch.inference_mode():
+                generation_output = agent_module.generate(**generation_kwargs)
         except Exception as e:
             raise ValueError(f"Generation failed: {str(e)}")
-
-        agent.train(training_mode)
-        for name, param in agent.named_parameters():
-            if name in original_requires_grad:
-                param.requires_grad = original_requires_grad[name]
+        finally:
+            agent.train(training_mode)
+            for name, param in agent.named_parameters():
+                if name in original_requires_grad:
+                    param.requires_grad = original_requires_grad[name]
 
         completion_input_ids = generation_output.sequences
 
@@ -1282,9 +1294,6 @@ class MAGRPOTrainer:
             batch_masks.append(mask)
         completion_attention_masks.append(batch_masks)
 
-        logits = (
-            generation_output.scores if hasattr(generation_output, "scores") else []
-        )
         reference_kls = self._reference_kl_values(
             agent_idx,
             agent_module,
@@ -1304,7 +1313,6 @@ class MAGRPOTrainer:
             "completion_attention_mask": completion_attention_masks,
             "response_lens": batch_response_lens,
             "reference_kls": reference_kls,
-            "logits": logits,
         }
 
     def _generate_completions_with_external_prompts(
@@ -1693,6 +1701,7 @@ class MAGRPOTrainer:
                 outputs = agent(
                     input_ids=input_ids.unsqueeze(0),  # Add batch dimension
                     attention_mask=attention_mask.unsqueeze(0),  # Add batch dimension
+                    use_cache=False,
                 )
 
                 # Get logits for the completion part (excluding prompt)

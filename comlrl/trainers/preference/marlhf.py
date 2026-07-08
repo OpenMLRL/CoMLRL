@@ -405,6 +405,22 @@ class MARLHFTrainer(MADPOTrainer):
                 torch_dtype = nested.get("torch_dtype") or nested.get("dtype")
             if torch_dtype is not None:
                 model_kwargs["torch_dtype"] = torch_dtype
+            attn_implementation = "sdpa"
+            nested = config.get("model_kwargs")
+            if "attn_implementation" in config:
+                attn_implementation = config.get("attn_implementation")
+            elif isinstance(nested, dict) and "attn_implementation" in nested:
+                attn_implementation = nested.get("attn_implementation")
+            elif source_config is not None and isinstance(self.model_config, dict):
+                nested = self.model_config.get("model_kwargs")
+                if "attn_implementation" in self.model_config:
+                    attn_implementation = self.model_config.get("attn_implementation")
+                elif isinstance(nested, dict) and "attn_implementation" in nested:
+                    attn_implementation = nested.get("attn_implementation")
+            if attn_implementation is not None:
+                model_kwargs["attn_implementation"] = attn_implementation
+        else:
+            model_kwargs["attn_implementation"] = "sdpa"
         return model_kwargs
 
     def _resolve_critic_model_source(self):
