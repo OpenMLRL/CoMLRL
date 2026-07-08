@@ -2672,6 +2672,18 @@ def aux(...):
             )
         if torch_dtype is not None:
             model_kwargs["torch_dtype"] = torch_dtype
+        attn_implementation = "sdpa"
+        if isinstance(self.model_config, dict):
+            nested_model_kwargs = self.model_config.get("model_kwargs")
+            if "attn_implementation" in self.model_config:
+                attn_implementation = self.model_config.get("attn_implementation")
+            elif (
+                isinstance(nested_model_kwargs, dict)
+                and "attn_implementation" in nested_model_kwargs
+            ):
+                attn_implementation = nested_model_kwargs.get("attn_implementation")
+        if attn_implementation is not None:
+            model_kwargs["attn_implementation"] = attn_implementation
         return model_kwargs
 
     @staticmethod

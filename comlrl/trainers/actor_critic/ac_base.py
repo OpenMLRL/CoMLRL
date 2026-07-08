@@ -58,13 +58,33 @@ class ActorCriticTrainerBase:
 
     def _filter_model_kwargs(self, cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         torch_dtype = None
+        attn_implementation = "sdpa"
+        cfg_has_attn = isinstance(cfg, dict) and "attn_implementation" in cfg
         if isinstance(cfg, dict):
             torch_dtype = cfg.get("torch_dtype") or cfg.get("dtype")
+            if cfg_has_attn:
+                attn_implementation = cfg.get("attn_implementation")
         if torch_dtype is None:
             model_cfg = getattr(self, "model_config", None)
             if isinstance(model_cfg, dict):
                 torch_dtype = model_cfg.get("torch_dtype") or model_cfg.get("dtype")
-        return {"torch_dtype": torch_dtype} if torch_dtype is not None else {}
+        if not cfg_has_attn:
+            model_cfg = getattr(self, "model_config", None)
+            if isinstance(model_cfg, dict):
+                nested_model_kwargs = model_cfg.get("model_kwargs")
+                if "attn_implementation" in model_cfg:
+                    attn_implementation = model_cfg.get("attn_implementation")
+                elif (
+                    isinstance(nested_model_kwargs, dict)
+                    and "attn_implementation" in nested_model_kwargs
+                ):
+                    attn_implementation = nested_model_kwargs.get("attn_implementation")
+        model_kwargs = {}
+        if torch_dtype is not None:
+            model_kwargs["torch_dtype"] = torch_dtype
+        if attn_implementation is not None:
+            model_kwargs["attn_implementation"] = attn_implementation
+        return model_kwargs
 
     def _format_prompt(
         self,
