@@ -84,6 +84,7 @@ class MARLHFConfig(MADPOConfig):
     """Configuration for offline joint reward modeling followed by online MARL."""
 
     rl_algorithm: str = "magrpo"
+    num_generations: int = 4
     reward_model_name: Optional[str] = None
     reward_model_device: Optional[str] = "cuda:0"
     reward_learning_rate: float = 1.0e-5
@@ -103,11 +104,7 @@ class MARLHFConfig(MADPOConfig):
 
     def __post_init__(self) -> None:
         algorithm = _normalize_rl_algorithm(self.rl_algorithm)
-        original_num_generations = self.num_generations
-        if algorithm in _ACTOR_CRITIC_ALGORITHMS and original_num_generations < 2:
-            self.num_generations = 2
         super().__post_init__()
-        self.num_generations = original_num_generations
         allowed = {
             "magrpo",
             "mareinforce",
@@ -121,6 +118,10 @@ class MARLHFConfig(MADPOConfig):
                 "rl_algorithm must be one of: magrpo, mareinforce, maremax, marloo, maac, iac."
             )
         self.rl_algorithm = algorithm
+        if algorithm in _MAGRPO_ADVANTAGE_MODES and self.num_generations < 2:
+            raise ValueError(
+                "num_generations must be >= 2 for MAGRPO-family MARLHF backends."
+            )
         if algorithm in _ACTOR_CRITIC_ALGORITHMS and self.num_generations < 1:
             raise ValueError("num_generations must be >= 1.")
         if self.reward_learning_rate <= 0:

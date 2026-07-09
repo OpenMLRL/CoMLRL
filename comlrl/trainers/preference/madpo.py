@@ -1,6 +1,6 @@
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -9,9 +9,10 @@ import wandb
 from tqdm import tqdm  # type: ignore
 
 from comlrl.utils.distributed import unwrap_model
+from comlrl.utils.reference_kl import validate_reference_kl_config
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials
 
-from ..reinforce.magrpo import MAGRPOConfig, MAGRPOTrainer
+from ..reinforce.magrpo import MAGRPOTrainer
 
 
 @dataclass
@@ -36,10 +37,40 @@ class PreferencePair:
 
 
 @dataclass
-class MADPOConfig(MAGRPOConfig):
+class MADPOConfig:
     """Configuration for multi-agent direct preference optimization."""
 
+    # Core setup
+    num_train_epochs: int = 20
+    agent_learning_rate: float = 5.0e-6
+    logging_steps: int = 50
+    num_agents: int = 2
+    parallel_training: str = "none"
+    agent_devices: Optional[Union[str, Sequence[str]]] = None
+
+    # Sampling/generation
+    max_new_tokens: int = 256
+    temperature: float = 0.6
+    top_p: float = 0.6
+    top_k: Optional[int] = 50
+
+    # Shared trainer/eval fields used by the MAGRPO utility base.
     num_turns: int = 1
+    discount: float = 1.0
+    joint_mode: str = "aligned"
+    early_termination_threshold: Optional[float] = None
+    external_prompt_passthrough: bool = False
+    eval_interval: int = 16
+    eval_num_samples: int = 4
+    eval_batch_size: int = 1
+    rollout_buffer_size: int = 2
+    train_batch_size: Optional[int] = None
+    advantage_normalization: bool = True
+    advantage_mode: str = "mean"
+    reference_kl_enabled: bool = False
+    reference_kl_coef: float = 0.1
+    reference_devices: Optional[Union[str, Sequence[str]]] = None
+
     preference_num_candidates: int = 80
     preference_pairs_per_sample: Optional[int] = 16
     pair_selection: str = "reward_gap"
@@ -48,7 +79,35 @@ class MADPOConfig(MAGRPOConfig):
     environment_steps_per_pair: int = 2
 
     def __post_init__(self) -> None:
-        super().__post_init__()
+        if self.num_train_epochs < 1:
+            raise ValueError("num_train_epochs must be >= 1.")
+        if self.num_agents < 1:
+            raise ValueError("num_agents must be >= 1.")
+        if self.rollout_buffer_size < 1:
+            raise ValueError("rollout_buffer_size must be >= 1.")
+        if self.eval_interval < 0:
+            raise ValueError("eval_interval must be >= 0.")
+        if self.eval_num_samples < 0:
+            raise ValueError("eval_num_samples must be >= 0.")
+        if self.eval_batch_size < 1:
+            raise ValueError("eval_batch_size must be >= 1.")
+        if self.num_turns < 1:
+            raise ValueError("num_turns must be >= 1.")
+        if self.logging_steps < 1:
+            raise ValueError("logging_steps must be >= 1.")
+        if self.train_batch_size is None:
+            self.train_batch_size = self.rollout_buffer_size
+        if self.train_batch_size < 1:
+            raise ValueError("train_batch_size must be >= 1.")
+        mode = str(self.parallel_training or "none").strip().lower()
+        if mode == "null":
+            mode = "none"
+        if mode not in {"none", "mp"}:
+            raise ValueError("parallel_training only supports: none, mp.")
+        if mode == "mp" and self.agent_devices is None:
+            raise ValueError("parallel_training='mp' requires explicit agent_devices.")
+        self.parallel_training = mode
+        validate_reference_kl_config(self, self.num_agents)
         if self.num_turns != 1:
             raise ValueError("MADPO currently supports num_turns=1 only.")
         if self.preference_num_candidates < 2:

@@ -148,7 +148,7 @@ class MAGRPOTrainer:
         dataset_type: Optional explicit dataset type (e.g., "humaneval")
     """
 
-    default_config_cls: Type[MAGRPOConfig] = MAGRPOConfig
+    default_config_cls: Type[Any] = MAGRPOConfig
     algorithm_name: str = "MAGRPO"
 
     def __init__(
@@ -171,7 +171,7 @@ class MAGRPOTrainer:
         wandb_config: Optional[Dict[str, Any]] = None,
         eval_logger: Optional[Callable] = None,
         eval_aggregator: Optional[Callable] = None,
-        args: Optional[MAGRPOConfig] = None,
+        args: Optional[Any] = None,
     ):
         self.args = args if args is not None else self.default_config_cls()
         self.parallel_training = (
@@ -315,10 +315,16 @@ class MAGRPOTrainer:
         # Allow single-agent as a special case (GRPO)
         if self.num_agents < 1:
             raise ValueError("num_agents must be >= 1")
-        if self.args.num_generations < 2:
-            raise ValueError(
-                "num_generations must be >= 2 (group baseline requires multiple samples)."
-            )
+        num_generations = getattr(self.args, "num_generations", None)
+        if num_generations is not None:
+            rl_algorithm = str(getattr(self.args, "rl_algorithm", "magrpo")).lower()
+            if rl_algorithm in {"maac", "iac"}:
+                if int(num_generations) < 1:
+                    raise ValueError("num_generations must be >= 1.")
+            elif int(num_generations) < 2:
+                raise ValueError(
+                    "num_generations must be >= 2 (group baseline requires multiple samples)."
+                )
         if getattr(self.args, "eval_batch_size", 1) < 1:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.args.rollout_buffer_size < 1:
@@ -448,9 +454,10 @@ class MAGRPOTrainer:
                 "reference_devices": getattr(self.args, "reference_devices", None),
                 "agent_learning_rate": self.args.agent_learning_rate,
                 "num_train_epochs": self.args.num_train_epochs,
-                "num_generations": self.args.num_generations,
                 "max_new_tokens": self.args.max_new_tokens,
             }
+            if hasattr(self.args, "num_generations"):
+                config_dict["num_generations"] = self.args.num_generations
 
             # No per-turn weighting or early termination config
 
