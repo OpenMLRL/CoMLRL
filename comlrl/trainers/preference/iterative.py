@@ -4,6 +4,7 @@ import json
 import os
 import random
 import re
+import copy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from urllib import error as urlerror
@@ -46,13 +47,23 @@ def _normalize_comparator_policy(policy: Optional[str]) -> str:
     mode = str(policy or "current").strip().lower()
     if mode in {"current", "self", "online"}:
         return "current"
+    if mode in {
+        "current_copy",
+        "copy",
+        "online_copy",
+        "current-offload",
+        "current_offload",
+    }:
+        return "current_copy"
     if mode in {"model", "external", "comparator", "reference", "ref"}:
         return "model"
     if mode in {"history", "checkpoint", "previous", "previous_iteration"}:
         return "history"
     if mode in {"api", "http", "endpoint"}:
         return "api"
-    raise ValueError("comparator_policy must be one of: current, model, history, api.")
+    raise ValueError(
+        "comparator_policy must be one of: current, current_copy, model, history, api."
+    )
 
 
 def _normalize_comparator_generation_mode(mode: Optional[str]) -> str:
@@ -143,6 +154,17 @@ def _validate_iterative_config(args: Any) -> None:
         if int(args.comparator_history_k) < 1:
             raise ValueError("comparator_history_k must be >= 1.")
         args.comparator_history_k = int(args.comparator_history_k)
+        if args.comparator_model_name is not None or args.comparator_agents is not None:
+            raise ValueError(
+                "comparator_model_name and comparator_agents are only valid when "
+                "comparator_policy='model'."
+            )
+    elif args.comparator_policy in {"current", "current_copy"}:
+        if args.comparator_history_k is not None:
+            raise ValueError(
+                "comparator_history_k is only valid when "
+                "comparator_policy='history'."
+            )
         if args.comparator_model_name is not None or args.comparator_agents is not None:
             raise ValueError(
                 "comparator_model_name and comparator_agents are only valid when "
@@ -374,10 +396,14 @@ class MADPOIterTrainer(MADPOTrainer):
         total_pairs = 0
         for iteration_idx in range(int(self.args.num_iterations)):
             self._reset_iteration_reward_distribution()
-            preference_pairs = self._build_preference_dataset(
-                iteration_idx=iteration_idx,
-                **kwargs,
-            )
+            self._prepare_iteration_current_copy_comparator()
+            try:
+                preference_pairs = self._build_preference_dataset(
+                    iteration_idx=iteration_idx,
+                    **kwargs,
+                )
+            finally:
+                self._clear_iteration_current_copy_comparator()
             current_pair_count = len(preference_pairs)
             train_pairs = self._select_iteration_preference_pairs(
                 preference_pairs,
@@ -1541,8 +1567,8 @@ class MADPOIterTrainer(MADPOTrainer):
             batch_items=[batch_item],
         )
         self._record_iteration_reward_distribution(
-            target_rewards=current_raw_rewards,
-            comparator_rewards=comparator_raw_rewards,
+            target_rewards=current_rewards,
+            comparator_rewards=comparator_rewards,
         )
         selected_pairs = self._select_policy_comparison_pairs(
             current_rewards,
@@ -1593,8 +1619,8 @@ class MADPOIterTrainer(MADPOTrainer):
             )
             target_idx = winner_idx if winner_source == "current" else loser_idx
             comparator_idx = winner_idx if winner_source == "comparator" else loser_idx
-            target_raw_reward = current_raw_rewards[target_idx]
-            comparator_raw_reward = comparator_raw_rewards[comparator_idx]
+            target_raw_reward = current_rewards[target_idx]
+            comparator_raw_reward = comparator_rewards[comparator_idx]
 
             if winner_source == "current" and loser_source == "current":
                 agent_tensors = [
@@ -1734,6 +1760,12 @@ class MADPOIterTrainer(MADPOTrainer):
                 num_candidates=num_candidates,
                 **kwargs,
             )
+        if self.args.comparator_policy == "current_copy":
+            return self._generate_current_copy_outputs_for_item(
+                batch_item,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
         if self.args.comparator_policy == "history":
             return self._generate_history_policy_outputs_for_item(
                 batch_item,
@@ -1797,6 +1829,13 @@ class MADPOIterTrainer(MADPOTrainer):
                 num_candidates=num_candidates,
                 **kwargs,
             )
+        if self.args.comparator_policy == "current_copy":
+            return self._generate_centralized_current_copy_outputs_for_item(
+                batch_item,
+                prompt=prompt,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
         if self.args.comparator_policy == "history":
             checkpoint_dir = self._history_policy_checkpoint_path(iteration_idx)
             agent_idx = self._centralized_comparator_agent_index()
@@ -1850,6 +1889,83 @@ class MADPOIterTrainer(MADPOTrainer):
             batch_item=batch_item,
             prompt=prompt,
         )
+
+    def _generate_current_copy_outputs_for_item(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        num_candidates: int,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        if self._comparator_devices_match_agent_devices():
+            return self._generate_policy_outputs_for_item(
+                self.agents,
+                batch_item,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+
+        cached_agents = getattr(self, "_current_copy_comparator_agents", None)
+        if cached_agents is not None:
+            return self._generate_policy_outputs_for_item(
+                cached_agents,
+                batch_item,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+
+        comparator_agents = self._clone_current_agents_for_comparator()
+        try:
+            return self._generate_policy_outputs_for_item(
+                comparator_agents,
+                batch_item,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+        finally:
+            self._clear_transient_comparator_agents(comparator_agents)
+
+    def _generate_centralized_current_copy_outputs_for_item(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        prompt: str,
+        num_candidates: int,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        agent_idx = self._centralized_comparator_agent_index()
+        if self._centralized_comparator_device_matches_agent_device(agent_idx):
+            return self._generate_centralized_policy_output_for_agent(
+                self.agents[agent_idx],
+                batch_item,
+                prompt=prompt,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+
+        cached_agents = getattr(self, "_current_copy_comparator_agents", None)
+        if cached_agents is not None and cached_agents[agent_idx] is not None:
+            return self._generate_centralized_policy_output_for_agent(
+                cached_agents[agent_idx],
+                batch_item,
+                prompt=prompt,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+
+        comparator_agent = self._clone_current_agent_for_comparator(agent_idx)
+        try:
+            return self._generate_centralized_policy_output_for_agent(
+                comparator_agent,
+                batch_item,
+                prompt=prompt,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+        finally:
+            transient_agents = [comparator_agent]
+            comparator_agent = None
+            self._clear_transient_comparator_agents(transient_agents)
 
     def _centralized_comparator_agent_index(self) -> int:
         return int(getattr(self.args, "comparator_centralized_agent_index", 0))
@@ -2545,6 +2661,11 @@ def aux(...):
     def _get_comparator_agents(self) -> Sequence[Any]:
         if self.args.comparator_policy == "current":
             return self.agents
+        if self.args.comparator_policy == "current_copy":
+            raise ValueError(
+                "current_copy comparator agents are transient and must be generated "
+                "through _generate_current_copy_outputs_for_item."
+            )
         if self.args.comparator_policy == "history":
             raise ValueError("History comparator agents must be loaded per iteration.")
         if getattr(self, "_comparator_agents", None) is None:
@@ -2554,6 +2675,11 @@ def aux(...):
     def _get_centralized_comparator_agent(self) -> Any:
         if self.args.comparator_policy == "current":
             return self.agents[self._centralized_comparator_agent_index()]
+        if self.args.comparator_policy == "current_copy":
+            raise ValueError(
+                "current_copy centralized comparator agent is transient and must be "
+                "generated through _generate_centralized_current_copy_outputs_for_item."
+            )
         if self.args.comparator_policy == "history":
             raise ValueError("History comparator agents must be loaded per iteration.")
         if getattr(self, "_centralized_comparator_agent", None) is None:
@@ -2594,6 +2720,121 @@ def aux(...):
             model_label="comparator_model_name",
         )
         return self._load_frozen_policy_agents(comparator_sources)
+
+    def _comparator_devices_match_agent_devices(self) -> bool:
+        agent_devices = list(getattr(self, "agent_devices", []) or [])
+        if len(agent_devices) != self.num_agents:
+            return False
+        comparator_devices = self._resolve_comparator_devices()
+        if len(comparator_devices) != self.num_agents:
+            return False
+        return all(
+            torch.device(str(agent_devices[idx])) == comparator_devices[idx]
+            for idx in range(self.num_agents)
+        )
+
+    def _centralized_comparator_device_matches_agent_device(
+        self,
+        agent_idx: Optional[int] = None,
+    ) -> bool:
+        idx = (
+            self._centralized_comparator_agent_index()
+            if agent_idx is None
+            else int(agent_idx)
+        )
+        agent_devices = list(getattr(self, "agent_devices", []) or [])
+        if len(agent_devices) <= idx:
+            return False
+        comparator_devices = self._resolve_comparator_devices()
+        if len(comparator_devices) <= idx:
+            return False
+        return torch.device(str(agent_devices[idx])) == comparator_devices[idx]
+
+    def _prepare_iteration_current_copy_comparator(self) -> None:
+        if getattr(self.args, "comparator_policy", None) != "current_copy":
+            return
+        if (
+            getattr(self.args, "comparator_generation_mode", "decentralized")
+            == "centralized"
+        ):
+            agent_idx = self._centralized_comparator_agent_index()
+            if self._centralized_comparator_device_matches_agent_device(agent_idx):
+                return
+            self._clear_iteration_current_copy_comparator()
+            comparator_agents: List[Any] = [None] * self.num_agents
+            comparator_agents[agent_idx] = self._clone_current_agent_for_comparator(
+                agent_idx
+            )
+            self._current_copy_comparator_agents = comparator_agents
+            return
+        if self._comparator_devices_match_agent_devices():
+            return
+        self._clear_iteration_current_copy_comparator()
+        self._current_copy_comparator_agents = (
+            self._clone_current_agents_for_comparator()
+        )
+
+    def _clear_iteration_current_copy_comparator(self) -> None:
+        comparator_agents = getattr(self, "_current_copy_comparator_agents", None)
+        if comparator_agents is None:
+            return
+        self._clear_transient_comparator_agents(comparator_agents)
+        self._current_copy_comparator_agents = None
+
+    def _clone_current_agents_for_comparator(self) -> List[Any]:
+        return [
+            self._clone_current_agent_for_comparator(agent_idx)
+            for agent_idx in range(self.num_agents)
+        ]
+
+    def _clone_current_agent_for_comparator(self, agent_idx: int) -> Any:
+        source_agent = unwrap_model(self.agents[agent_idx])
+        comparator_device = self._resolve_comparator_devices()[agent_idx]
+        source_param = next(source_agent.parameters())
+        source_dtype = source_param.dtype
+        config = copy.deepcopy(getattr(source_agent, "config", None))
+        if config is None:
+            raise ValueError("current_copy comparator requires agents with config.")
+        if hasattr(config, "torch_dtype"):
+            config.torch_dtype = source_dtype
+
+        previous_default_dtype = torch.get_default_dtype()
+        if source_dtype in {
+            torch.float16,
+            torch.bfloat16,
+            torch.float32,
+            torch.float64,
+        }:
+            torch.set_default_dtype(source_dtype)
+        try:
+            comparator_agent = source_agent.__class__(config)
+        finally:
+            torch.set_default_dtype(previous_default_dtype)
+
+        state_dict = {
+            key: value.detach().cpu()
+            for key, value in source_agent.state_dict().items()
+        }
+        comparator_agent.load_state_dict(state_dict, strict=True)
+        del state_dict
+        comparator_agent.to(comparator_device)
+        comparator_agent.eval()
+        for param in comparator_agent.parameters():
+            param.requires_grad = False
+        apply_tokenizer_specials(self.tokenizers[agent_idx], [comparator_agent])
+        return comparator_agent
+
+    @staticmethod
+    def _clear_transient_comparator_agents(comparator_agents: Sequence[Any]) -> None:
+        if isinstance(comparator_agents, list):
+            for agent_idx in range(len(comparator_agents)):
+                comparator_agents[agent_idx] = None
+        else:
+            for agent in comparator_agents:
+                del agent
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _load_policy_checkpoint_agents(self, checkpoint_dir: str) -> List[Any]:
         checkpoint_sources = [
@@ -2757,10 +2998,14 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
             if self.args.preference_scoring_reward != "reward_model":
                 self._clear_reward_model()
             self._reset_iteration_reward_distribution()
-            preference_pairs = self._build_preference_dataset(
-                iteration_idx=iteration_idx,
-                **kwargs,
-            )
+            self._prepare_iteration_current_copy_comparator()
+            try:
+                preference_pairs = self._build_preference_dataset(
+                    iteration_idx=iteration_idx,
+                    **kwargs,
+                )
+            finally:
+                self._clear_iteration_current_copy_comparator()
             current_pair_count = len(preference_pairs)
             train_pairs = self._select_iteration_preference_pairs(
                 preference_pairs,
