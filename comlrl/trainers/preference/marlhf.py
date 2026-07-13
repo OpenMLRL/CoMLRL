@@ -89,7 +89,7 @@ class MARLHFConfig(MADPOConfig):
     reward_model_device: Optional[str] = "cuda:0"
     reward_learning_rate: float = 1.0e-5
     reward_num_train_epochs: int = 1
-    reward_train_batch_size: int = 2
+    reward_train_batch_size: int = 1
     reward_max_length: Optional[int] = None
     reward_freeze_backbone: bool = False
     critic_model_name: Optional[str] = None

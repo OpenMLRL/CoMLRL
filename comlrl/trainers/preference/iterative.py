@@ -2781,6 +2781,25 @@ def aux(...):
         self._clear_transient_comparator_agents(comparator_agents)
         self._current_copy_comparator_agents = None
 
+    def _clear_iteration_model_comparator(self) -> None:
+        if getattr(self.args, "comparator_policy", None) != "model":
+            return
+
+        comparator_agents: List[Any] = []
+        centralized_agent = getattr(self, "_centralized_comparator_agent", None)
+        if centralized_agent is not None:
+            comparator_agents.append(centralized_agent)
+        cached_agents = getattr(self, "_comparator_agents", None)
+        if cached_agents is not None:
+            comparator_agents.extend(
+                agent for agent in cached_agents if agent is not None
+            )
+
+        self._centralized_comparator_agent = None
+        self._comparator_agents = None
+        if comparator_agents:
+            self._clear_transient_comparator_agents(comparator_agents)
+
     def _clone_current_agents_for_comparator(self) -> List[Any]:
         return [
             self._clone_current_agent_for_comparator(agent_idx)
@@ -3006,6 +3025,7 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
                 )
             finally:
                 self._clear_iteration_current_copy_comparator()
+                self._clear_iteration_model_comparator()
             current_pair_count = len(preference_pairs)
             train_pairs = self._select_iteration_preference_pairs(
                 preference_pairs,
