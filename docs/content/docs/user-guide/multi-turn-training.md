@@ -108,3 +108,41 @@ An [environment for code generation](https://github.com/OpenMLRL/LLM_Collab_Code
 
 - `external.mode=plain`: Self-improvement mode that just includes prompts and responses in the previous turns and a revision instruction.
 {{% /hint %}}
+
+## API Comparators
+
+Iterative MADPO and MARLHF can use a remote model with `comparator_policy=api`.
+The existing `comparator_api_format=openai` path remains compatible with
+OpenAI-style Chat Completions endpoints such as DeepSeek. Two native formats
+are also supported:
+
+- `anthropic`: Anthropic Messages API. Use `https://api.anthropic.com/v1/messages`,
+  `ANTHROPIC_API_KEY`, and a model such as `claude-sonnet-4-20250514`.
+- `openai_responses` (or `responses`/`codex`): OpenAI Responses API. Use
+  `https://api.openai.com/v1/responses`, `OPENAI_API_KEY`, and a model such as
+  `gpt-5.1-codex`.
+
+The native APIs are queried once per candidate because they do not use the
+Chat Completions `n` parameter. The prompt remains the same centralized or
+decentralized comparator prompt, and the trainer extracts text from the
+provider-specific response format.
+
+Example Anthropic comparator overrides:
+
+```text
+comparator_policy=api
+comparator_api_format=anthropic
+comparator_api_url=https://api.anthropic.com/v1/messages
+comparator_api_model=claude-sonnet-4-20250514
+comparator_api_key_env=ANTHROPIC_API_KEY
+```
+
+Example OpenAI/Codex comparator overrides:
+
+```text
+comparator_policy=api
+comparator_api_format=openai_responses
+comparator_api_url=https://api.openai.com/v1/responses
+comparator_api_model=gpt-5.1-codex
+comparator_api_key_env=OPENAI_API_KEY
+```

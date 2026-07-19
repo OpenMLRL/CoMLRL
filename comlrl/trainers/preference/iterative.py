@@ -2343,13 +2343,25 @@ def aux(...):
                 num_candidates=num_candidates,
                 api_format=api_format,
             )
-        else:
-            payload = self._build_generic_api_payload(
+        if api_format in {"anthropic", "anthropic_messages", "messages"}:
+            return self._call_anthropic_messages_comparator_api(
                 prompt=prompt,
-                agent_idx=agent_idx,
-                batch_item=batch_item,
                 num_candidates=num_candidates,
+                api_format=api_format,
             )
+        if api_format in {"openai_responses", "responses", "codex"}:
+            return self._call_openai_responses_comparator_api(
+                prompt=prompt,
+                num_candidates=num_candidates,
+                api_format=api_format,
+            )
+
+        payload = self._build_generic_api_payload(
+            prompt=prompt,
+            agent_idx=agent_idx,
+            batch_item=batch_item,
+            num_candidates=num_candidates,
+        )
 
         response_data = self._send_comparator_api_request(payload)
         return self._extract_api_completions(response_data, api_format=api_format)
@@ -2379,8 +2391,64 @@ def aux(...):
             completions.extend(batch_completions)
         return completions[:num_candidates]
 
+    def _call_anthropic_messages_comparator_api(
+        self,
+        *,
+        prompt: str,
+        num_candidates: int,
+        api_format: str,
+    ) -> List[str]:
+        completions: List[str] = []
+        while len(completions) < num_candidates:
+            payload = self._build_anthropic_messages_payload(prompt)
+            response_data = self._send_comparator_api_request(payload)
+            batch_completions = self._extract_api_completions(
+                response_data,
+                api_format=api_format,
+            )
+            if not batch_completions:
+                raise ValueError(
+                    "Comparator API returned no completions for an Anthropic "
+                    "Messages request."
+                )
+            completions.extend(batch_completions[:1])
+        return completions[:num_candidates]
+
+    def _call_openai_responses_comparator_api(
+        self,
+        *,
+        prompt: str,
+        num_candidates: int,
+        api_format: str,
+    ) -> List[str]:
+        completions: List[str] = []
+        while len(completions) < num_candidates:
+            payload = self._build_openai_responses_payload(prompt)
+            response_data = self._send_comparator_api_request(payload)
+            batch_completions = self._extract_api_completions(
+                response_data,
+                api_format=api_format,
+            )
+            if not batch_completions:
+                raise ValueError(
+                    "Comparator API returned no completions for an OpenAI "
+                    "Responses request."
+                )
+            completions.extend(batch_completions[:1])
+        return completions[:num_candidates]
+
     def _comparator_api_max_n_per_request(self, num_candidates: int) -> int:
         configured = getattr(self.args, "comparator_api_max_n_per_request", None)
+        api_format = str(self.args.comparator_api_format or "generic").lower()
+        if api_format in {
+            "anthropic",
+            "anthropic_messages",
+            "messages",
+            "openai_responses",
+            "responses",
+            "codex",
+        }:
+            return 1
         if configured is not None:
             return min(max(int(configured), 1), int(num_candidates))
         if self._is_deepseek_comparator_api():
@@ -2469,18 +2537,49 @@ def aux(...):
             payload.update(self.args.comparator_api_extra_body)
         return {key: value for key, value in payload.items() if value is not None}
 
+    def _build_anthropic_messages_payload(self, prompt: str) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": self.args.comparator_api_model,
+            "max_tokens": self.args.max_new_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.args.temperature,
+        }
+        if isinstance(self.args.comparator_api_extra_body, dict):
+            payload.update(self.args.comparator_api_extra_body)
+        return {key: value for key, value in payload.items() if value is not None}
+
+    def _build_openai_responses_payload(self, prompt: str) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": self.args.comparator_api_model,
+            "input": prompt,
+            "max_output_tokens": self.args.max_new_tokens,
+        }
+        if isinstance(self.args.comparator_api_extra_body, dict):
+            payload.update(self.args.comparator_api_extra_body)
+        return {key: value for key, value in payload.items() if value is not None}
+
     def _comparator_api_headers(self) -> Dict[str, str]:
         headers = {"Content-Type": "application/json"}
+        api_format = str(self.args.comparator_api_format or "generic").lower()
         if isinstance(self.args.comparator_api_headers, dict):
             headers.update(self.args.comparator_api_headers)
+
+        if api_format in {"anthropic", "anthropic_messages", "messages"}:
+            headers.setdefault("anthropic-version", "2023-06-01")
 
         api_key = self.args.comparator_api_key
         if not api_key and self.args.comparator_api_key_env:
             api_key = os.environ.get(str(self.args.comparator_api_key_env))
         if api_key:
+            key_header = str(self.args.comparator_api_key_header or "Authorization")
             prefix = str(self.args.comparator_api_key_prefix or "").strip()
+            if api_format in {"anthropic", "anthropic_messages", "messages"}:
+                if key_header.lower() == "authorization":
+                    key_header = "x-api-key"
+                if prefix.lower() == "bearer":
+                    prefix = ""
             header_value = f"{prefix} {api_key}" if prefix else str(api_key)
-            headers[str(self.args.comparator_api_key_header)] = header_value
+            headers[key_header] = header_value
         return headers
 
     def _extract_api_completions(
@@ -2491,6 +2590,10 @@ def aux(...):
     ) -> List[str]:
         if api_format in {"openai", "openai_chat", "chat"}:
             return self._extract_openai_chat_completions(response_data)
+        if api_format in {"anthropic", "anthropic_messages", "messages"}:
+            return self._extract_anthropic_messages_completions(response_data)
+        if api_format in {"openai_responses", "responses", "codex"}:
+            return self._extract_openai_responses_completions(response_data)
 
         value = self._get_dotted(response_data, self.args.comparator_api_response_field)
         if value is None and isinstance(response_data, dict):
@@ -2518,6 +2621,41 @@ def aux(...):
                     continue
                 if choice.get("text") is not None:
                     completions.append(str(choice["text"]))
+        return completions
+
+    @staticmethod
+    def _extract_anthropic_messages_completions(response_data: Any) -> List[str]:
+        content = (
+            response_data.get("content") if isinstance(response_data, dict) else None
+        )
+        completions: List[str] = []
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text" and block.get("text") is not None:
+                    completions.append(str(block["text"]))
+        return completions
+
+    @staticmethod
+    def _extract_openai_responses_completions(response_data: Any) -> List[str]:
+        output = (
+            response_data.get("output") if isinstance(response_data, dict) else None
+        )
+        completions: List[str] = []
+        if not isinstance(output, list):
+            return completions
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") in {"output_text", "text"}:
+                        if block.get("text") is not None:
+                            completions.append(str(block["text"]))
         return completions
 
     @classmethod
