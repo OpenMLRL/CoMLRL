@@ -1567,8 +1567,8 @@ class MADPOIterTrainer(MADPOTrainer):
             batch_items=[batch_item],
         )
         self._record_iteration_reward_distribution(
-            target_rewards=current_rewards,
-            comparator_rewards=comparator_rewards,
+            target_rewards=current_raw_rewards,
+            comparator_rewards=comparator_raw_rewards,
         )
         selected_pairs = self._select_policy_comparison_pairs(
             current_rewards,
@@ -1619,8 +1619,8 @@ class MADPOIterTrainer(MADPOTrainer):
             )
             target_idx = winner_idx if winner_source == "current" else loser_idx
             comparator_idx = winner_idx if winner_source == "comparator" else loser_idx
-            target_raw_reward = current_rewards[target_idx]
-            comparator_raw_reward = comparator_rewards[comparator_idx]
+            target_raw_reward = current_raw_rewards[target_idx]
+            comparator_raw_reward = comparator_raw_rewards[comparator_idx]
 
             if winner_source == "current" and loser_source == "current":
                 agent_tensors = [
