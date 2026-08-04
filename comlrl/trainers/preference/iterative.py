@@ -1,11 +1,13 @@
+import copy
 import gc
 import inspect
 import json
 import os
 import random
-import copy
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
@@ -397,6 +399,71 @@ class MADPOIterTrainer(MADPOTrainer):
             )
         self.centralized_comparator_adapter = adapter
         super().__init__(*args, **kwargs)
+        self._initialize_comparator_rng()
+
+    def _initialize_comparator_rng(self) -> None:
+        target_seed = int(torch.initial_seed())
+        if target_seed >= 1 << 63:
+            target_seed -= 1 << 64
+        self.target_seed = target_seed
+        self.comparator_seed = -target_seed if target_seed != 0 else 1
+        self._comparator_rng_states: Dict[str, torch.Tensor] = {}
+        self._comparator_rng_locks: Dict[str, Any] = {}
+        self._comparator_rng_registry_lock = threading.Lock()
+
+    @contextmanager
+    def _comparator_rng(self, agent: Any) -> Iterator[None]:
+        """Use a persistent comparator-only RNG stream on the agent device."""
+        agent_module = unwrap_model(agent)
+        try:
+            device = next(agent_module.parameters()).device
+        except StopIteration:
+            yield
+            return
+
+        device = torch.device(device)
+        device_key = str(device)
+        with self._comparator_rng_registry_lock:
+            lock = self._comparator_rng_locks.setdefault(
+                device_key,
+                threading.RLock(),
+            )
+
+        with lock:
+            comparator_state = self._comparator_rng_states.get(device_key)
+            if comparator_state is None:
+                generator = torch.Generator(device=device)
+                generator.manual_seed(self.comparator_seed)
+                comparator_state = generator.get_state()
+
+            if device.type == "cuda":
+                original_state = torch.cuda.get_rng_state(device)
+                torch.cuda.set_rng_state(comparator_state, device)
+                try:
+                    yield
+                finally:
+                    self._comparator_rng_states[device_key] = torch.cuda.get_rng_state(
+                        device
+                    )
+                    torch.cuda.set_rng_state(original_state, device)
+                return
+
+            if device.type == "cpu":
+                original_state = torch.random.get_rng_state()
+                torch.random.set_rng_state(comparator_state)
+                try:
+                    yield
+                finally:
+                    self._comparator_rng_states[device_key] = (
+                        torch.random.get_rng_state()
+                    )
+                    torch.random.set_rng_state(original_state)
+                return
+
+            raise ValueError(
+                "Independent comparator RNG currently supports CPU and CUDA devices; "
+                f"got {device}."
+            )
 
     def train(self, **kwargs):
         if int(self.args.num_turns) != 1:
@@ -1776,6 +1843,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 self.agents,
                 batch_item,
                 num_candidates=num_candidates,
+                use_comparator_rng=True,
                 **kwargs,
             )
         if self.args.comparator_policy == "current_copy":
@@ -1795,6 +1863,7 @@ class MADPOIterTrainer(MADPOTrainer):
             self._get_comparator_agents(),
             batch_item,
             num_candidates=num_candidates,
+            use_comparator_rng=True,
             **kwargs,
         )
 
@@ -1804,11 +1873,23 @@ class MADPOIterTrainer(MADPOTrainer):
         batch_item: Dict[str, Any],
         *,
         num_candidates: int,
+        use_comparator_rng: bool = False,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         def _generate_agent(agent_idx: int) -> Dict[str, Any]:
+            agent = policy_agents[agent_idx]
+            if use_comparator_rng:
+                with self._comparator_rng(agent):
+                    return self._generate_completions_with_external_prompts(
+                        agent,
+                        [batch_item],
+                        agent_idx=agent_idx,
+                        num_return_sequences=num_candidates,
+                        max_new_tokens=self.args.max_new_tokens,
+                        **kwargs,
+                    )
             return self._generate_completions_with_external_prompts(
-                policy_agents[agent_idx],
+                agent,
                 [batch_item],
                 agent_idx=agent_idx,
                 num_return_sequences=num_candidates,
@@ -1892,15 +1973,16 @@ class MADPOIterTrainer(MADPOTrainer):
         **kwargs,
     ) -> List[Dict[str, Any]]:
         agent_idx = self._centralized_comparator_agent_index()
-        generation_output = self._generate_completions(
-            policy_agent,
-            [batch_item],
-            agent_idx=agent_idx,
-            num_return_sequences=num_candidates,
-            max_new_tokens=self.args.max_new_tokens,
-            prompts_override=[prompt],
-            **kwargs,
-        )
+        with self._comparator_rng(policy_agent):
+            generation_output = self._generate_completions(
+                policy_agent,
+                [batch_item],
+                agent_idx=agent_idx,
+                num_return_sequences=num_candidates,
+                max_new_tokens=self.args.max_new_tokens,
+                prompts_override=[prompt],
+                **kwargs,
+            )
         completions = generation_output["completions"][0]
         return self._split_centralized_comparator_outputs(
             completions,
@@ -1920,6 +2002,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 self.agents,
                 batch_item,
                 num_candidates=num_candidates,
+                use_comparator_rng=True,
                 **kwargs,
             )
 
@@ -1929,6 +2012,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 cached_agents,
                 batch_item,
                 num_candidates=num_candidates,
+                use_comparator_rng=True,
                 **kwargs,
             )
 
@@ -1938,6 +2022,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 comparator_agents,
                 batch_item,
                 num_candidates=num_candidates,
+                use_comparator_rng=True,
                 **kwargs,
             )
         finally:
@@ -2061,6 +2146,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 comparator_agents,
                 batch_item,
                 num_candidates=num_candidates,
+                use_comparator_rng=True,
                 **kwargs,
             )
         finally:
