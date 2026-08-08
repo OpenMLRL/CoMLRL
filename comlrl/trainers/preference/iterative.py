@@ -20,7 +20,7 @@ from transformers import AutoModelForCausalLM
 from comlrl.schedulers import DeviceScheduler
 from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.model_loading import resolve_model_sources
-from comlrl.utils.reward_utils import call_reward_function
+from comlrl.utils.reward_utils import call_reward_function, resolve_reward_range
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials
 
 from .madpo import (
@@ -43,8 +43,6 @@ from .marlhf import (
 from ..reinforce.magrpo import MAGRPOTrainer
 
 
-_REWARD_DISTRIBUTION_MIN = 0.0
-_REWARD_DISTRIBUTION_MAX = 4.0
 _REWARD_DISTRIBUTION_BINS = 16
 
 
@@ -399,6 +397,9 @@ class MADPOIterTrainer(MADPOTrainer):
             )
         self.centralized_comparator_adapter = adapter
         super().__init__(*args, **kwargs)
+        self._reward_distribution_range: Optional[Tuple[float, float]] = None
+        if self._log_reward_distribution_enabled():
+            self._reward_distribution_range = self._resolve_reward_distribution_range()
         self._initialize_comparator_rng()
 
     def _initialize_comparator_rng(self) -> None:
@@ -597,6 +598,26 @@ class MADPOIterTrainer(MADPOTrainer):
     def _log_reward_distribution_enabled(self) -> bool:
         return bool(getattr(self.args, "log_reward_distribution", False))
 
+    def _resolve_reward_distribution_range(self) -> Tuple[float, float]:
+        reward_range = resolve_reward_range(self.reward_func)
+        if reward_range is None:
+            raise ValueError(
+                "log_reward_distribution=True requires reward_func.reward_range "
+                "to declare the raw reward scale as (minimum, maximum)."
+            )
+        return reward_range
+
+    def _reward_distribution_bin_edges(self) -> np.ndarray:
+        reward_range = getattr(self, "_reward_distribution_range", None)
+        if reward_range is None:
+            reward_range = self._resolve_reward_distribution_range()
+            self._reward_distribution_range = reward_range
+        return np.linspace(
+            reward_range[0],
+            reward_range[1],
+            _REWARD_DISTRIBUTION_BINS + 1,
+        )
+
     def _reset_iteration_reward_distribution(self) -> None:
         self._iteration_reward_distribution = {
             "target": [],
@@ -640,11 +661,7 @@ class MADPOIterTrainer(MADPOTrainer):
         if not target_rewards and not comparator_rewards:
             return {}
 
-        bin_edges = np.linspace(
-            _REWARD_DISTRIBUTION_MIN,
-            _REWARD_DISTRIBUTION_MAX,
-            _REWARD_DISTRIBUTION_BINS + 1,
-        )
+        bin_edges = self._reward_distribution_bin_edges()
         target_counts, edges = self._reward_distribution_counts(
             target_rewards,
             bin_edges,
@@ -707,11 +724,7 @@ class MADPOIterTrainer(MADPOTrainer):
         if not target_rewards and not comparator_rewards:
             return {}
 
-        bin_edges = np.linspace(
-            _REWARD_DISTRIBUTION_MIN,
-            _REWARD_DISTRIBUTION_MAX,
-            _REWARD_DISTRIBUTION_BINS + 1,
-        )
+        bin_edges = self._reward_distribution_bin_edges()
         target_counts, edges = self._reward_distribution_counts(
             target_rewards,
             bin_edges,
@@ -797,16 +810,14 @@ class MADPOIterTrainer(MADPOTrainer):
         ):
             return
 
-        bin_edges = np.linspace(
-            _REWARD_DISTRIBUTION_MIN,
-            _REWARD_DISTRIBUTION_MAX,
-            _REWARD_DISTRIBUTION_BINS + 1,
-        )
+        bin_edges = self._reward_distribution_bin_edges()
+        reward_min = float(bin_edges[0])
+        reward_max = float(bin_edges[-1])
         iteration = int(iteration_idx) + 1
         payload = {
             "iteration": iteration,
-            "reward_min": float(_REWARD_DISTRIBUTION_MIN),
-            "reward_max": float(_REWARD_DISTRIBUTION_MAX),
+            "reward_min": reward_min,
+            "reward_max": reward_max,
             "num_bins": int(_REWARD_DISTRIBUTION_BINS),
             "bin_edges": [float(value) for value in bin_edges.tolist()],
             "bin_centers": [
@@ -1137,7 +1148,11 @@ class MADPOIterTrainer(MADPOTrainer):
     def _format_axis_tick(value: float) -> str:
         if abs(value - round(value)) < 1e-9:
             return str(int(round(value)))
-        return f"{value:.1f}"
+        if abs(value) >= 1.0:
+            return f"{value:.1f}"
+        if abs(value) >= 0.1:
+            return f"{value:.2f}"
+        return f"{value:.3f}"
 
     @staticmethod
     def _xml_escape(value: str) -> str:
@@ -1158,8 +1173,8 @@ class MADPOIterTrainer(MADPOTrainer):
             return np.zeros(len(bin_edges) - 1, dtype=int), bin_edges
         clipped_rewards = np.clip(
             np.asarray(rewards, dtype=float),
-            _REWARD_DISTRIBUTION_MIN,
-            _REWARD_DISTRIBUTION_MAX,
+            float(bin_edges[0]),
+            float(bin_edges[-1]),
         )
         return np.histogram(clipped_rewards, bins=bin_edges)
 

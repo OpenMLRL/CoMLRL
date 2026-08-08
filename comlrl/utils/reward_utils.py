@@ -1,7 +1,46 @@
 import inspect
-from typing import Any, Dict, List, Optional, Sequence
+import math
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, TypeVar
 
 import torch
+
+
+RewardCallable = TypeVar("RewardCallable", bound=Callable[..., Any])
+
+
+def resolve_reward_range(
+    reward_func: Callable[..., Any],
+) -> Optional[Tuple[float, float]]:
+    """Return the raw reward range declared by a reward callable, if present."""
+    reward_range = getattr(reward_func, "reward_range", None)
+    if reward_range is None:
+        return None
+    if (
+        isinstance(reward_range, (str, bytes))
+        or not isinstance(reward_range, Sequence)
+        or len(reward_range) != 2
+    ):
+        raise ValueError(
+            "reward_func.reward_range must be a two-item sequence: "
+            "(minimum, maximum)."
+        )
+    minimum, maximum = (float(value) for value in reward_range)
+    if not math.isfinite(minimum) or not math.isfinite(maximum):
+        raise ValueError("reward_func.reward_range values must be finite.")
+    if minimum >= maximum:
+        raise ValueError("reward_func.reward_range minimum must be less than maximum.")
+    return minimum, maximum
+
+
+def set_reward_range(
+    reward_func: RewardCallable,
+    minimum: float,
+    maximum: float,
+) -> RewardCallable:
+    """Declare the raw output range of a reward callable and return it."""
+    setattr(reward_func, "reward_range", (float(minimum), float(maximum)))
+    resolve_reward_range(reward_func)
+    return reward_func
 
 
 def call_reward_function(

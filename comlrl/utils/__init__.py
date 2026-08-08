@@ -10,7 +10,12 @@ from .reference_kl import (
     validate_reference_kl_config,
 )
 from .reward_processor import RewardProcessors
-from .reward_utils import call_reward_function, normalize_reward_lengths
+from .reward_utils import (
+    call_reward_function,
+    normalize_reward_lengths,
+    resolve_reward_range,
+    set_reward_range,
+)
 from .distributed import (
     DistributedContext,
     all_gather_objects,
@@ -46,6 +51,8 @@ __all__ = [
     "RewardProcessors",
     "call_reward_function",
     "normalize_reward_lengths",
+    "resolve_reward_range",
+    "set_reward_range",
     "DistributedContext",
     "local_context",
     "unwrap_model",
