@@ -7,7 +7,7 @@ import random
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
@@ -75,8 +75,11 @@ def _normalize_comparator_generation_mode(mode: Optional[str]) -> str:
         return "decentralized"
     if value in {"centralized", "centralised", "single_agent", "single-agent"}:
         return "centralized"
+    if value == "centralized_sequential":
+        return value
     raise ValueError(
-        "comparator_generation_mode must be one of: decentralized, centralized."
+        "comparator_generation_mode must be one of: decentralized, centralized, "
+        "centralized_sequential."
     )
 
 
@@ -125,6 +128,12 @@ def _validate_iterative_config(args: Any) -> None:
         args.comparator_centralized_agent_index = int(
             args.comparator_centralized_agent_index
         )
+    elif args.comparator_generation_mode == "centralized_sequential":
+        if int(args.num_agents) < 2:
+            raise ValueError(
+                "comparator_generation_mode='centralized_sequential' requires "
+                "num_agents >= 2."
+            )
     if args.comparator_num_candidates is not None:
         if int(args.comparator_num_candidates) < 1:
             raise ValueError("comparator_num_candidates must be >= 1 or null.")
@@ -1840,6 +1849,13 @@ class MADPOIterTrainer(MADPOTrainer):
         num_candidates: int,
         **kwargs,
     ) -> List[Dict[str, Any]]:
+        if self.args.comparator_generation_mode == "centralized_sequential":
+            return self._generate_sequential_centralized_comparator_outputs_for_item(
+                batch_item,
+                iteration_idx=iteration_idx,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
         if self.args.comparator_generation_mode == "centralized":
             return self._generate_centralized_comparator_outputs_for_item(
                 batch_item,
@@ -1881,6 +1897,228 @@ class MADPOIterTrainer(MADPOTrainer):
             use_comparator_rng=True,
             **kwargs,
         )
+
+    def _generate_sequential_centralized_comparator_outputs_for_item(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        iteration_idx: int,
+        num_candidates: int,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        if self.args.comparator_policy == "api":
+            return self._generate_sequential_centralized_outputs(
+                batch_item,
+                num_candidates=num_candidates,
+                generate_stage=lambda agent_idx, prompts: (
+                    self._generate_sequential_api_stage(
+                        batch_item,
+                        agent_idx=agent_idx,
+                        prompts=prompts,
+                    )
+                ),
+            )
+        if self.args.comparator_policy == "current":
+            comparator_agents = self.agents
+        elif self.args.comparator_policy == "current_copy":
+            return self._generate_sequential_centralized_current_copy_outputs_for_item(
+                batch_item,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+        elif self.args.comparator_policy == "history":
+            checkpoint_dir = self._history_policy_checkpoint_path(iteration_idx)
+            comparator_agents = self._load_policy_checkpoint_agents(checkpoint_dir)
+            try:
+                return self._generate_sequential_centralized_policy_outputs(
+                    comparator_agents,
+                    batch_item,
+                    num_candidates=num_candidates,
+                    **kwargs,
+                )
+            finally:
+                del comparator_agents
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+        else:
+            comparator_agents = self._get_comparator_agents()
+
+        return self._generate_sequential_centralized_policy_outputs(
+            comparator_agents,
+            batch_item,
+            num_candidates=num_candidates,
+            **kwargs,
+        )
+
+    def _generate_sequential_centralized_policy_outputs(
+        self,
+        policy_agents: Sequence[Any],
+        batch_item: Dict[str, Any],
+        *,
+        num_candidates: int,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        if len(policy_agents) != int(self.num_agents):
+            raise ValueError(
+                "Sequential centralized generation requires one policy agent per "
+                f"output agent; expected {self.num_agents}, got {len(policy_agents)}."
+            )
+
+        return self._generate_sequential_centralized_outputs(
+            batch_item,
+            num_candidates=num_candidates,
+            generate_stage=lambda agent_idx, prompts: (
+                self._generate_comparator_prompt_batch(
+                    policy_agents[agent_idx],
+                    agent_idx=agent_idx,
+                    prompts=prompts,
+                    **kwargs,
+                )
+            ),
+        )
+
+    def _generate_sequential_centralized_outputs(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        num_candidates: int,
+        generate_stage: Callable[[int, Sequence[str]], Sequence[str]],
+    ) -> List[Dict[str, Any]]:
+        if int(num_candidates) < 1:
+            raise ValueError("num_candidates must be >= 1.")
+
+        agent_prompts = [formatter(batch_item) for formatter in self.formatters]
+        candidate_outputs: List[List[str]] = [[] for _ in range(int(num_candidates))]
+        outputs_by_agent: List[List[str]] = [[] for _ in range(int(self.num_agents))]
+
+        for agent_idx in range(int(self.num_agents)):
+            stage_prompts = [
+                self._build_sequential_centralized_prompt(
+                    batch_item,
+                    agent_prompts=agent_prompts,
+                    agent_idx=agent_idx,
+                    previous_outputs=outputs,
+                )
+                for outputs in candidate_outputs
+            ]
+            stage_completions = list(generate_stage(agent_idx, stage_prompts))
+            if len(stage_completions) != int(num_candidates):
+                raise ValueError(
+                    "Sequential centralized generation must return exactly one "
+                    f"completion per candidate; expected {num_candidates}, got "
+                    f"{len(stage_completions)} for agent {agent_idx}."
+                )
+
+            for candidate_idx, completion in enumerate(stage_completions):
+                output = self._parse_sequential_centralized_completion(
+                    str(completion),
+                    batch_item=batch_item,
+                    agent_idx=agent_idx,
+                )
+                candidate_outputs[candidate_idx].append(output)
+                outputs_by_agent[agent_idx].append(output)
+
+        return [
+            {
+                "prompts": [agent_prompts[agent_idx]],
+                "batch_items": [batch_item],
+                "completions": [outputs_by_agent[agent_idx]],
+            }
+            for agent_idx in range(int(self.num_agents))
+        ]
+
+    def _generate_sequential_api_stage(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        agent_idx: int,
+        prompts: Sequence[str],
+    ) -> List[str]:
+        completions: List[str] = []
+        for prompt in prompts:
+            result = self._call_comparator_api(
+                prompt=str(prompt),
+                agent_idx=agent_idx,
+                batch_item=batch_item,
+                num_candidates=1,
+            )
+            if not result:
+                raise ValueError(
+                    "Comparator API returned no completion for sequential "
+                    f"centralized agent {agent_idx}."
+                )
+            completions.append(str(result[0]))
+        return completions
+
+    def _generate_comparator_prompt_batch(
+        self,
+        policy_agent: Any,
+        *,
+        agent_idx: int,
+        prompts: Sequence[str],
+        **kwargs,
+    ) -> List[str]:
+        if not prompts:
+            return []
+
+        agent_module = unwrap_model(policy_agent)
+        device = next(agent_module.parameters()).device
+        tokenizer = self.tokenizers[agent_idx]
+        apply_tokenizer_specials(tokenizer, [agent_module])
+        prompt_encodings = tokenizer(
+            list(prompts),
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        ).to(device)
+
+        generation_kwargs: Dict[str, Any] = {
+            "input_ids": prompt_encodings.input_ids,
+            "attention_mask": prompt_encodings.attention_mask,
+            "max_new_tokens": self.args.max_new_tokens,
+            "return_dict_in_generate": True,
+            "do_sample": True,
+            "temperature": self.args.temperature,
+            "top_p": self.args.top_p,
+            "num_beams": 1,
+            "num_return_sequences": 1,
+        }
+        top_k = getattr(self.args, "top_k", None)
+        if top_k is not None:
+            generation_kwargs["top_k"] = top_k
+        extra_generation_kwargs = dict(kwargs)
+        extra_generation_kwargs.pop("do_sample", None)
+        generation_kwargs.update(extra_generation_kwargs)
+
+        training_mode = agent_module.training
+        agent_module.eval()
+        try:
+            with self._comparator_rng(policy_agent):
+                with torch.inference_mode():
+                    generation_output = agent_module.generate(**generation_kwargs)
+        except Exception as exc:
+            raise ValueError(
+                f"Sequential centralized generation failed for agent {agent_idx}: "
+                f"{exc}"
+            ) from exc
+        finally:
+            agent_module.train(training_mode)
+
+        sequences = generation_output.sequences
+        if int(sequences.shape[0]) != len(prompts):
+            raise ValueError(
+                "Sequential centralized generation returned an unexpected number "
+                f"of sequences: expected {len(prompts)}, got {sequences.shape[0]}."
+            )
+        prompt_width = int(prompt_encodings.input_ids.shape[1])
+        return [
+            tokenizer.decode(
+                sequence[prompt_width:],
+                skip_special_tokens=True,
+            )
+            for sequence in sequences
+        ]
 
     def _generate_policy_outputs_for_item(
         self,
@@ -2085,6 +2323,43 @@ class MADPOIterTrainer(MADPOTrainer):
             comparator_agent = None
             self._clear_transient_comparator_agents(transient_agents)
 
+    def _generate_sequential_centralized_current_copy_outputs_for_item(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        num_candidates: int,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        if self._comparator_devices_match_agent_devices():
+            return self._generate_sequential_centralized_policy_outputs(
+                self.agents,
+                batch_item,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+
+        cached_agents = getattr(self, "_current_copy_comparator_agents", None)
+        if cached_agents is not None and all(
+            agent is not None for agent in cached_agents
+        ):
+            return self._generate_sequential_centralized_policy_outputs(
+                cached_agents,
+                batch_item,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+
+        comparator_agents = self._clone_current_agents_for_comparator()
+        try:
+            return self._generate_sequential_centralized_policy_outputs(
+                comparator_agents,
+                batch_item,
+                num_candidates=num_candidates,
+                **kwargs,
+            )
+        finally:
+            self._clear_transient_comparator_agents(comparator_agents)
+
     def _centralized_comparator_agent_index(self) -> int:
         return int(getattr(self.args, "comparator_centralized_agent_index", 0))
 
@@ -2100,6 +2375,62 @@ class MADPOIterTrainer(MADPOTrainer):
                 "non-empty string."
             )
         return prompt
+
+    def _build_sequential_centralized_prompt(
+        self,
+        batch_item: Dict[str, Any],
+        *,
+        agent_prompts: Sequence[str],
+        agent_idx: int,
+        previous_outputs: Sequence[str],
+    ) -> str:
+        build_prompt = getattr(
+            self.centralized_comparator_adapter,
+            "build_sequential_prompt",
+            None,
+        )
+        if not callable(build_prompt):
+            raise TypeError(
+                "centralized_sequential generation requires "
+                "centralized_comparator_adapter.build_sequential_prompt."
+            )
+        prompt = build_prompt(
+            batch_item,
+            agent_prompts,
+            agent_idx,
+            previous_outputs,
+        )
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError(
+                "centralized_comparator_adapter.build_sequential_prompt must "
+                "return a non-empty string."
+            )
+        return prompt
+
+    def _parse_sequential_centralized_completion(
+        self,
+        completion: str,
+        *,
+        batch_item: Dict[str, Any],
+        agent_idx: int,
+    ) -> str:
+        parse_completion = getattr(
+            self.centralized_comparator_adapter,
+            "parse_sequential_completion",
+            None,
+        )
+        if not callable(parse_completion):
+            raise TypeError(
+                "centralized_sequential generation requires "
+                "centralized_comparator_adapter.parse_sequential_completion."
+            )
+        output = parse_completion(completion, batch_item, agent_idx)
+        if not isinstance(output, str):
+            raise TypeError(
+                "centralized_comparator_adapter.parse_sequential_completion must "
+                "return a string."
+            )
+        return output
 
     def _split_centralized_comparator_outputs(
         self,

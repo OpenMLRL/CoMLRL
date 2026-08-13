@@ -25,6 +25,23 @@ class CentralizedComparatorAdapter(Protocol):
     ) -> Sequence[str]:
         """Split one centralized completion into agent-indexed outputs."""
 
+    def build_sequential_prompt(
+        self,
+        batch_item: Dict[str, Any],
+        agent_prompts: Sequence[str],
+        agent_index: int,
+        previous_outputs: Sequence[str],
+    ) -> str:
+        """Build the prompt for one factor in a sequential joint action."""
+
+    def parse_sequential_completion(
+        self,
+        completion: str,
+        batch_item: Dict[str, Any],
+        agent_index: int,
+    ) -> str:
+        """Extract one agent output from a sequential completion."""
+
 
 @dataclass(frozen=True)
 class TaggedCentralizedComparatorAdapter:
@@ -78,3 +95,70 @@ Return exactly one section for each agent in this format:
                 "Centralized completion did not contain any indexed agent sections."
             )
         return outputs
+
+    def build_sequential_prompt(
+        self,
+        batch_item: Dict[str, Any],
+        agent_prompts: Sequence[str],
+        agent_index: int,
+        previous_outputs: Sequence[str],
+    ) -> str:
+        del batch_item
+        if agent_index < 0 or agent_index >= len(agent_prompts):
+            raise ValueError("agent_index must identify one of the agent prompts.")
+        if len(previous_outputs) != agent_index:
+            raise ValueError(
+                "previous_outputs must contain exactly the outputs generated before "
+                "agent_index."
+            )
+
+        prompt_sections = "\n\n".join(
+            f"Agent {idx} original prompt:\n{prompt}"
+            for idx, prompt in enumerate(agent_prompts)
+        )
+        if previous_outputs:
+            context = "\n\n".join(
+                f"Final Agent {idx} output:\n<agent_{idx}>\n{output}\n</agent_{idx}>"
+                for idx, output in enumerate(previous_outputs)
+            )
+        else:
+            context = "No earlier agent output has been generated yet."
+
+        return f"""You are Agent {agent_index} in a centralized sequential coordinator.
+
+The team is producing one joint action. You can inspect every agent assignment and
+all earlier finalized outputs. Produce only Agent {agent_index}'s factor of the joint
+action, making it compatible with the earlier outputs without rewriting them.
+
+{prompt_sections}
+
+Earlier finalized outputs:
+{context}
+
+Return exactly this structure and no text outside it:
+<agent_{agent_index}>
+the complete Agent {agent_index} output
+</agent_{agent_index}>
+"""
+
+    def parse_sequential_completion(
+        self,
+        completion: str,
+        batch_item: Dict[str, Any],
+        agent_index: int,
+    ) -> str:
+        del batch_item
+        pattern = (
+            rf"<\s*agent_{agent_index}\s*>(.*?)" rf"<\s*/\s*agent_{agent_index}\s*>"
+        )
+        match = re.search(
+            pattern,
+            str(completion),
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if match is None:
+            raise CentralizedComparatorParseError(
+                "Sequential centralized completion did not contain the required "
+                f"agent_{agent_index} section."
+            )
+        return match.group(1).strip()
