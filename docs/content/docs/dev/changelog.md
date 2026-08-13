@@ -5,6 +5,11 @@ weight: 3
 
 ---
 
+## Version 1.4.2
+
+- Support more comparator models (commit [e1b3d80](https://github.com/OpenMLRL/CoMLRL/commit/e1b3d8065eeddaad9d857d10e0d21764cb1f3270)).
+- Fix the homogeneous generation issue (commit[11d89a9](https://github.com/OpenMLRL/CoMLRL/commit/11d89a933a40d0d31e60c09491eb699e007b3cf9)).
+
 ## Version 1.4.1
 
 - Support comparator to be a centralized coordinator (PR [#69](https://github.com/OpenMLRL/CoMLRL/pull/69)).
