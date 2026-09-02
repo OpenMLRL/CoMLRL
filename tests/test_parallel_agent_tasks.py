@@ -1,3 +1,4 @@
+import threading
 import time
 from types import SimpleNamespace
 
@@ -65,9 +66,32 @@ def test_magrpo_run_agent_tasks_keeps_index_order_in_mp():
         completion_order.append(agent_idx)
         return f"agent-{agent_idx}"
 
-    outputs = trainer._run_agent_tasks(_task)
-    assert outputs == ["agent-0", "agent-1"]
-    assert completion_order == [1, 0]
+    try:
+        outputs = trainer._run_agent_tasks(_task)
+        assert outputs == ["agent-0", "agent-1"]
+        assert completion_order == [1, 0]
+    finally:
+        trainer._shutdown_agent_task_executors()
+
+
+def test_magrpo_reuses_one_worker_thread_per_agent():
+    trainer = MAGRPOTrainer.__new__(MAGRPOTrainer)
+    trainer.parallel_training = "mp"
+    trainer.num_agents = 2
+    trainer.agent_devices = ["cuda:0", "cuda:1"]
+
+    try:
+        thread_ids_by_call = [
+            trainer._run_agent_tasks(lambda _agent_idx: threading.get_ident())
+            for _ in range(8)
+        ]
+
+        assert all(
+            thread_ids == thread_ids_by_call[0] for thread_ids in thread_ids_by_call[1:]
+        )
+        assert len(set(thread_ids_by_call[0])) == 2
+    finally:
+        trainer._shutdown_agent_task_executors()
 
 
 def test_maac_parallel_updates_are_always_serialized():

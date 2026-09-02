@@ -228,6 +228,10 @@ class MAGRPOTrainer:
 
         self.num_agents = expected_count
         self.model_name = model_name
+        # Keep one long-lived worker per agent in MP mode. Recreating executors for
+        # every rollout/update makes PyTorch/CUDA thread-local allocator state
+        # accumulate in host memory during long training runs.
+        self._agent_task_executors: Optional[List[ThreadPoolExecutor]] = None
         if self.parallel_training == "mp":
             self.agent_devices = DeviceScheduler.resolve_devices(
                 getattr(self.args, "agent_devices", None),
@@ -411,15 +415,52 @@ class MAGRPOTrainer:
             return [fn(agent_idx) for agent_idx in indices]
 
         results: Dict[int, Any] = {}
-        max_workers = min(len(indices), max(1, len(indices)))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(fn, agent_idx): agent_idx for agent_idx in indices
-            }
-            for future in as_completed(futures):
-                agent_idx = futures[future]
+        executors = self._get_agent_task_executors()
+        futures = {
+            executors[agent_idx].submit(fn, agent_idx): agent_idx
+            for agent_idx in indices
+        }
+        first_error: Optional[BaseException] = None
+        for future in as_completed(futures):
+            agent_idx = futures[future]
+            try:
                 results[agent_idx] = future.result()
+            except BaseException as exc:
+                # Match the old context-manager behavior: let every in-flight
+                # agent task finish before propagating the first failure.
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
         return [results[agent_idx] for agent_idx in indices]
+
+    def _get_agent_task_executors(self) -> List[ThreadPoolExecutor]:
+        """Return persistent, agent-affine workers for parallel CUDA tasks."""
+        executors = getattr(self, "_agent_task_executors", None)
+        if executors is not None and len(executors) == self.num_agents:
+            return executors
+
+        if executors is not None:
+            for executor in executors:
+                executor.shutdown(wait=True)
+
+        executors = [
+            ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix=f"magrpo-agent-{agent_idx}",
+            )
+            for agent_idx in range(self.num_agents)
+        ]
+        self._agent_task_executors = executors
+        return executors
+
+    def _shutdown_agent_task_executors(self, *, wait: bool = True) -> None:
+        """Release persistent workers explicitly when a caller no longer needs them."""
+        executors = getattr(self, "_agent_task_executors", None)
+        self._agent_task_executors = None
+        if executors is not None:
+            for executor in executors:
+                executor.shutdown(wait=wait)
 
     def _init_wandb(self):
         """Initialize Weights & Biases for tracking with multi-turn config."""
