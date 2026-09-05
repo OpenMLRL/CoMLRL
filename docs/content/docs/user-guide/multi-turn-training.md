@@ -109,6 +109,38 @@ An [environment for code generation](https://github.com/OpenMLRL/LLM_Collab_Code
 - `external.mode=plain`: Self-improvement mode that just includes prompts and responses in the previous turns and a revision instruction.
 {{% /hint %}}
 
+## Centralized Preference Collaboration
+
+`MADPOConfig`, `MARLHFConfig`, and their iterative variants accept
+`collaboration_mode="centralized"` (default: `"decentralized"`). In this mode,
+one trainable actor receives all role prompts and generates one joint response.
+The complete response, including role delimiters, is optimized by one actor
+and one optimizer. Later roles are causally conditioned on earlier roles.
+
+Pass a downstream `centralized_comparator_adapter` implementing `build_prompt`
+and `parse_completion`. The same adapter is used for the actor and comparator;
+domain instructions and parsing stay outside CoMLRL. Parsing happens only at
+the task reward and evaluation boundaries. Preference replay, learned reward
+scoring, and policy training keep the complete joint text.
+
+- Keep `num_agents` equal to the number of task roles (for example, 2). Use
+  `agent_model` once, or supply exactly one entry in `agents` and its tokenizer.
+- `agent_devices` describes one actor. The optional reward model and external
+  comparator retain their independent device settings.
+- Iterative trainers force `comparator_generation_mode="centralized"` and
+  require `comparator_centralized_agent_index=0`. Current, current-copy, history,
+  model, and API comparator sources retain their existing meanings.
+- `max_new_tokens` is the **total joint response** budget, not a per-role
+  budget. Consider doubling a previous per-role limit. For MARLHF, also allow
+  enough `reward_max_length` for the joint prompt and both outputs.
+- One joint completion still counts as one environment step; a preference pair
+  uses `environment_steps_per_pair` (default 2). Role count does not multiply
+  these counters. Checkpoints contain one actor (`agent_0`).
+
+W&B records `collaboration_mode`, `num_roles`, `num_actor_models`, and the
+effective comparator generation mode. Decentralized collaboration continues to
+use the existing separate-actor generation, loss, and evaluation paths.
+
 ## API Comparators
 
 Iterative MADPO and MARLHF can use a remote model with `comparator_policy=api`.

@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm  # type: ignore
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
 
+from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.tokenizer_utils import ensure_pad_token
 
 from .madpo import MADPOConfig, MADPOTrainer, PreferencePair
@@ -173,6 +174,15 @@ class MARLHFTrainer(MADPOTrainer):
         self.critic_model_source = critic_model
         self.critic_sources = critics
         super().__init__(*args, **kwargs)
+        if (
+            self.centralized_collaboration is not None
+            and self.metrics_callback is not None
+        ):
+            self.metrics_callback = (
+                self.centralized_collaboration.wrap_metrics_callback(
+                    self.metrics_callback
+                )
+            )
         self.reward_model: Optional[JointRewardModel] = None
         self.reward_tokenizer: Optional[PreTrainedTokenizerBase] = None
         self.reward_optimizer: Optional[torch.optim.Optimizer] = None
@@ -210,7 +220,7 @@ class MARLHFTrainer(MADPOTrainer):
         previous = self._evaluating_with_task_reward
         self._evaluating_with_task_reward = True
         try:
-            return MAGRPOTrainer.evaluate(self, num_eval_samples=num_eval_samples)
+            return super().evaluate(num_eval_samples=num_eval_samples)
         finally:
             self._evaluating_with_task_reward = previous
 
@@ -232,6 +242,31 @@ class MARLHFTrainer(MADPOTrainer):
             completions_list,
             batch_items=batch_items,
         )
+
+    def _compute_loss_with_gradients(self, agent, completions_data, returns):
+        if self.centralized_collaboration is None:
+            return super()._compute_loss_with_gradients(
+                agent, completions_data, returns
+            )
+        if len(returns) == 0:
+            return next(agent.parameters()).reshape(-1)[0] * 0.0
+        device = next(unwrap_model(agent).parameters()).device
+        returns_tensor = torch.as_tensor(returns, dtype=torch.float, device=device)
+        effective_returns = self._apply_reference_kl_to_returns(
+            returns_tensor, completions_data
+        )
+        advantages = self._compute_advantages(effective_returns)
+        if self.args.advantage_normalization and advantages.numel() > 1:
+            advantages = (advantages - advantages.mean()) / advantages.std(
+                unbiased=False
+            ).clamp(min=1e-6)
+        prompt_ids = completions_data["prompt_input_ids"][0]
+        sequences = completions_data["completion_input_ids"][0]
+        losses = [
+            -self._sequence_log_prob(0, prompt_ids, tokens) * advantage
+            for tokens, advantage in zip(sequences, advantages)
+        ]
+        return torch.stack(losses).mean()
 
     def _train_actor_critic_rl(self, **kwargs) -> None:
         trainer_ref: Dict[str, Any] = {"trainer": None}

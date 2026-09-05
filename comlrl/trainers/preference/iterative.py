@@ -29,10 +29,7 @@ from .madpo import (
     MADPOTrainer,
     PreferencePair,
 )
-from .centralized import (
-    CentralizedComparatorAdapter,
-    TaggedCentralizedComparatorAdapter,
-)
+from .centralized import CentralizedComparatorAdapter
 from .marlhf import (
     MARLHFConfig,
     MARLHFTrainer,
@@ -384,19 +381,11 @@ class MADPOIterTrainer(MADPOTrainer):
         centralized_comparator_adapter: Optional[CentralizedComparatorAdapter] = None,
         **kwargs,
     ):
-        adapter = centralized_comparator_adapter
-        if adapter is None:
-            adapter = TaggedCentralizedComparatorAdapter()
-        if not callable(getattr(adapter, "build_prompt", None)):
-            raise TypeError(
-                "centralized_comparator_adapter.build_prompt must be callable."
-            )
-        if not callable(getattr(adapter, "parse_completion", None)):
-            raise TypeError(
-                "centralized_comparator_adapter.parse_completion must be callable."
-            )
-        self.centralized_comparator_adapter = adapter
-        super().__init__(*args, **kwargs)
+        super().__init__(
+            *args,
+            centralized_comparator_adapter=centralized_comparator_adapter,
+            **kwargs,
+        )
         self._reward_distribution_range: Optional[Tuple[float, float]] = None
         if self._log_reward_distribution_enabled():
             self._reward_distribution_range = self._resolve_reward_distribution_range()
@@ -2089,6 +2078,8 @@ class MADPOIterTrainer(MADPOTrainer):
         return int(getattr(self.args, "comparator_centralized_agent_index", 0))
 
     def _build_centralized_comparator_prompt(self, batch_item: Dict[str, Any]) -> str:
+        if self.centralized_collaboration is not None:
+            return self.centralized_collaboration.build_prompt(batch_item)
         agent_prompts = [formatter(batch_item) for formatter in self.formatters]
         prompt = self.centralized_comparator_adapter.build_prompt(
             batch_item,
@@ -2108,6 +2099,17 @@ class MADPOIterTrainer(MADPOTrainer):
         batch_item: Dict[str, Any],
         prompt: str,
     ) -> List[Dict[str, Any]]:
+        if getattr(self, "centralized_collaboration", None) is not None:
+            if not completions:
+                raise ValueError("Centralized comparator produced no candidates.")
+            # Preserve the exact joint text, including tags, for preference learning.
+            return [
+                {
+                    "prompts": [prompt],
+                    "batch_items": [batch_item],
+                    "completions": [list(completions)],
+                }
+            ]
         agent_completions: List[List[str]] = [[] for _ in range(int(self.num_agents))]
         for completion in completions:
             parsed_outputs = self.centralized_comparator_adapter.parse_completion(

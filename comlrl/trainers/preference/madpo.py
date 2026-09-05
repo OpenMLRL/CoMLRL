@@ -13,6 +13,11 @@ from comlrl.utils.reference_kl import validate_reference_kl_config
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials
 
 from ..reinforce.magrpo import MAGRPOTrainer
+from .centralized import (
+    CentralizedComparatorAdapter,
+    TaggedCentralizedComparatorAdapter,
+)
+from .collaboration import CentralizedCollaboration, joint_sequence_log_prob
 
 
 @dataclass
@@ -45,6 +50,7 @@ class MADPOConfig:
     agent_learning_rate: float = 5.0e-6
     logging_steps: int = 50
     num_agents: int = 2
+    collaboration_mode: str = "decentralized"
     parallel_training: str = "none"
     agent_devices: Optional[Union[str, Sequence[str]]] = None
 
@@ -79,6 +85,13 @@ class MADPOConfig:
     environment_steps_per_pair: int = 2
 
     def __post_init__(self) -> None:
+        if self.collaboration_mode not in {"decentralized", "centralized"}:
+            raise ValueError("collaboration_mode must be decentralized or centralized.")
+        if self.collaboration_mode == "centralized":
+            if getattr(self, "comparator_centralized_agent_index", 0) != 0:
+                raise ValueError("Centralized collaboration has only actor index 0.")
+            if hasattr(self, "comparator_generation_mode"):
+                self.comparator_generation_mode = "centralized"
         if self.num_train_epochs < 1:
             raise ValueError("num_train_epochs must be >= 1.")
         if self.num_agents < 1:
@@ -107,7 +120,8 @@ class MADPOConfig:
         if mode == "mp" and self.agent_devices is None:
             raise ValueError("parallel_training='mp' requires explicit agent_devices.")
         self.parallel_training = mode
-        validate_reference_kl_config(self, self.num_agents)
+        actor_count = 1 if self.collaboration_mode == "centralized" else self.num_agents
+        validate_reference_kl_config(self, actor_count)
         if self.num_turns != 1:
             raise ValueError("MADPO currently supports num_turns=1 only.")
         if self.preference_num_candidates < 2:
@@ -148,6 +162,98 @@ class MADPOTrainer(MAGRPOTrainer):
 
     default_config_cls = MADPOConfig
     algorithm_name = "MADPO"
+
+    def __init__(
+        self,
+        agent_model=None,
+        agents=None,
+        num_agents=2,
+        tokenizer=None,
+        model_config=None,
+        train_dataset=None,
+        eval_dataset=None,
+        dataset_type=None,
+        reward_func=None,
+        reward_processor=None,
+        formatters=None,
+        external_transition=None,
+        wandb_config=None,
+        eval_logger=None,
+        eval_aggregator=None,
+        args=None,
+        *,
+        centralized_comparator_adapter: Optional[CentralizedComparatorAdapter] = None,
+    ):
+        config = args if args is not None else self.default_config_cls()
+        adapter = centralized_comparator_adapter
+        if adapter is None:
+            adapter = TaggedCentralizedComparatorAdapter()
+        for method in ("build_prompt", "parse_completion"):
+            if not callable(getattr(adapter, method, None)):
+                raise TypeError(
+                    f"centralized_comparator_adapter.{method} must be callable."
+                )
+        self.centralized_comparator_adapter = adapter
+        self.centralized_collaboration = None
+        self._centralized_eval_items = []
+        if config.collaboration_mode == "centralized":
+            if agents is not None and len(agents) != 1:
+                raise ValueError(
+                    "Centralized collaboration requires exactly one actor model."
+                )
+            if isinstance(tokenizer, (list, tuple)) and len(tokenizer) != 1:
+                raise ValueError(
+                    "Centralized collaboration requires one actor tokenizer."
+                )
+            if not callable(reward_func):
+                raise ValueError("reward_func must be a callable.")
+            if num_agents != config.num_agents:
+                raise ValueError(
+                    "num_agents must match args.num_agents (the role count)."
+                )
+            self.centralized_collaboration = CentralizedCollaboration(
+                adapter, formatters, reward_func, num_agents
+            )
+            formatters = self.centralized_collaboration.build_prompt
+            reward_func = self.centralized_collaboration
+            num_agents = 1
+        super().__init__(
+            agent_model=agent_model,
+            agents=agents,
+            num_agents=num_agents,
+            tokenizer=tokenizer,
+            model_config=model_config,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            dataset_type=dataset_type,
+            reward_func=reward_func,
+            reward_processor=reward_processor,
+            formatters=formatters,
+            external_transition=external_transition,
+            wandb_config=wandb_config,
+            eval_logger=eval_logger,
+            eval_aggregator=eval_aggregator,
+            args=config,
+        )
+
+    def evaluate(self, num_eval_samples: Optional[int] = None) -> Dict[str, float]:
+        self._centralized_eval_items = []
+        try:
+            return super().evaluate(num_eval_samples=num_eval_samples)
+        finally:
+            self._centralized_eval_items = []
+
+    def _evaluate_sample(self, batch_item, *args, **kwargs):
+        super()._evaluate_sample(batch_item, *args, **kwargs)
+        if self.centralized_collaboration is not None:
+            self._centralized_eval_items.append(batch_item)
+
+    def _log_eval_metrics(self, all_agent_completions_turns, *args, **kwargs):
+        if self.centralized_collaboration is not None:
+            all_agent_completions_turns = self.centralized_collaboration.split_eval(
+                all_agent_completions_turns, self._centralized_eval_items
+            )
+        return super()._log_eval_metrics(all_agent_completions_turns, *args, **kwargs)
 
     def train(self, **kwargs):
         if int(self.args.num_turns) != 1:
@@ -408,6 +514,13 @@ class MADPOTrainer(MAGRPOTrainer):
         prompt_input_ids: torch.Tensor,
         completion_ids: torch.Tensor,
     ) -> torch.Tensor:
+        if self.centralized_collaboration is not None:
+            return joint_sequence_log_prob(
+                self.agents[agent_idx],
+                self.tokenizers[agent_idx],
+                prompt_input_ids,
+                completion_ids,
+            )
         agent = self.agents[agent_idx]
         agent_module = unwrap_model(agent)
         device = next(agent_module.parameters()).device

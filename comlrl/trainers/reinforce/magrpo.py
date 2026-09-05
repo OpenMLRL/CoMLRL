@@ -499,6 +499,11 @@ class MAGRPOTrainer:
             }
             if hasattr(self.args, "num_generations"):
                 config_dict["num_generations"] = self.args.num_generations
+            if getattr(self, "centralized_collaboration", None) is not None:
+                config_dict["collaboration_mode"] = "centralized"
+                config_dict["num_roles"] = self.centralized_collaboration.num_roles
+                config_dict["num_actor_models"] = len(self.agents)
+                config_dict["comparator_generation_mode"] = "centralized"
 
             # No per-turn weighting or early termination config
 
