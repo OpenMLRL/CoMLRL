@@ -107,7 +107,12 @@ class MAGRPOConfig:
         if mode == "mp" and self.agent_devices is None:
             raise ValueError("parallel_training='mp' requires explicit agent_devices.")
         self.parallel_training = mode
-        validate_reference_kl_config(self, self.num_agents)
+        actor_count = (
+            1
+            if getattr(self, "collaboration_mode", None) == "centralized"
+            else self.num_agents
+        )
+        validate_reference_kl_config(self, actor_count)
 
 
 @dataclass
@@ -503,7 +508,8 @@ class MAGRPOTrainer:
                 config_dict["collaboration_mode"] = "centralized"
                 config_dict["num_roles"] = self.centralized_collaboration.num_roles
                 config_dict["num_actor_models"] = len(self.agents)
-                config_dict["comparator_generation_mode"] = "centralized"
+                if hasattr(self.args, "comparator_generation_mode"):
+                    config_dict["comparator_generation_mode"] = "centralized"
 
             # No per-turn weighting or early termination config
 
