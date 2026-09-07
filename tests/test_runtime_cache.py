@@ -155,6 +155,7 @@ class RuntimeCacheTests(unittest.TestCase):
     def test_mount_parser_uses_longest_match_and_unescapes_spaces(self):
         mounts = (
             "1 0 0:1 / / rw - ext4 disk rw\n"
+            "5 1 0:5 / /home rw - autofs systemd-1 rw\n"
             "2 1 0:2 / /home rw - nfs server:/home rw\n"
             "3 1 0:3 / /tmp rw - tmpfs tmpfs rw\n"
             "4 3 0:4 / /tmp/shared\\040dir rw - nfs server:/tmp rw\n"
