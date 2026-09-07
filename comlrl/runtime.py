@@ -38,7 +38,9 @@ def _filesystem_type(path: Path) -> Optional[str]:
             continue
         mount = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[4])
         if resolved == mount or resolved.startswith(mount.rstrip("/") + "/"):
-            if len(mount) > best[0]:
+            # Overmounts (e.g. autofs followed by NFS at /home) can have the
+            # same path. Prefer the later, visible mount in that case.
+            if len(mount) >= best[0]:
                 best = (len(mount), fields[fields.index("-") + 1])
     return best[1]
 
