@@ -39,6 +39,12 @@ cd CoMLRL && pip install -e .
 # Install Compatible PyTorch
 ```
 
+## Slurm runtime cache
+
+Domain launchers can isolate CUDA JIT caches per job on node-local storage,
+avoiding contention in a shared NFS home directory. See the
+[runtime cache guide](docs/runtime_cache.md); this does not change trainer algorithms.
+
 ## Features
 
 - **Cooperative MARL trainers to optimize decentralized LLM collaboration:**
