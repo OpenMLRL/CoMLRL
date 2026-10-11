@@ -2,7 +2,8 @@
 <header class="docs-site-header">
   <div class="docs-header-inner">
     <a class="docs-brand" href="{{ .Site.Home.RelPermalink }}" aria-label="CoMLRL documentation home">
-      <img src="{{ .Site.Params.BookLogo | relURL }}" alt="CoMLRL" width="150" height="39" />
+      <img class="docs-logo-light" src="{{ .Site.Params.BookLogo | relURL }}" alt="CoMLRL" width="150" height="39" />
+      <span class="docs-logo-dark" role="img" aria-label="CoMLRL"></span>
     </a>
     <div class="docs-header-search">
       {{ partial "docs/search" . }}
@@ -12,15 +13,35 @@
       <a href="https://openmlrl.github.io">OpenMLRL <span aria-hidden="true">↗</span></a>
       <a href="{{ .Site.Params.BookRepo }}" class="docs-github-link">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.13.68-3.79-1.33-3.79-1.33-.51-1.3-1.25-1.64-1.25-1.64-1.03-.7.08-.69.08-.69 1.14.08 1.74 1.17 1.74 1.17 1.01 1.73 2.65 1.23 3.3.94.1-.73.39-1.23.71-1.51-2.5-.28-5.13-1.25-5.13-5.56 0-1.23.44-2.23 1.16-3.02-.12-.29-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.15a10.8 10.8 0 0 1 5.64 0c2.15-1.45 3.1-1.15 3.1-1.15.61 1.55.23 2.69.11 2.98.72.79 1.16 1.79 1.16 3.02 0 4.32-2.63 5.27-5.14 5.55.4.35.76 1.03.76 2.09v3.08c0 .3.2.65.77.54A11.25 11.25 0 0 0 12 .75Z"/></svg>
-        <span>GitHub</span>
+        <span class="docs-github-label">GitHub</span>
+        {{ with .Site.Data.github }}
+        <span class="docs-github-stars" data-github-stars data-repository="{{ .repository }}" aria-label="{{ .stars }} GitHub stars" title="{{ .stars }} stars · checked {{ .updated }}">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.78 5.63 6.22.9-4.5 4.39 1.06 6.2L12 17.19l-5.56 2.93 1.06-6.2L3 9.53l6.22-.9L12 3Z" /></svg>
+          <span data-star-count>{{ .stars | lang.FormatNumber 0 }}</span>
+        </span>
+        {{ end }}
       </a>
     </nav>
+    <div class="docs-theme-switcher" role="group" aria-label="Color theme" data-theme-switcher hidden>
+      <button class="docs-theme-option" type="button" data-theme-option="light" aria-label="Light mode" aria-pressed="false" title="Light mode">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></svg>
+      </button>
+      <button class="docs-theme-option" type="button" data-theme-option="dark" aria-label="Dark mode" aria-pressed="false" title="Dark mode">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20.9 13.1A9 9 0 0 1 10.9 3.1a9 9 0 1 0 10 10Z" /></svg>
+      </button>
+      <button class="docs-theme-option" type="button" data-theme-option="reading" aria-label="Reading mode" aria-pressed="false" title="Reading mode">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg>
+      </button>
+    </div>
   </div>
   <nav class="docs-area-tabs" aria-label="Documentation areas">
     <div class="docs-area-tabs-inner">
       <a href="{{ .Site.Home.RelPermalink }}"{{ if eq $area "docs" }} class="active" aria-current="page"{{ end }}>Documentation</a>
       {{ with .Site.GetPage "/docs/examples" }}
-        <a href="{{ .RelPermalink }}"{{ if eq $area "example" }} class="active" aria-current="page"{{ end }}>Example</a>
+        <a href="{{ .RelPermalink }}"{{ if eq $area "example" }} class="active" aria-current="page"{{ end }}>Examples</a>
+      {{ end }}
+      {{ with .Site.GetPage "/docs/research" }}
+        <a href="{{ .RelPermalink }}"{{ if eq $area "research" }} class="active" aria-current="page"{{ end }}>Research</a>
       {{ end }}
     </div>
   </nav>

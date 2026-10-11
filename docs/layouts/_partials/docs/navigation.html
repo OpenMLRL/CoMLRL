@@ -16,6 +16,15 @@
     {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
     {{- $groups = $groups | append (dict "Title" "Environments" "Page" . "Linked" true "Children" $children) -}}
   {{- end -}}
+{{- else if eq $area "research" -}}
+  {{- with .Site.GetPage "/docs/research" -}}
+    {{- $home = . -}}
+    {{- $homeTitle = "Research Overview" -}}
+    {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
+    {{- if $children -}}
+      {{- $groups = $groups | append (dict "Title" "Papers" "Page" . "Linked" false "Children" $children) -}}
+    {{- end -}}
+  {{- end -}}
 {{- else -}}
   {{- range slice "/docs/user-guide" "/docs/marl" "/docs/mapl" -}}
     {{- with $current.Site.GetPage . -}}

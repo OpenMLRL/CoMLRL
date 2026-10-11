@@ -7,4 +7,9 @@
     {{- end -}}
   {{- end -}}
 {{- end -}}
+{{- with .Site.GetPage "/docs/research" -}}
+  {{- if or (.Eq $current) (.IsAncestor $current) -}}
+    {{- $area = "research" -}}
+  {{- end -}}
+{{- end -}}
 {{- return $area -}}

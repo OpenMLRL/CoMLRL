@@ -1,3 +1,8 @@
+{{/* Apply the saved/system theme before the document's first paint. */}}
+{{ with resources.Get "theme.js" | resources.Minify | resources.Fingerprint }}
+<script src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}"></script>
+{{ end }}
+
 {{/* Inject KaTeX globally when math is enabled at site or page level */}}
 {{- $enableMath := or (default false .Site.Params.BookMath) (default false .Params.math) (.HasShortcode "katex") -}}
 {{- if $enableMath -}}
@@ -16,4 +21,21 @@
 <link rel="apple-touch-icon" href="{{ "img/comlrl-icon.png" | relURL }}" />
 {{ with resources.Get "docs.js" | resources.Minify | resources.Fingerprint }}
 <script defer src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}"></script>
+{{ end }}
+{{ with resources.Get "github-stars.js" }}
+{{ with . | resources.Minify | resources.Fingerprint }}
+<script defer src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}"></script>
+{{ end }}
+{{ end }}
+
+{{ if .HasShortcode "rollout-diagram" }}
+  {{ with resources.Get "rollout-diagrams.js" | resources.Minify | resources.Fingerprint }}
+  <script defer src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}"></script>
+  {{ end }}
+{{ end }}
+
+{{ if or .IsHome (.HasShortcode "rollout-diagram") }}
+  {{ with resources.Get "visual-viewer.js" | resources.Minify | resources.Fingerprint }}
+  <script defer src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}"></script>
+  {{ end }}
 {{ end }}

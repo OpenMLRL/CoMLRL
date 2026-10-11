@@ -1,0 +1,22 @@
+// Recolor only paint attributes: glyph paths, SVG geometry and animation stay intact.
+// Each source color retains its identity; no blanket inversion is applied.
+@media screen {
+html[data-theme="dark"] .book-article.markdown .docs-rollout .docs-rollout-stage > svg {
+  [fill="rgb(0%, 0%, 0%)"] { fill: #eeedf0; }
+  [stroke="rgb(0%, 0%, 0%)"] { stroke: #eeedf0; }
+
+  [fill="rgb(79.998779%, 0%, 0%)"] { fill: #ff8d89; }
+  [stroke="rgb(79.998779%, 0%, 0%)"] { stroke: #ff8d89; }
+  [fill="rgb(0%, 0%, 79.998779%)"] { fill: #83baff; }
+  [stroke="rgb(0%, 0%, 79.998779%)"] { stroke: #83baff; }
+  [fill="rgb(0%, 50%, 0%)"] { fill: #79d59b; }
+  [stroke="rgb(0%, 50%, 0%)"] { stroke: #79d59b; }
+  [fill="rgb(79.998779%, 39.99939%, 0%)"] { fill: #ffb66f; }
+  [stroke="rgb(79.998779%, 39.99939%, 0%)"] { stroke: #ffb66f; }
+
+  [stroke="rgb(100%, 54.902649%, 0%)"] { stroke: #ffb66f; }
+  [stroke="rgb(100%, 70.588684%, 78.431702%)"] { stroke: #f6a9c9; }
+  [stroke="rgb(0%, 70.588684%, 39.216614%)"] { stroke: #79d59b; }
+  [stroke="rgb(0%, 70.588684%, 86.274719%)"] { stroke: #73d6e5; }
+}
+}

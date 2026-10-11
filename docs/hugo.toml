@@ -12,8 +12,12 @@ publishDir = "public"
 enableGitInfo = true
 disableKinds = ["taxonomy"]
 
+[minify]
+  # Keep mathematical glyph paths intact in the inline rollout diagrams.
+  disableSVG = true
+
 [params]
-  BookTheme = "light"         # force light theme by default
+  BookTheme = "light"         # Base palette; theme.js applies system/user preference
   BookSection = "docs"        # top-level content section for the sidebar
   BookToC = true               # show the page outline beside the article
   BookSearch = true
@@ -35,7 +39,7 @@ disableKinds = ["taxonomy"]
     style = "friendly"
     lineNos = false
     lineNumbersInTable = false
-    noClasses = true
+    noClasses = false
 
 [module]
   # Import the Hugo Book theme via Hugo Modules

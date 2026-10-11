@@ -7,8 +7,12 @@
 {{- if $isAPI -}}
   {{- $body := strings.TrimSpace (strings.TrimPrefix $title $inner) -}}
   {{- $name := replaceRE `^\*\*([^*]+)\*\*.*$` "$1" $title -}}
+  {{- $displayName := $name -}}
+  {{- if hasPrefix $title "Custom External Feedback Interface:" -}}
+    {{- $displayName = "External Feedback" -}}
+  {{- end -}}
 <div class="docs-api-reference" id="api-{{ $name | plainify | anchorize }}">
-  <div class="docs-api-title">{{ $title | .Page.RenderString (dict "display" "inline") }}</div>
+  <div class="docs-api-title">{{ $displayName }} Parameters</div>
   <div class="docs-api-body">
     {{ $body | .Page.RenderString (dict "display" "block") }}
   </div>

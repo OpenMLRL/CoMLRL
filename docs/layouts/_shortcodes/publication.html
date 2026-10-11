@@ -1,0 +1,12 @@
+<section class="docs-publication" aria-label="{{ .Get "title" }}">
+  <h2>{{ .Get "title" }}</h2>
+  <p class="docs-publication-authors">{{ .Get "authors" }}</p>
+  <div class="docs-publication-meta">
+    <span class="docs-publication-venue">{{ .Get "venue" }}</span>
+    {{ with .Get "status" }}<span class="docs-publication-status">· {{ . }}</span>{{ end }}
+  </div>
+  <div class="docs-publication-links">
+    <a href="{{ .Get "paper" }}" class="docs-publication-paper">Paper <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 15 15 5M5 5h10v10" stroke-linecap="round" stroke-linejoin="round" /></svg></a>
+    {{ with .Get "talk" }}<a href="{{ . }}">Talk</a>{{ end }}
+  </div>
+</section>

@@ -1,7 +1,7 @@
-{{ if not .IsHome }}
+{{ if and (not .IsHome) (ne .Path "/docs/research") }}
   {{ $area := partial "docs/nav-area" . }}
   {{ with .Parent }}{{ if and (not .IsHome) .Title }}
-  <div class="docs-eyebrow">{{ if and (eq $area "example") (eq .Path "/docs") }}Example{{ else }}{{ .Title }}{{ end }}</div>
+  <div class="docs-eyebrow">{{ if and (eq $area "example") (eq .Path "/docs") }}Examples{{ else if and (eq $area "research") (eq .Path "/docs") }}Research{{ else }}{{ .Title }}{{ end }}</div>
   {{ end }}{{ end }}
 {{ end }}
 {{/* Titles are presentation metadata; leave the Markdown body untouched. */}}

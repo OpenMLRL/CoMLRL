@@ -1,5 +1,5 @@
 {{ $navigation := partial "docs/navigation" . }}
-<nav aria-label="{{ if eq $navigation.Area "example" }}Example{{ else }}Documentation{{ end }} pages">
+<nav aria-label="{{ if eq $navigation.Area "example" }}Examples{{ else if eq $navigation.Area "research" }}Research{{ else }}Documentation{{ end }} pages">
 {{ partial "docs/nav-link" (dict "Page" $navigation.Home "CurrentPage" . "Title" $navigation.HomeTitle "Class" "docs-home-link") }}
 {{ if hugo.IsMultilingual }}
   {{ partial "docs/languages" . }}

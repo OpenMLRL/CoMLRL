@@ -6,9 +6,9 @@ title: Overview
 
 **Co**operative **M**ulti-**L**LM **R**einforcement **L**earning (**CoMLRL**) is an open-source library for training multiple LLMs to collaborate using Multi-Agent Reinforcement Learning (MARL). It provides implementations of various MARL algorithms for LLM collaboration and supports different environments and benchmarks.
 
-<p align="center">
-  <img src="{{< relurl "img/demo.gif" >}}" width="700px;" alt=""/>
-</p>
+<figure class="docs-demo">
+  <img src="{{< relurl "img/demo-hd.webp" >}}" width="1306" height="730" decoding="async" fetchpriority="high" alt="Animated overview of CoMLRL: pretrained language models, cooperative MARL trainers, and multi-agent environment interactions." />
+</figure>
 
 ## About
 
@@ -16,21 +16,21 @@ title: Overview
 
 {{% tab "Q&A" %}}
 
-<em style="font-weight: 600; color: #9555af; margin-bottom: -0.5rem; display: block;"> "What are the differences between CoMLRL and other multi-LLM training frameworks?"</em>
+<em style="font-weight: 600; color: var(--docs-accent); margin-bottom: -0.5rem; display: block;"> "What are the differences between CoMLRL and other multi-LLM training frameworks?"</em>
 
 A lot of works use role-conditioned, parameter-sharing approaches built on single-agent RL training framework to implement multi-agent training. Using truly distinct agents provides a better modeling where highly heterogeneous LLMs possess fundamentally different capabilities and aligns better with the concept of study — "multi-agent".
 
 CoMLRL supports separate actors with decentralized execution, including training with a centralized critic. Its centralized collaboration mode instead uses one actor to generate the complete joint response. The available trainers include REINFORCE, Actor-Critic, and [Multi-Agent Preference Learning]({{< relref "docs/mapl" >}}); each method's page describes its implemented objective and constraints.
 
-<em style="font-weight: 600; color: #9555af; margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support single-agent fine-tuning?"</em>
+<em style="font-weight: 600; color: var(--docs-accent); margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support single-agent fine-tuning?"</em>
 
 <strong>Yes!</strong> The simplest way is to set `num_agents=1` in your trainer. But since we omit fancy optimizations for simplicity of multi-agent training, you may not find the single-agent trainers optimal. <a href="https://github.com/hiyouga/LLaMA-Factory">LLaMA-Factory</a>, <a href="https://github.com/huggingface/trl">trl</a>, <a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF</a>, and <a href="https://github.com/volcengine/verl">verl</a> are good choices for single-agent fine-tuning.
 
-<em style="font-weight: 600; color: #9555af; margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support self-play/self-improvement/self-evolving by MARL?"</em>
+<em style="font-weight: 600; color: var(--docs-accent); margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support self-play/self-improvement/self-evolving by MARL?"</em>
 
 <strong>Yes!</strong> Although we focus on LLM collaboration formalized as <a href="https://www.fransoliehoek.net/docs/OliehoekAmato16book.pdf">Dec-POMDP</a>, users can still customize the interactions with environment to implement pipeline like self-play (<a href="https://github.com/spiral-rl/spiral">Spiral</a>) and self-improvement (<a href="https://github.com/vsubramaniam851/multiagent-ft/tree/main">MAFT</a>). Users can refer to our <a href="docs/user-guide/multi-turn-training">multi-turn training</a> for more details.
 
-<em style="font-weight: 600; color: #9555af; margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support distributed training?"</em>
+<em style="font-weight: 600; color: var(--docs-accent); margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support distributed training?"</em>
 
 CoMLRL supports placing whole actor and critic models on multiple devices with `parallel_training="mp"` in one Python process. It does not provide multi-process data-parallel training or shard an individual model across devices. See [Training Parallelization]({{< relref "docs/user-guide/training-parallelization" >}}) for device configuration.
 
@@ -38,7 +38,7 @@ CoMLRL supports placing whole actor and critic models on multiple devices with `
 
 {{% tab "LLM Collaboration" %}}
 
-<em style="font-weight: 600; color: #9555af;"> "What is LLM collaboration?"</em>
+<em style="font-weight: 600; color: var(--docs-accent);"> "What is LLM collaboration?"</em>
 
 LLM collaboration refers to the problems where LLM agents cooperatively solve tasks in multi-agent systems. The tasks are specified in language and provided to each agent as a prompt, and the agent generates a response synchronously based on its instructions. The set of all agents' responses jointly forms a solution. Users and systems may validate the solutions to provide additional requirements or suggestions for LLMs. These components form part
 of the environment for LLM collaboration, with states that may be updated based on the agents’ outputs. The updates are embedded into prompts for subsequent turns. This process iterates until the task is completed or a turn limit is reached.
@@ -47,7 +47,7 @@ of the environment for LLM collaboration, with states that may be updated based 
 
 {{% tab "MARL Fine-Tuning" %}}
 
-<em style="font-weight: 600; color: #9555af;"> "Why should we fine-tune multi-LLM systems with MARL?"</em>
+<em style="font-weight: 600; color: var(--docs-accent);"> "Why should we fine-tune multi-LLM systems with MARL?"</em>
 
 Many studies have explored LLM-based multi-agent systems for completing tasks with multiple interacting agents. However, most of these models are pretrained separately and are not specifically optimized for coordination, which would limit their performance. In addition, designing effective prompts remains difficult and unclear. Cooperative MARL methods have been extensively studied for years, which optimize a team of agents towards a shared objective. They naturally fit LLM collaboration and motivate us to bring advances from the well-established MARL community to LLM-based MAS.
 
@@ -55,7 +55,7 @@ Many studies have explored LLM-based multi-agent systems for completing tasks wi
 
 {{% tab "Decentralization" %}}
 
-<em style="font-weight: 600; color: #9555af;"> "What are the benefits of decentralized reasoning?"</em>
+<em style="font-weight: 600; color: var(--docs-accent);"> "What are the benefits of decentralized reasoning?"</em>
 
 In decentralized execution, agents use their own prompts and policies, so independent generations can run concurrently when the device configuration allows it. This supports role-specific models and modular task decomposition. Latency, memory use, and task quality depend on model sizes, prompt lengths, communication, and hardware; decentralization alone does not guarantee a speedup or preserve all information available to a centralized model.
 
