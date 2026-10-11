@@ -15,12 +15,14 @@ from tqdm import tqdm  # type: ignore
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from comlrl.schedulers import DeviceScheduler
-from comlrl.utils.distributed import (
-    local_context,
-    unwrap_model,
-)
+from comlrl.schedulers.device_scheduler import normalize_parallel_training
+from comlrl.utils.distributed import local_context, unwrap_model
 from comlrl.utils.formatters import build_formatters
-from comlrl.utils.model_loading import infer_model_name, resolve_model_sources
+from comlrl.utils.model_loading import (
+    infer_model_name,
+    resolve_model_kwargs,
+    resolve_model_sources,
+)
 from comlrl.utils.reference_kl import (
     _sequence_kl_values,
     clone_reference_models,
@@ -36,6 +38,7 @@ from comlrl.utils.tokenizer_utils import (
     apply_tokenizer_specials,
     resolve_tokenizers,
 )
+from comlrl.utils.wandb_utils import verbose_from_wandb_config, wandb_init_kwargs
 
 
 @dataclass
@@ -100,11 +103,7 @@ class MAGRPOConfig:
             self.train_batch_size = self.rollout_buffer_size
         if self.train_batch_size < 1:
             raise ValueError("train_batch_size must be >= 1.")
-        mode = str(self.parallel_training or "none").strip().lower()
-        if mode == "null":
-            mode = "none"
-        if mode not in {"none", "mp"}:
-            raise ValueError("parallel_training only supports: none, mp.")
+        mode = normalize_parallel_training(self.parallel_training or "none")
         if mode == "mp" and self.agent_devices is None:
             raise ValueError("parallel_training='mp' requires explicit agent_devices.")
         self.parallel_training = mode
@@ -180,15 +179,9 @@ class MAGRPOTrainer:
         args: Optional[Any] = None,
     ):
         self.args = args if args is not None else self.default_config_cls()
-        self.parallel_training = (
-            str(getattr(self.args, "parallel_training", "none")).strip().lower()
+        self.parallel_training = normalize_parallel_training(
+            getattr(self.args, "parallel_training", "none")
         )
-        if self.parallel_training == "null":
-            self.parallel_training = "none"
-        if self.parallel_training not in {"none", "mp"}:
-            raise ValueError("parallel_training only supports: none, mp.")
-        self.dist_env = local_context()
-        self.device = self.dist_env.device
 
         if agent_model is None and agents is None:
             raise ValueError("Either agent_model or agents must be provided.")
@@ -251,26 +244,7 @@ class MAGRPOTrainer:
             self.agent_devices = [single_device] * self.num_agents
         self.device = self.agent_devices[0]
         self.dist_env = local_context(self.device)
-        model_kwargs = {}
-        torch_dtype = None
-        if isinstance(self.model_config, dict):
-            torch_dtype = self.model_config.get("torch_dtype") or self.model_config.get(
-                "dtype"
-            )
-        if torch_dtype is not None:
-            model_kwargs["torch_dtype"] = torch_dtype
-        attn_implementation = "sdpa"
-        if isinstance(self.model_config, dict):
-            nested_model_kwargs = self.model_config.get("model_kwargs")
-            if "attn_implementation" in self.model_config:
-                attn_implementation = self.model_config.get("attn_implementation")
-            elif (
-                isinstance(nested_model_kwargs, dict)
-                and "attn_implementation" in nested_model_kwargs
-            ):
-                attn_implementation = nested_model_kwargs.get("attn_implementation")
-        if attn_implementation is not None:
-            model_kwargs["attn_implementation"] = attn_implementation
+        model_kwargs = resolve_model_kwargs(self.model_config)
         if actor_sources and all(isinstance(src, str) for src in actor_sources):
             from transformers import AutoModelForCausalLM
 
@@ -280,7 +254,6 @@ class MAGRPOTrainer:
             ]
         else:
             self.agents = list(actor_sources)
-        self.critics = []
 
         for idx, agent in enumerate(self.agents):
             agent.to(self.agent_devices[idx])
@@ -322,9 +295,6 @@ class MAGRPOTrainer:
             else:
                 apply_tokenizer_specials(self.tokenizer, self.reference_models)
 
-        # Allow single-agent as a special case (GRPO)
-        if self.num_agents < 1:
-            raise ValueError("num_agents must be >= 1")
         num_generations = getattr(self.args, "num_generations", None)
         if num_generations is not None:
             rl_algorithm = str(getattr(self.args, "rl_algorithm", "magrpo")).lower()
@@ -368,26 +338,8 @@ class MAGRPOTrainer:
         if self.wandb_config is not None and self.dist_env.is_main:
             self._init_wandb()
 
-        self.dataset_type = dataset_type or None
-        if self.dataset_type is None:
-            try:
-                if isinstance(self.wandb_config, dict):
-                    sections = self.wandb_config.get("config_sections", {})
-                    if isinstance(sections, dict):
-                        ds = sections.get("dataset", {})
-                        if isinstance(ds, dict):
-                            self.dataset_type = ds.get("type")
-            except Exception:
-                self.dataset_type = None
-
-        # Verbosity from config (default True)
-        self.verbose = True
-        if isinstance(self.wandb_config, dict):
-            sections = self.wandb_config.get("config_sections", {})
-            if isinstance(sections, dict):
-                out = sections.get("output", {})
-                if isinstance(out, dict) and "verbose" in out:
-                    self.verbose = bool(out.get("verbose"))
+        self.dataset_type = dataset_type
+        self.verbose = verbose_from_wandb_config(self.wandb_config)
 
     def _parallel_agent_mode_enabled(self) -> bool:
         if str(getattr(self, "parallel_training", "")).lower() != "mp":
@@ -476,15 +428,6 @@ class MAGRPOTrainer:
             if self.wandb_config is None:
                 self.wandb_config = {}
 
-            wandb_project = self.wandb_config.get("project", "comlrl")
-            wandb_entity = self.wandb_config.get("entity")
-
-            wandb_name = self.wandb_config.get("name") or self.wandb_config.get(
-                "run_name"
-            )
-
-            wandb_dir = self.wandb_config.get("dir", None)
-
             config_dict = {
                 "model_name": self.model_name,
                 "num_agents": self.num_agents,
@@ -508,80 +451,7 @@ class MAGRPOTrainer:
                 if hasattr(self.args, "comparator_generation_mode"):
                     config_dict["comparator_generation_mode"] = "centralized"
 
-            # Incorporate full config sections and derived fields for searchability
-            sections = (
-                self.wandb_config.get("config_sections")
-                if isinstance(self.wandb_config, dict)
-                else None
-            )
-            if isinstance(sections, dict):
-                dataset_section = sections.get("dataset") or {}
-                output_section = sections.get("output") or {}
-                external_section = sections.get("external") or {}
-                trainer_section = sections.get("trainer") or {}
-
-                config_dict.update(
-                    {
-                        "dataset": dataset_section,
-                        "output": output_section,
-                        "external": external_section,
-                        "trainer": trainer_section,
-                    }
-                )
-
-                # Derived convenience keys
-                dataset_name = (
-                    dataset_section.get("name")
-                    if isinstance(dataset_section, dict)
-                    else None
-                )
-                dataset_type = (
-                    dataset_section.get("type")
-                    if isinstance(dataset_section, dict)
-                    else None
-                )
-                if dataset_name:
-                    config_dict["dataset_name"] = dataset_name
-                if dataset_type:
-                    config_dict["dataset_type"] = dataset_type
-
-                ext_mode = (
-                    external_section.get("mode")
-                    if isinstance(external_section, dict)
-                    else None
-                )
-                if ext_mode:
-                    config_dict["external_mode"] = ext_mode
-                    if "original_prompt" in external_section:
-                        config_dict["original_prompt"] = external_section.get(
-                            "original_prompt"
-                        )
-                    if "previous_response" in external_section:
-                        config_dict["previous_response"] = external_section.get(
-                            "previous_response"
-                        )
-
-            init_kwargs = {
-                "project": wandb_project,
-                "entity": wandb_entity,
-                "name": wandb_name,
-                "config": config_dict,
-            }
-
-            if wandb_dir is not None:
-                os.makedirs(wandb_dir, exist_ok=True)
-                init_kwargs["dir"] = wandb_dir
-
-            # Optionally support tags if provided by caller
-            tags = (
-                self.wandb_config.get("tags")
-                if isinstance(self.wandb_config, dict)
-                else None
-            )
-            if isinstance(tags, list):
-                init_kwargs["tags"] = tags
-
-            wandb.init(**init_kwargs)
+            wandb.init(**wandb_init_kwargs(self.wandb_config, config_dict))
             self.wandb_initialized = True
 
     def get_train_dataloader(self) -> DataLoader:
@@ -857,10 +727,7 @@ class MAGRPOTrainer:
 
                 # Process single batch item (batch_size=1 enforced)
                 batch_item = batch[0]
-                batch_loss, _batch_stats = self._train_step_returns(
-                    batch_item,
-                    **kwargs,
-                )
+                self._train_step_returns(batch_item, **kwargs)
 
             ready_agents = [
                 agent_idx
@@ -874,15 +741,9 @@ class MAGRPOTrainer:
         batch_item,
         **kwargs,
     ):
-        """Collect a rollout tree and buffer samples in environment-step order.
-
-        Return the mean absolute root return and per-turn reward/return summaries.
-        """
+        """Collect a rollout tree and buffer samples in environment-step order."""
         num_turns = int(self.args.num_turns)
         num_gens = int(self.args.num_generations)
-        # Per-turn accumulators for batch-level summaries
-        turn_reward_node_means: List[List[float]] = [[] for _ in range(num_turns)]
-        turn_return_node_means: List[List[float]] = [[] for _ in range(num_turns)]
 
         def build_node(
             turn_idx: int,
@@ -969,11 +830,8 @@ class MAGRPOTrainer:
             else:
                 raise ValueError(f"Unsupported joint_mode: {joint_mode}")
 
-            # Per-node means for batch-level summaries
             self.env_step += len(rewards_vec)
             node_env_step = int(self.env_step)
-            node_mean_reward = float(np.mean(rewards_vec)) if rewards_vec else 0.0
-            turn_reward_node_means[turn_idx].append(node_mean_reward)
 
             # Early termination: stop expanding this branch if mean reward exceeds threshold
             term_threshold = getattr(self.args, "early_termination_threshold", None)
@@ -1055,18 +913,6 @@ class MAGRPOTrainer:
 
         compute_returns(root)
 
-        def record_turn_returns(node):
-            t = node["turn"]
-            if 0 <= t < len(turn_return_node_means):
-                vals = node.get("returns") or []
-                if vals:
-                    mean_ret = float(np.mean(vals))
-                    turn_return_node_means[t].append(mean_ret)
-            for ch in node["children"]:
-                record_turn_returns(ch)
-
-        record_turn_returns(root)
-
         pending_samples: List[List[NodeSample]] = [[] for _ in range(self.num_agents)]
 
         def post_order_update(node):
@@ -1131,21 +977,6 @@ class MAGRPOTrainer:
                 if len(buffer) >= int(self.args.rollout_buffer_size):
                     ready_agents.append(agent_idx)
             self._drain_ready_buffers(ready_agents)
-
-        # Build per-turn batch summary
-        batch_loss = float(np.mean(np.abs(root.get("returns") or [0.0])))
-        batch_stats: Dict[int, Dict[str, Any]] = {}
-        for t in range(num_turns):
-            stats: Dict[str, Any] = {}
-            if turn_reward_node_means[t]:
-                stats["batch_mean_reward"] = float(np.mean(turn_reward_node_means[t]))
-            if turn_return_node_means[t]:
-                stats["batch_expected_return"] = float(
-                    np.mean(turn_return_node_means[t])
-                )
-            batch_stats[t] = stats
-
-        return batch_loss, batch_stats
 
     def _generate_completions(
         self,

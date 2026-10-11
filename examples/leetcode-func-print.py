@@ -401,7 +401,7 @@ def main():
     if args.wandb or any((args.wandb_project, args.wandb_entity, args.wandb_run_name)):
         wandb_config = {
             "entity": args.wandb_entity or "OpenMLRL",
-            "project": args.wandb_project or "comlrl",
+            "project": args.wandb_project,
             "name": args.wandb_run_name,
         }
 

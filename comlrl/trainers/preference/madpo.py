@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import wandb
 from tqdm import tqdm  # type: ignore
 
+from comlrl.schedulers.device_scheduler import normalize_parallel_training
 from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.reference_kl import validate_reference_kl_config
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials
@@ -112,11 +113,7 @@ class MADPOConfig:
             self.train_batch_size = self.rollout_buffer_size
         if self.train_batch_size < 1:
             raise ValueError("train_batch_size must be >= 1.")
-        mode = str(self.parallel_training or "none").strip().lower()
-        if mode == "null":
-            mode = "none"
-        if mode not in {"none", "mp"}:
-            raise ValueError("parallel_training only supports: none, mp.")
+        mode = normalize_parallel_training(self.parallel_training or "none")
         if mode == "mp" and self.agent_devices is None:
             raise ValueError("parallel_training='mp' requires explicit agent_devices.")
         self.parallel_training = mode
@@ -272,7 +269,15 @@ class MADPOTrainer(MAGRPOTrainer):
                 print("MADPO: no non-tied preference pairs were generated.")
             return
 
-        updates_seen = 0
+        self._train_preference_pairs(preference_pairs)
+
+    def _train_preference_pairs(
+        self,
+        preference_pairs: List[PreferencePair],
+        *,
+        updates_seen: int = 0,
+        desc: str = "MADPO",
+    ) -> int:
         for epoch in range(int(self.args.num_train_epochs)):
             random.shuffle(preference_pairs)
             batch_size = int(self.args.train_batch_size)
@@ -285,7 +290,7 @@ class MADPOTrainer(MAGRPOTrainer):
                 iterator = tqdm(
                     batches,
                     total=len(batches),
-                    desc=f"MADPO epoch {epoch + 1}/{int(self.args.num_train_epochs)}",
+                    desc=f"{desc} epoch {epoch + 1}/{int(self.args.num_train_epochs)}",
                 )
 
             for batch in iterator:
@@ -304,6 +309,7 @@ class MADPOTrainer(MAGRPOTrainer):
                 if self.wandb_initialized and wandb.run is not None:
                     if self._should_log_train(int(self.env_step)):
                         wandb.log(metrics, step=int(self.env_step))
+        return updates_seen
 
     def _build_preference_dataset(self, **kwargs) -> List[PreferencePair]:
         pairs: List[PreferencePair] = []

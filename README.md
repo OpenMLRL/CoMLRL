@@ -34,10 +34,11 @@ python examples/story-len-ratio.py
 ```
 
 Memory requirements depend on the model, number of agents, batch size, and response
-length. The examples leave W&B logging disabled by default; enable it explicitly:
+length. The examples leave W&B logging disabled by default; enable it explicitly
+(add `--wandb-project` or `--wandb-entity` to choose where runs are logged):
 
 ```bash
-python examples/story-len-ratio.py --wandb-project comlrl --wandb-entity OpenMLRL
+python examples/story-len-ratio.py --wandb
 ```
 
 For use in your own Python programs, CoMLRL is also available via PyPI or conda-forge:

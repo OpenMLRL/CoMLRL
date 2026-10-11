@@ -18,9 +18,6 @@ from .reward_utils import (
 )
 from .distributed import (
     DistributedContext,
-    all_gather_objects,
-    barrier,
-    is_main_process,
     local_context,
     unwrap_model,
 )
@@ -28,7 +25,6 @@ from .tokenizer_utils import (
     apply_tokenizer_specials,
     ensure_pad_token,
     ensure_tokenizer,
-    resolve_tokenizer,
     resolve_tokenizers,
 )
 
@@ -37,7 +33,6 @@ __all__ = [
     "ensure_pad_token",
     "ensure_tokenizer",
     "apply_tokenizer_specials",
-    "resolve_tokenizer",
     "resolve_tokenizers",
     "infer_model_name",
     "resolve_model_sources",
@@ -56,7 +51,4 @@ __all__ = [
     "DistributedContext",
     "local_context",
     "unwrap_model",
-    "is_main_process",
-    "barrier",
-    "all_gather_objects",
 ]

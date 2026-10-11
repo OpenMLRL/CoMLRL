@@ -10,9 +10,10 @@ from datasets import Dataset, IterableDataset
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 from comlrl.models.actor_critic import CausalLMWithValueHead
 from comlrl.schedulers import DeviceScheduler
+from comlrl.schedulers.device_scheduler import normalize_parallel_training
 from comlrl.utils.distributed import local_context, unwrap_model
 from comlrl.utils.formatters import build_formatters
-from comlrl.utils.model_loading import resolve_model_sources
+from comlrl.utils.model_loading import resolve_model_kwargs, resolve_model_sources
 from comlrl.utils.reference_kl import (
     _sequence_kl_values,
     clone_reference_models,
@@ -25,6 +26,7 @@ from comlrl.utils.reference_kl import (
 )
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizers
+from comlrl.utils.wandb_utils import verbose_from_wandb_config, wandb_init_kwargs
 from .ac_base import ActorCriticTrainerBase
 import wandb
 
@@ -99,11 +101,7 @@ class IACConfig:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
-        mode = str(self.parallel_training or "none").strip().lower()
-        if mode == "null":
-            mode = "none"
-        if mode not in {"none", "mp"}:
-            raise ValueError("parallel_training only supports: none, mp.")
+        mode = normalize_parallel_training(self.parallel_training or "none")
         if mode == "mp":
             if self.agent_devices is None:
                 raise ValueError(
@@ -195,13 +193,9 @@ class IACTrainer(ActorCriticTrainerBase):
         self.metrics_callback = metrics_callback
         self.model_config = model_config or {}
         self.critic_type = (self.args.critic_type or "v").lower()
-        self.parallel_training = (
-            str(getattr(self.args, "parallel_training", "none")).strip().lower()
+        self.parallel_training = normalize_parallel_training(
+            getattr(self.args, "parallel_training", "none")
         )
-        if self.parallel_training == "null":
-            self.parallel_training = "none"
-        if self.parallel_training not in {"none", "mp"}:
-            raise ValueError("parallel_training only supports: none, mp.")
         if self.parallel_training == "mp":
             self.agent_devices, self.critic_devices = DeviceScheduler.assign_devices(
                 self.args.num_agents,
@@ -243,8 +237,8 @@ class IACTrainer(ActorCriticTrainerBase):
             expected_count=self.args.num_agents,
             model_label="agent_model",
         )
-        actor_model_kwargs = self._filter_model_kwargs(
-            self.model_config.get("model_kwargs", {})
+        actor_model_kwargs = resolve_model_kwargs(
+            self.model_config, self.model_config.get("model_kwargs", {})
         )
         for idx, actor_source in enumerate(actor_sources):
             if actor_source is None:
@@ -300,8 +294,9 @@ class IACTrainer(ActorCriticTrainerBase):
                         attach_value_head=True,
                     )
                 else:
-                    model_kwargs = self._filter_model_kwargs(
-                        self.model_config.get("critic_model_kwargs", {})
+                    model_kwargs = resolve_model_kwargs(
+                        self.model_config,
+                        self.model_config.get("critic_model_kwargs", {}),
                     )
                     try:
                         base_model = AutoModelForCausalLM.from_pretrained(
@@ -379,13 +374,7 @@ class IACTrainer(ActorCriticTrainerBase):
         self._last_train_log_step = -1
         if wandb_config is not None and self.dist_env.is_main:
             self._init_wandb()
-        self.verbose = True
-        if isinstance(self.wandb_config, dict):
-            sections = self.wandb_config.get("config_sections", {})
-            if isinstance(sections, dict):
-                out = sections.get("output", {})
-                if isinstance(out, dict) and "verbose" in out:
-                    self.verbose = bool(out.get("verbose"))
+        self.verbose = verbose_from_wandb_config(self.wandb_config)
 
     def _critic_device(self, agent_idx: int) -> torch.device:
         if self.args.use_separate_critic:
@@ -397,15 +386,8 @@ class IACTrainer(ActorCriticTrainerBase):
             return
         if self.wandb_initialized:
             return
-        if wandb is None:
-            raise RuntimeError("wandb is not installed but wandb_config was provided.")
         if self.wandb_config is None:
             self.wandb_config = {}
-
-        wandb_project = self.wandb_config.get("project", "comlrl")
-        wandb_entity = self.wandb_config.get("entity")
-        wandb_name = self.wandb_config.get("name") or self.wandb_config.get("run_name")
-        wandb_dir = self.wandb_config.get("dir")
 
         config_dict: Dict[str, Any] = {
             "algorithm": self.algorithm_name,
@@ -424,73 +406,7 @@ class IACTrainer(ActorCriticTrainerBase):
             "reference_devices": getattr(self.args, "reference_devices", None),
         }
 
-        sections = (
-            self.wandb_config.get("config_sections")
-            if isinstance(self.wandb_config, dict)
-            else None
-        )
-        if isinstance(sections, dict):
-            dataset_section = sections.get("dataset") or {}
-            output_section = sections.get("output") or {}
-            external_section = sections.get("external") or {}
-            trainer_section = sections.get("trainer") or {}
-
-            config_dict.update(
-                {
-                    "dataset": dataset_section,
-                    "output": output_section,
-                    "external": external_section,
-                    "trainer": trainer_section,
-                }
-            )
-
-            dataset_name = (
-                dataset_section.get("name")
-                if isinstance(dataset_section, dict)
-                else None
-            )
-            dataset_type = (
-                dataset_section.get("type")
-                if isinstance(dataset_section, dict)
-                else None
-            )
-            if dataset_name:
-                config_dict["dataset_name"] = dataset_name
-            if dataset_type:
-                config_dict["dataset_type"] = dataset_type
-
-            ext_mode = (
-                external_section.get("mode")
-                if isinstance(external_section, dict)
-                else None
-            )
-            if ext_mode:
-                config_dict["external_mode"] = ext_mode
-                if "original_prompt" in external_section:
-                    config_dict["original_prompt"] = external_section.get(
-                        "original_prompt"
-                    )
-                if "previous_response" in external_section:
-                    config_dict["previous_response"] = external_section.get(
-                        "previous_response"
-                    )
-
-        init_kwargs: Dict[str, Any] = {
-            "project": wandb_project,
-            "entity": wandb_entity,
-            "name": wandb_name,
-            "config": config_dict,
-        }
-
-        if wandb_dir is not None:
-            os.makedirs(wandb_dir, exist_ok=True)
-            init_kwargs["dir"] = wandb_dir
-
-        tags = self.wandb_config.get("tags")
-        if isinstance(tags, list):
-            init_kwargs["tags"] = tags
-
-        wandb.init(**init_kwargs)
+        wandb.init(**wandb_init_kwargs(self.wandb_config, config_dict))
         self.wandb_initialized = True
 
     def _generate_rollout(
@@ -599,7 +515,6 @@ class IACTrainer(ActorCriticTrainerBase):
             "reference_kls": reference_kls,
             "values": value,
             "completions": completion_texts,
-            "char_lengths": [len(txt) for txt in completion_texts],
         }
 
     def _reference_kl_values(
@@ -707,7 +622,6 @@ class IACTrainer(ActorCriticTrainerBase):
                         returns=returns_cpu,
                         advantage=advantage_cpu,
                         metadata={
-                            "char_length": data["char_lengths"][i],
                             "turn_idx": 0,
                             "generation_idx": i,
                             "batch_item": item,
@@ -824,7 +738,6 @@ class IACTrainer(ActorCriticTrainerBase):
                     advantage=torch.zeros_like(reward_cpu),
                     normalized_advantage=None,
                     metadata={
-                        "char_length": data["char_lengths"][0],
                         "turn_idx": turn_idx,
                         "generation_idx": 0,
                         "batch_item": item,

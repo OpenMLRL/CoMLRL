@@ -207,18 +207,17 @@ class MARLHFTrainer(MADPOTrainer):
         self._init_reward_model()
         self._train_reward_model(preference_pairs)
         self._reward_model_active = True
+        self._train_online_rl(**kwargs)
 
+    def _train_online_rl(self, **kwargs) -> None:
         if self.args.rl_algorithm in _MAGRPO_ADVANTAGE_MODES:
             _apply_magrpo_family_args(self.args)
             self.advantage_mode = self.args.advantage_mode
             MAGRPOTrainer.train(self, **kwargs)
-            return
-
-        if self.args.rl_algorithm in _ACTOR_CRITIC_ALGORITHMS:
+        elif self.args.rl_algorithm in _ACTOR_CRITIC_ALGORITHMS:
             self._train_actor_critic_rl(**kwargs)
-            return
-
-        raise ValueError(f"Unsupported rl_algorithm: {self.args.rl_algorithm}")
+        else:
+            raise ValueError(f"Unsupported rl_algorithm: {self.args.rl_algorithm}")
 
     def evaluate(self, num_eval_samples: Optional[int] = None) -> Dict[str, float]:
         previous = self._evaluating_with_task_reward

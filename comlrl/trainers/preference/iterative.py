@@ -7,19 +7,22 @@ import random
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
 import numpy as np
 import torch
 import wandb
-from tqdm import tqdm  # type: ignore
 from transformers import AutoModelForCausalLM
 
 from comlrl.schedulers import DeviceScheduler
 from comlrl.utils.distributed import unwrap_model
-from comlrl.utils.model_loading import resolve_model_sources
+from comlrl.utils.model_loading import (
+    freeze_model,
+    resolve_model_kwargs,
+    resolve_model_sources,
+)
 from comlrl.utils.reward_utils import call_reward_function, resolve_reward_range
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials
 
@@ -30,14 +33,7 @@ from .madpo import (
     PreferencePair,
 )
 from .centralized import CentralizedComparatorAdapter
-from .marlhf import (
-    MARLHFConfig,
-    MARLHFTrainer,
-    _ACTOR_CRITIC_ALGORITHMS,
-    _MAGRPO_ADVANTAGE_MODES,
-    _apply_magrpo_family_args,
-)
-from ..reinforce.magrpo import MAGRPOTrainer
+from .marlhf import MARLHFConfig, MARLHFTrainer
 
 
 _REWARD_DISTRIBUTION_BINS = 16
@@ -262,14 +258,10 @@ def _validate_preference_replay_args(args: Any) -> None:
 
 
 @dataclass
-class MADPOIterConfig(MADPOConfig):
-    """Configuration for iterative MADPO preference refresh."""
+class _IterativePreferenceConfig:
+    """Preference-refresh, replay and comparator settings shared by iterative trainers."""
 
     num_iterations: int = 6
-    num_train_epochs: int = 1
-    preference_num_candidates: int = 20
-    preference_pairs_per_sample: Optional[int] = 4
-    pair_selection: str = "comparator_reward"
     preference_replay_mode: str = "current"
     preference_replay_k: Optional[int] = None
     preference_replay_lambda: Optional[float] = None
@@ -307,53 +299,31 @@ class MADPOIterConfig(MADPOConfig):
 
 
 @dataclass
-class MARLHFIterConfig(MARLHFConfig):
+class MADPOIterConfig(_IterativePreferenceConfig, MADPOConfig):
+    """Configuration for iterative MADPO preference refresh."""
+
+    num_train_epochs: int = 1
+    preference_num_candidates: int = 20
+    preference_pairs_per_sample: Optional[int] = 4
+    pair_selection: str = "comparator_reward"
+
+
+@dataclass
+class MARLHFIterConfig(_IterativePreferenceConfig, MARLHFConfig):
     """Configuration for iterative MARLHF preference and reward refresh."""
 
-    num_iterations: int = 6
     num_train_epochs: int = 2
     preference_num_candidates: int = 20
     preference_pairs_per_sample: Optional[int] = 4
     pair_selection: str = "comparator_reward"
     reward_num_train_epochs: int = 2
-    preference_replay_mode: str = "current"
-    preference_replay_k: Optional[int] = None
-    preference_replay_lambda: Optional[float] = None
-    preference_replay_sample_size: Optional[int] = None
-    preference_replay_dir: Optional[str] = None
-    log_reward_distribution: bool = False
     preference_scoring_reward: str = "task"
-    policy_checkpoint_dir: Optional[str] = None
-    comparator_policy: str = "current"
-    comparator_generation_mode: str = "decentralized"
-    comparator_centralized_agent_index: int = 0
-    comparator_model_name: Optional[str] = None
-    comparator_agents: Optional[Sequence[str]] = None
-    comparator_devices: Optional[Union[str, Sequence[str]]] = None
-    comparator_num_candidates: Optional[int] = None
-    comparator_history_k: Optional[int] = None
-    comparator_api_url: Optional[str] = None
-    comparator_api_format: str = "generic"
-    comparator_api_model: Optional[str] = None
-    comparator_api_max_n_per_request: Optional[int] = None
-    comparator_api_timeout: float = 120.0
-    comparator_api_headers: Optional[Dict[str, str]] = None
-    comparator_api_key: Optional[str] = None
-    comparator_api_key_env: Optional[str] = None
-    comparator_api_key_header: str = "Authorization"
-    comparator_api_key_prefix: str = "Bearer"
-    comparator_api_response_field: str = "completions"
-    comparator_api_extra_body: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        _validate_iterative_config(self)
         self.preference_scoring_reward = _normalize_preference_scoring_reward(
             self.preference_scoring_reward
         )
-
-    def _allowed_pair_selection_modes(self) -> Tuple[str, ...]:
-        return ("reward_gap", "all", "random", "comparator_reward")
 
 
 @dataclass
@@ -504,8 +474,11 @@ class MADPOIterTrainer(MADPOTrainer):
 
             updates_seen = self._train_preference_pairs(
                 train_pairs,
-                iteration_idx=iteration_idx,
                 updates_seen=updates_seen,
+                desc=(
+                    f"MADPOIter iteration {iteration_idx + 1}/"
+                    f"{int(self.args.num_iterations)}"
+                ),
             )
             self._maybe_save_iteration_policy_checkpoint(iteration_idx)
 
@@ -645,62 +618,13 @@ class MADPOIterTrainer(MADPOTrainer):
         distribution = getattr(self, "_iteration_reward_distribution", None)
         if not distribution:
             return {}
-
-        target_rewards = distribution.get("target", [])
-        comparator_rewards = distribution.get("comparator", [])
-        if not target_rewards and not comparator_rewards:
-            return {}
-
-        bin_edges = self._reward_distribution_bin_edges()
-        target_counts, edges = self._reward_distribution_counts(
-            target_rewards,
-            bin_edges,
+        return self._reward_distribution_metrics(
+            "iter/reward_distribution",
+            "Candidate Reward Distribution",
+            iteration_idx,
+            distribution.get("target", []),
+            distribution.get("comparator", []),
         )
-        comparator_counts, _ = self._reward_distribution_counts(
-            comparator_rewards,
-            bin_edges,
-        )
-        iteration = int(iteration_idx) + 1
-        distribution_prefix = f"iter/reward_distribution/iteration_{iteration:04d}"
-
-        metrics: Dict[str, Any] = {
-            "iter/reward_distribution/current_iteration": float(iteration),
-            "iter/reward_distribution/target_sample_count": float(len(target_rewards)),
-            "iter/reward_distribution/comparator_sample_count": float(
-                len(comparator_rewards)
-            ),
-        }
-        line_image = self._reward_distribution_image(
-            kind="line",
-            title="Candidate Reward Distribution",
-            edges=edges,
-            series=[
-                ("target", target_counts),
-                ("comparator", comparator_counts),
-            ],
-        )
-        if line_image is not None:
-            metrics[f"{distribution_prefix}/line_plot"] = line_image
-        bar_image = self._reward_distribution_image(
-            kind="bar",
-            title="Candidate Reward Distribution",
-            edges=edges,
-            series=[
-                ("target", target_counts),
-                ("comparator", comparator_counts),
-            ],
-        )
-        if bar_image is not None:
-            metrics[f"{distribution_prefix}/bar_plot"] = bar_image
-        if target_rewards:
-            metrics["iter/reward_distribution/target_mean"] = float(
-                np.mean(target_rewards)
-            )
-        if comparator_rewards:
-            metrics["iter/reward_distribution/comparator_mean"] = float(
-                np.mean(comparator_rewards)
-            )
-        return metrics
 
     def _selected_reward_distribution_metrics(
         self,
@@ -709,10 +633,27 @@ class MADPOIterTrainer(MADPOTrainer):
     ) -> Dict[str, Any]:
         if not selected_pairs:
             return {}
-
         target_rewards, comparator_rewards = self._selected_pair_reward_values(
             selected_pairs
         )
+        return self._reward_distribution_metrics(
+            "iter/selected_reward_distribution",
+            "Selected Preference Reward Distribution",
+            iteration_idx,
+            target_rewards,
+            comparator_rewards,
+            pair_count=len(selected_pairs),
+        )
+
+    def _reward_distribution_metrics(
+        self,
+        namespace: str,
+        title: str,
+        iteration_idx: int,
+        target_rewards: Sequence[float],
+        comparator_rewards: Sequence[float],
+        pair_count: Optional[int] = None,
+    ) -> Dict[str, Any]:
         if not target_rewards and not comparator_rewards:
             return {}
 
@@ -726,50 +667,22 @@ class MADPOIterTrainer(MADPOTrainer):
             bin_edges,
         )
         iteration = int(iteration_idx) + 1
-        distribution_prefix = (
-            f"iter/selected_reward_distribution/iteration_{iteration:04d}"
-        )
-
-        metrics: Dict[str, Any] = {
-            "iter/selected_reward_distribution/current_iteration": float(iteration),
-            "iter/selected_reward_distribution/pair_count": float(len(selected_pairs)),
-            "iter/selected_reward_distribution/target_sample_count": float(
-                len(target_rewards)
-            ),
-            "iter/selected_reward_distribution/comparator_sample_count": float(
-                len(comparator_rewards)
-            ),
-        }
-        line_image = self._reward_distribution_image(
-            kind="line",
-            title="Selected Preference Reward Distribution",
-            edges=edges,
-            series=[
-                ("target", target_counts),
-                ("comparator", comparator_counts),
-            ],
-        )
-        if line_image is not None:
-            metrics[f"{distribution_prefix}/line_plot"] = line_image
-        bar_image = self._reward_distribution_image(
-            kind="bar",
-            title="Selected Preference Reward Distribution",
-            edges=edges,
-            series=[
-                ("target", target_counts),
-                ("comparator", comparator_counts),
-            ],
-        )
-        if bar_image is not None:
-            metrics[f"{distribution_prefix}/bar_plot"] = bar_image
+        metrics: Dict[str, Any] = {f"{namespace}/current_iteration": float(iteration)}
+        if pair_count is not None:
+            metrics[f"{namespace}/pair_count"] = float(pair_count)
+        metrics[f"{namespace}/target_sample_count"] = float(len(target_rewards))
+        metrics[f"{namespace}/comparator_sample_count"] = float(len(comparator_rewards))
+        series = [("target", target_counts), ("comparator", comparator_counts)]
+        for kind in ("line", "bar"):
+            image = self._reward_distribution_image(
+                kind=kind, title=title, edges=edges, series=series
+            )
+            if image is not None:
+                metrics[f"{namespace}/iteration_{iteration:04d}/{kind}_plot"] = image
         if target_rewards:
-            metrics["iter/selected_reward_distribution/target_mean"] = float(
-                np.mean(target_rewards)
-            )
+            metrics[f"{namespace}/target_mean"] = float(np.mean(target_rewards))
         if comparator_rewards:
-            metrics["iter/selected_reward_distribution/comparator_mean"] = float(
-                np.mean(comparator_rewards)
-            )
+            metrics[f"{namespace}/comparator_mean"] = float(np.mean(comparator_rewards))
         return metrics
 
     def _selected_pair_reward_values(
@@ -1402,51 +1315,6 @@ class MADPOIterTrainer(MADPOTrainer):
             return None
         return self._save_policy_checkpoint(f"iteration_{int(iteration_idx):04d}")
 
-    def _train_preference_pairs(
-        self,
-        preference_pairs: List[PreferencePair],
-        *,
-        iteration_idx: int,
-        updates_seen: int,
-    ) -> int:
-        for epoch in range(int(self.args.num_train_epochs)):
-            random.shuffle(preference_pairs)
-            batch_size = int(self.args.train_batch_size)
-            batches = [
-                preference_pairs[start : start + batch_size]
-                for start in range(0, len(preference_pairs), batch_size)
-            ]
-            iterator = batches
-            if self.verbose:
-                iterator = tqdm(
-                    batches,
-                    total=len(batches),
-                    desc=(
-                        f"MADPOIter iteration {iteration_idx + 1}/"
-                        f"{int(self.args.num_iterations)} epoch {epoch + 1}/"
-                        f"{int(self.args.num_train_epochs)}"
-                    ),
-                )
-
-            for batch in iterator:
-                if int(self.args.eval_interval) > 0 and (
-                    updates_seen % int(self.args.eval_interval) == 0
-                ):
-                    _ = self.evaluate(num_eval_samples=int(self.args.eval_num_samples))
-
-                metrics = self._update_from_preference_batch(batch)
-                updates_seen += 1
-                if self.args.use_environment_step:
-                    self.env_step += int(self.args.environment_steps_per_pair) * len(
-                        batch
-                    )
-
-                if self.wandb_initialized and wandb.run is not None:
-                    if self._should_log_train(int(self.env_step)):
-                        wandb.log(metrics, step=int(self.env_step))
-
-        return updates_seen
-
     def _generate_preference_pairs_for_item(
         self,
         batch_item: Dict[str, Any],
@@ -2057,16 +1925,20 @@ class MADPOIterTrainer(MADPOTrainer):
                 api_format=api_format,
             )
         if api_format in {"anthropic", "anthropic_messages", "messages"}:
-            return self._call_anthropic_messages_comparator_api(
+            return self._call_single_completion_api(
                 prompt=prompt,
                 num_candidates=num_candidates,
                 api_format=api_format,
+                build_payload=self._build_anthropic_messages_payload,
+                label="an Anthropic Messages",
             )
         if api_format in {"openai_responses", "responses", "codex"}:
-            return self._call_openai_responses_comparator_api(
+            return self._call_single_completion_api(
                 prompt=prompt,
                 num_candidates=num_candidates,
                 api_format=api_format,
+                build_payload=self._build_openai_responses_payload,
+                label="an OpenAI Responses",
             )
 
         payload = self._build_generic_api_payload(
@@ -2104,48 +1976,26 @@ class MADPOIterTrainer(MADPOTrainer):
             completions.extend(batch_completions)
         return completions[:num_candidates]
 
-    def _call_anthropic_messages_comparator_api(
+    def _call_single_completion_api(
         self,
         *,
         prompt: str,
         num_candidates: int,
         api_format: str,
+        build_payload: Callable[[str], Dict[str, Any]],
+        label: str,
     ) -> List[str]:
+        """Collect candidates one request at a time for APIs without ``n``."""
         completions: List[str] = []
         while len(completions) < num_candidates:
-            payload = self._build_anthropic_messages_payload(prompt)
-            response_data = self._send_comparator_api_request(payload)
+            response_data = self._send_comparator_api_request(build_payload(prompt))
             batch_completions = self._extract_api_completions(
                 response_data,
                 api_format=api_format,
             )
             if not batch_completions:
                 raise ValueError(
-                    "Comparator API returned no completions for an Anthropic "
-                    "Messages request."
-                )
-            completions.extend(batch_completions[:1])
-        return completions[:num_candidates]
-
-    def _call_openai_responses_comparator_api(
-        self,
-        *,
-        prompt: str,
-        num_candidates: int,
-        api_format: str,
-    ) -> List[str]:
-        completions: List[str] = []
-        while len(completions) < num_candidates:
-            payload = self._build_openai_responses_payload(prompt)
-            response_data = self._send_comparator_api_request(payload)
-            batch_completions = self._extract_api_completions(
-                response_data,
-                api_format=api_format,
-            )
-            if not batch_completions:
-                raise ValueError(
-                    "Comparator API returned no completions for an OpenAI "
-                    "Responses request."
+                    f"Comparator API returned no completions for {label} request."
                 )
             completions.extend(batch_completions[:1])
         return completions[:num_candidates]
@@ -2688,9 +2538,7 @@ class MADPOIterTrainer(MADPOTrainer):
         comparator_agent.load_state_dict(state_dict, strict=True)
         del state_dict
         comparator_agent.to(comparator_device)
-        comparator_agent.eval()
-        for param in comparator_agent.parameters():
-            param.requires_grad = False
+        freeze_model(comparator_agent)
         apply_tokenizer_specials(self.tokenizers[agent_idx], [comparator_agent])
         return comparator_agent
 
@@ -2734,7 +2582,7 @@ class MADPOIterTrainer(MADPOTrainer):
 
     def _load_frozen_policy_agents(self, sources: Sequence[Any]) -> List[Any]:
         comparator_devices = self._resolve_comparator_devices()
-        model_kwargs = self._comparator_model_kwargs()
+        model_kwargs = resolve_model_kwargs(self.model_config)
         if sources and all(isinstance(src, str) for src in sources):
             comparator_agents = [
                 AutoModelForCausalLM.from_pretrained(name, **model_kwargs)
@@ -2745,15 +2593,13 @@ class MADPOIterTrainer(MADPOTrainer):
 
         for agent_idx, comparator_agent in enumerate(comparator_agents):
             comparator_agent.to(comparator_devices[agent_idx])
-            comparator_agent.eval()
-            for param in comparator_agent.parameters():
-                param.requires_grad = False
+            freeze_model(comparator_agent)
             apply_tokenizer_specials(self.tokenizers[agent_idx], [comparator_agent])
 
         return comparator_agents
 
     def _load_single_frozen_policy_agent(self, source: Any, agent_idx: int) -> Any:
-        model_kwargs = self._comparator_model_kwargs()
+        model_kwargs = resolve_model_kwargs(self.model_config)
         comparator_agent = (
             AutoModelForCausalLM.from_pretrained(source, **model_kwargs)
             if isinstance(source, str)
@@ -2761,9 +2607,7 @@ class MADPOIterTrainer(MADPOTrainer):
         )
         comparator_device = self._resolve_comparator_devices()[agent_idx]
         comparator_agent.to(comparator_device)
-        comparator_agent.eval()
-        for param in comparator_agent.parameters():
-            param.requires_grad = False
+        freeze_model(comparator_agent)
         apply_tokenizer_specials(self.tokenizers[agent_idx], [comparator_agent])
         return comparator_agent
 
@@ -2773,29 +2617,6 @@ class MADPOIterTrainer(MADPOTrainer):
             self.num_agents,
             kind="comparator_devices",
         )
-
-    def _comparator_model_kwargs(self) -> Dict[str, Any]:
-        model_kwargs: Dict[str, Any] = {}
-        torch_dtype = None
-        if isinstance(self.model_config, dict):
-            torch_dtype = self.model_config.get("torch_dtype") or self.model_config.get(
-                "dtype"
-            )
-        if torch_dtype is not None:
-            model_kwargs["torch_dtype"] = torch_dtype
-        attn_implementation = "sdpa"
-        if isinstance(self.model_config, dict):
-            nested_model_kwargs = self.model_config.get("model_kwargs")
-            if "attn_implementation" in self.model_config:
-                attn_implementation = self.model_config.get("attn_implementation")
-            elif (
-                isinstance(nested_model_kwargs, dict)
-                and "attn_implementation" in nested_model_kwargs
-            ):
-                attn_implementation = nested_model_kwargs.get("attn_implementation")
-        if attn_implementation is not None:
-            model_kwargs["attn_implementation"] = attn_implementation
-        return model_kwargs
 
     @staticmethod
     def _completion_group(
@@ -2905,23 +2726,10 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
             self._train_reward_model(train_pairs)
             self._reward_model_active = True
 
-            if self.args.rl_algorithm in _MAGRPO_ADVANTAGE_MODES:
-                _apply_magrpo_family_args(self.args)
-                self.advantage_mode = self.args.advantage_mode
-                MAGRPOTrainer.train(self, **kwargs)
-                self._maybe_save_iteration_policy_checkpoint(iteration_idx)
-                if self.args.preference_scoring_reward != "reward_model":
-                    self._clear_reward_model()
-                continue
-
-            if self.args.rl_algorithm in _ACTOR_CRITIC_ALGORITHMS:
-                self._train_actor_critic_rl(**kwargs)
-                self._maybe_save_iteration_policy_checkpoint(iteration_idx)
-                if self.args.preference_scoring_reward != "reward_model":
-                    self._clear_reward_model()
-                continue
-
-            raise ValueError(f"Unsupported rl_algorithm: {self.args.rl_algorithm}")
+            self._train_online_rl(**kwargs)
+            self._maybe_save_iteration_policy_checkpoint(iteration_idx)
+            if self.args.preference_scoring_reward != "reward_model":
+                self._clear_reward_model()
 
         if total_pairs == 0 and self.verbose:
             print("MARLHFIter: no non-tied preference pairs were generated.")

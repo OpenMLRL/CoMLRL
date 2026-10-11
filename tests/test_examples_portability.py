@@ -108,7 +108,7 @@ def test_examples_reach_training_without_scheduler_or_wandb(
 @pytest.mark.parametrize(
     "options,expected",
     [
-        (["--wandb"], {"project": "comlrl", "entity": "OpenMLRL", "name": None}),
+        (["--wandb"], {"project": None, "entity": "OpenMLRL", "name": None}),
         (
             [
                 "--wandb-project",

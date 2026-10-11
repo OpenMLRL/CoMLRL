@@ -110,13 +110,13 @@ class _ScriptedTrainer(MAGRPOTrainer):
 
 def _run_scenario(num_agents, joint_mode):
     trainer = _ScriptedTrainer(num_agents, joint_mode)
-    summary = trainer._train_step_returns({"prompt": "fixture"})
-    return trainer, summary
+    assert trainer._train_step_returns({"prompt": "fixture"}) is None
+    return trainer
 
 
 @pytest.mark.parametrize("joint_mode", ["align", "aligned", "cross", "crossed"])
 def test_two_turn_rewards_returns_and_update_order(joint_mode):
-    trainer, (batch_loss, stats) = _run_scenario(2, joint_mode)
+    trainer = _run_scenario(2, joint_mode)
     crossed = joint_mode in {"cross", "crossed"}
     combinations = [(0, 0), (0, 1), (1, 0), (1, 1)] if crossed else [(0, 0), (1, 1)]
     node_count = len(combinations) + 1
@@ -157,14 +157,6 @@ def test_two_turn_rewards_returns_and_update_order(joint_mode):
     assert [record["returns"] for record in trainer.records] == [
         values for node in expected for values in node
     ]
-    assert batch_loss == (28.0 if crossed else 18.0)
-    assert stats == {
-        0: {"batch_mean_reward": 1.5, "batch_expected_return": batch_loss},
-        1: {
-            "batch_mean_reward": 26.5 if crossed else 16.5,
-            "batch_expected_return": 26.5 if crossed else 16.5,
-        },
-    }
     _assert_loss_and_gradient_regression(trainer)
 
 
@@ -200,9 +192,8 @@ def _assert_loss_and_gradient_regression(trainer):
 
 @pytest.mark.parametrize("joint_mode", ["aligned", "cross", "crossed", "unknown"])
 def test_single_agent_retains_joint_mode_fallback(joint_mode):
-    trainer, (batch_loss, _) = _run_scenario(1, joint_mode)
+    trainer = _run_scenario(1, joint_mode)
     assert trainer.env_step == 6
-    assert batch_loss == 16.0
     assert [record["returns"] for record in trainer.records] == [
         [10.5, 21.5],
         [10.0, 11.0],

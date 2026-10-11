@@ -9,6 +9,7 @@ from transformers import AutoModelForCausalLM
 
 from comlrl.schedulers import DeviceScheduler
 from comlrl.utils.distributed import unwrap_model
+from comlrl.utils.model_loading import freeze_model
 
 
 def reference_kl_enabled(args: Any) -> bool:
@@ -56,7 +57,7 @@ def clone_reference_models(
     for idx, policy_model in enumerate(policy_models):
         reference_model = copy.deepcopy(policy_model)
         reference_model.to(devices[idx])
-        references.append(_freeze_reference_model(reference_model))
+        references.append(freeze_model(reference_model))
     return references
 
 
@@ -71,15 +72,8 @@ def load_reference_models_from_sources(
     for idx, model_source in enumerate(model_sources):
         reference_model = AutoModelForCausalLM.from_pretrained(model_source, **kwargs)
         reference_model.to(devices[idx])
-        references.append(_freeze_reference_model(reference_model))
+        references.append(freeze_model(reference_model))
     return references
-
-
-def _freeze_reference_model(model: Any) -> Any:
-    model.eval()
-    for param in model.parameters():
-        param.requires_grad = False
-    return model
 
 
 def response_token_logprobs(

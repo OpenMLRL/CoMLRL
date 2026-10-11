@@ -11,7 +11,7 @@ Run the example directly from an installed source checkout:
 python examples/story-len-ratio.py
 ```
 
-Memory requirements depend on the model, number of agents, batch size, and response length. W&B logging is disabled by default. To enable it, pass `--wandb-project comlrl --wandb-entity OpenMLRL` to the command above.
+Memory requirements depend on the model, number of agents, batch size, and response length. W&B logging is disabled by default. To enable it, add `--wandb` (and optionally `--wandb-project` or `--wandb-entity`) to the command above.
 
 ## Import Libraries
 
