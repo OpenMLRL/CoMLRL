@@ -479,7 +479,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         }
 
     def _generate(self, agent_model, prompt: str, agent_idx: int) -> Dict[str, Any]:
-        agent_device = self._agent_device(agent_idx)
+        agent_device = self.agent_devices[agent_idx]
         encoded_prompt = self._encode_prompt(
             prompt, agent_idx=agent_idx, device=agent_device
         )
@@ -920,7 +920,7 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         actor_losses: List[torch.Tensor] = []
         value_losses: List[torch.Tensor] = []
-        agent_device = self._agent_device(agent_idx)
+        agent_device = self.agent_devices[agent_idx]
         critic_device = self.critic_device
 
         for sample in batch:

@@ -500,7 +500,7 @@ class IACTrainer(ActorCriticTrainerBase):
         agent_idx: int,
         num_ret: int,
     ) -> Dict[str, Any]:
-        agent_device = self._agent_device(agent_idx)
+        agent_device = self.agent_devices[agent_idx]
         encoded_prompt = self._encode_prompt(
             prompt, agent_idx=agent_idx, device=agent_device
         )
@@ -943,22 +943,6 @@ class IACTrainer(ActorCriticTrainerBase):
             )
         return self._value_on_prompt_only(model, sequences, attention_mask, prompt_len)
 
-    def _critic_eval(
-        self,
-        critic_model: CausalLMWithValueHead,
-        sequences: torch.Tensor,
-        attention_mask: torch.Tensor,
-        prompt_len: int,
-        response_len: int,
-    ) -> torch.Tensor:
-        return self._value_for_critic_type(
-            critic_model,
-            sequences,
-            attention_mask,
-            prompt_len,
-            [response_len],
-        )
-
     def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> None:
         agent_model = self.agents[agent_idx]
         critic_model = (
@@ -971,7 +955,7 @@ class IACTrainer(ActorCriticTrainerBase):
 
         actor_losses: List[torch.Tensor] = []
         value_losses: List[torch.Tensor] = []
-        agent_device = self._agent_device(agent_idx)
+        agent_device = self.agent_devices[agent_idx]
         critic_device = self._critic_device(agent_idx)
 
         for sample in batch:
@@ -992,12 +976,12 @@ class IACTrainer(ActorCriticTrainerBase):
                     raise RuntimeError("Critic model not initialised.")
                 critic_sequences = sequences.to(critic_device)
                 critic_attention_mask = attention_mask.to(critic_device)
-                value = self._critic_eval(
+                value = self._value_for_critic_type(
                     critic_model,
                     critic_sequences,
                     critic_attention_mask,
                     sample.prompt_len,
-                    sample.response_len,
+                    [sample.response_len],
                 )
             else:
                 value = self._value_for_critic_type(

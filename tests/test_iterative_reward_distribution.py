@@ -114,12 +114,14 @@ def test_reward_distribution_charts_label_count_axes():
     edges = np.linspace(0.0, 3.0, 17)
     series = [("target", np.ones(16)), ("comparator", np.full(16, 0.5))]
 
-    line = MADPOIterTrainer._reward_distribution_line_image(
+    line = MADPOIterTrainer._reward_distribution_image(
+        kind="line",
         title="Candidate Reward Distribution",
         edges=edges,
         series=series,
     )
-    bars = MADPOIterTrainer._reward_distribution_bar_image(
+    bars = MADPOIterTrainer._reward_distribution_image(
+        kind="bar",
         title="Candidate Reward Distribution",
         edges=edges,
         series=series,

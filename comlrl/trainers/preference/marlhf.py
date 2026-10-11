@@ -260,7 +260,7 @@ class MARLHFTrainer(MADPOTrainer):
             )
 
         if self.args.rl_algorithm == "maac":
-            ac_args = self._build_maac_config()
+            ac_args = MAACConfig(**self._build_actor_critic_common_config())
             ac_trainer = MAACTrainer(
                 agent_model=None,
                 agents=self.agents,
@@ -363,9 +363,6 @@ class MARLHFTrainer(MADPOTrainer):
             "reference_kl_coef": self.args.reference_kl_coef,
             "reference_devices": self.args.reference_devices,
         }
-
-    def _build_maac_config(self) -> MAACConfig:
-        return MAACConfig(**self._build_actor_critic_common_config())
 
     def _build_iac_config(self) -> IACConfig:
         config = self._build_actor_critic_common_config()

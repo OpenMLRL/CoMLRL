@@ -540,13 +540,14 @@ class MADPOIterTrainer(MADPOTrainer):
         if mode == "nearest_k":
             k = int(self.args.preference_replay_k)
             sample_size = self._replay_sample_size(len(current_pairs), shards)
-            return self._sample_uniform_replay_preferences(shards[-k:], sample_size)
+            return self._sample_replay_preferences(shards[-k:], sample_size)
         if mode == "all_history":
             sample_size = self._replay_sample_size(len(current_pairs), shards)
-            return self._sample_uniform_replay_preferences(shards, sample_size)
+            return self._sample_replay_preferences(shards, sample_size)
         if mode == "lambda_decay":
             sample_size = self._replay_sample_size(len(current_pairs), shards)
-            return self._sample_lambda_decay_preferences(shards, sample_size)
+            weights = self._lambda_decay_weights(len(shards))
+            return self._sample_replay_preferences(shards, sample_size, weights=weights)
         raise ValueError(f"Unsupported preference_replay_mode: {mode}")
 
     def _replay_sample_size(
@@ -680,7 +681,8 @@ class MADPOIterTrainer(MADPOTrainer):
                 len(comparator_rewards)
             ),
         }
-        line_image = self._reward_distribution_line_image(
+        line_image = self._reward_distribution_image(
+            kind="line",
             title="Candidate Reward Distribution",
             edges=edges,
             series=[
@@ -690,7 +692,8 @@ class MADPOIterTrainer(MADPOTrainer):
         )
         if line_image is not None:
             metrics[f"{distribution_prefix}/line_plot"] = line_image
-        bar_image = self._reward_distribution_bar_image(
+        bar_image = self._reward_distribution_image(
+            kind="bar",
             title="Candidate Reward Distribution",
             edges=edges,
             series=[
@@ -748,7 +751,8 @@ class MADPOIterTrainer(MADPOTrainer):
                 len(comparator_rewards)
             ),
         }
-        line_image = self._reward_distribution_line_image(
+        line_image = self._reward_distribution_image(
+            kind="line",
             title="Selected Preference Reward Distribution",
             edges=edges,
             series=[
@@ -758,7 +762,8 @@ class MADPOIterTrainer(MADPOTrainer):
         )
         if line_image is not None:
             metrics[f"{distribution_prefix}/line_plot"] = line_image
-        bar_image = self._reward_distribution_bar_image(
+        bar_image = self._reward_distribution_image(
+            kind="bar",
             title="Selected Preference Reward Distribution",
             edges=edges,
             series=[
@@ -873,28 +878,6 @@ class MADPOIterTrainer(MADPOTrainer):
             "counts": [int(value) for value in counts.tolist()],
             "raw_rewards": [float(value) for value in finite_rewards],
         }
-
-    @staticmethod
-    def _reward_distribution_line_image(
-        *,
-        title: str,
-        edges: np.ndarray,
-        series: Sequence[Tuple[str, np.ndarray]],
-    ) -> Optional[Any]:
-        return MADPOIterTrainer._reward_distribution_image(
-            title=title, edges=edges, series=series, kind="line"
-        )
-
-    @staticmethod
-    def _reward_distribution_bar_image(
-        *,
-        title: str,
-        edges: np.ndarray,
-        series: Sequence[Tuple[str, np.ndarray]],
-    ) -> Optional[Any]:
-        return MADPOIterTrainer._reward_distribution_image(
-            title=title, edges=edges, series=series, kind="bar"
-        )
 
     @staticmethod
     def _reward_distribution_image(
@@ -1108,21 +1091,6 @@ class MADPOIterTrainer(MADPOTrainer):
             float(bin_edges[-1]),
         )
         return np.histogram(clipped_rewards, bins=bin_edges)
-
-    def _sample_uniform_replay_preferences(
-        self,
-        shards: Sequence[PreferenceReplayShard],
-        sample_size: int,
-    ) -> List[PreferencePair]:
-        return self._sample_replay_preferences(shards, sample_size)
-
-    def _sample_lambda_decay_preferences(
-        self,
-        shards: Sequence[PreferenceReplayShard],
-        sample_size: int,
-    ) -> List[PreferencePair]:
-        weights = self._lambda_decay_weights(len(shards))
-        return self._sample_replay_preferences(shards, sample_size, weights=weights)
 
     def _sample_replay_preferences(
         self,
@@ -1391,9 +1359,6 @@ class MADPOIterTrainer(MADPOTrainer):
         self._initial_policy_checkpoint_saved = True
         return path
 
-    def _save_iteration_policy_checkpoint(self, iteration_idx: int) -> str:
-        return self._save_policy_checkpoint(f"iteration_{int(iteration_idx):04d}")
-
     def _save_policy_checkpoint(self, label: str) -> str:
         checkpoint_dir = os.path.join(self._policy_checkpoint_dir(), str(label))
         os.makedirs(checkpoint_dir, exist_ok=True)
@@ -1446,7 +1411,7 @@ class MADPOIterTrainer(MADPOTrainer):
     ) -> Optional[str]:
         if not self._policy_checkpoints_enabled():
             return None
-        return self._save_iteration_policy_checkpoint(iteration_idx)
+        return self._save_policy_checkpoint(f"iteration_{int(iteration_idx):04d}")
 
     def _train_preference_pairs(
         self,

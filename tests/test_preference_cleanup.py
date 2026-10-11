@@ -123,10 +123,12 @@ def test_replay_writer_keeps_subclass_directory_override(tmp_path):
 @pytest.mark.parametrize("kind", ["line", "bar"])
 def test_reward_charts_preserve_empty_series_behavior(kind, monkeypatch):
     monkeypatch.setattr(iterative.wandb, "Html", lambda html: html)
-    render = getattr(MADPOIterTrainer, f"_reward_distribution_{kind}_image")
+    render = MADPOIterTrainer._reward_distribution_image
     edges = np.array([0.0, 1.0])
-    assert render(title="Empty", edges=edges, series=[]) is None
-    chart = render(title="Empty", edges=edges, series=[("target", np.array([]))])
+    assert render(title="Empty", edges=edges, series=[], kind=kind) is None
+    chart = render(
+        title="Empty", edges=edges, series=[("target", np.array([]))], kind=kind
+    )
     if kind == "bar":
         assert chart is None
     else:
@@ -137,8 +139,9 @@ def test_reward_charts_preserve_empty_series_behavior(kind, monkeypatch):
 @pytest.mark.parametrize("kind", ["line", "bar"])
 def test_reward_charts_preserve_geometry_and_escape_labels(kind, monkeypatch):
     monkeypatch.setattr(iterative.wandb, "Html", lambda html: html)
-    render = getattr(MADPOIterTrainer, f"_reward_distribution_{kind}_image")
+    render = MADPOIterTrainer._reward_distribution_image
     chart = render(
+        kind=kind,
         title='Rewards < 1 & "quoted"',
         edges=np.array([0.0, 0.5, 1.0]),
         series=[

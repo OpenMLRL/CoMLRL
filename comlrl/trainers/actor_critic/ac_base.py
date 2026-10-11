@@ -15,9 +15,6 @@ from comlrl.utils.reference_kl import reference_kl_coef, reference_kl_enabled
 class ActorCriticTrainerBase:
     """Shared training utilities for actor-critic style trainers."""
 
-    def _agent_device(self, agent_idx: int) -> torch.device:
-        return self.agent_devices[agent_idx]
-
     def _kl_shaped_reward(
         self, reward: float, data: Dict[str, Any], index: int
     ) -> Tuple[float, Dict[str, float]]:
