@@ -78,8 +78,8 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t  \sim \bol
 - `model_config`: Model configuration dict (optional)
 - `wandb_config`: Configuration for Weights & Biases logging (optional)
 - `external_transition`: Function providing transitions between turns
-- `eval_logger`: Evaluation logger function (optional)
-- `eval_aggregator`: Evaluation aggregator function (optional)
+- `eval_logger`: Optional task metrics, called as `eval_logger(agent_completions_turns=..., batch_items=..., prompts=...)`; returns one metrics dict per evaluated item
+- `eval_aggregator`: Optional, called as `eval_aggregator(metrics, num_turns=...)`; the returned `turn_k/...` metrics are logged under `eval/`
 {{% /hint %}}
 
 {{% hint warning %}}

@@ -5,34 +5,18 @@ from typing import Any, Dict
 
 
 def wandb_init_kwargs(wandb_config: Any, run_config: Dict[str, Any]) -> Dict[str, Any]:
-    """Build ``wandb.init`` kwargs; ``config_sections`` are attached to ``run_config``."""
+    """Build ``wandb.init`` kwargs; every ``config_sections`` entry is added to ``run_config``."""
     sections = (
         wandb_config.get("config_sections") if isinstance(wandb_config, dict) else None
     )
     if isinstance(sections, dict):
-        dataset_section = sections.get("dataset") or {}
-        external_section = sections.get("external") or {}
-        run_config.update(
-            {
-                "dataset": dataset_section,
-                "output": sections.get("output") or {},
-                "external": external_section,
-                "trainer": sections.get("trainer") or {},
-            }
-        )
+        run_config.update(sections)
+        dataset_section = sections.get("dataset")
         if isinstance(dataset_section, dict):
             if dataset_section.get("name"):
                 run_config["dataset_name"] = dataset_section.get("name")
             if dataset_section.get("type"):
                 run_config["dataset_type"] = dataset_section.get("type")
-        ext_mode = (
-            external_section.get("mode") if isinstance(external_section, dict) else None
-        )
-        if ext_mode:
-            run_config["external_mode"] = ext_mode
-            for key in ("original_prompt", "previous_response"):
-                if key in external_section:
-                    run_config[key] = external_section.get(key)
 
     init_kwargs: Dict[str, Any] = {
         "project": wandb_config.get("project"),

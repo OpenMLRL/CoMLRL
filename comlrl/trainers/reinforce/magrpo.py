@@ -147,10 +147,11 @@ class MAGRPOTrainer:
         tokenizer: The tokenizer
         wandb_config: Configuration for Weights & Biases logging
         model_config: Model configuration dict
-        eval_logger: Evaluation logger function
-        eval_aggregator: Evaluation aggregator function
+        eval_logger: Called as ``eval_logger(agent_completions_turns=..., batch_items=...,
+            prompts=...)`` and returns one metrics dict per evaluated item
+        eval_aggregator: Called as ``eval_aggregator(metrics, num_turns=...)`` and
+            returns ``turn_k/...`` metrics, logged under ``eval/``
         external_transition: Function that provides external transitions between turns
-        dataset_type: Optional explicit dataset type (e.g., "humaneval")
     """
 
     default_config_cls: Type[Any] = MAGRPOConfig
@@ -167,7 +168,6 @@ class MAGRPOTrainer:
         model_config: Optional[Dict[str, Any]] = None,
         train_dataset: Optional[Union[Dataset, IterableDataset]] = None,
         eval_dataset: Optional[Union[Dataset, IterableDataset]] = None,
-        dataset_type: Optional[str] = None,
         reward_func: Optional[Callable] = None,
         reward_processor: Optional[Callable[[float], float]] = None,
         formatters: Optional[Union[Callable, Sequence[Callable]]] = None,
@@ -338,7 +338,6 @@ class MAGRPOTrainer:
         if self.wandb_config is not None and self.dist_env.is_main:
             self._init_wandb()
 
-        self.dataset_type = dataset_type
         self.verbose = verbose_from_wandb_config(self.wandb_config)
 
     def _parallel_agent_mode_enabled(self) -> bool:
@@ -499,8 +498,7 @@ class MAGRPOTrainer:
         num_eval_samples = int(num_eval_samples)
 
         all_agent_completions_turns = [[] for _ in range(self.num_agents)]
-        all_test_cases = []
-        all_entry_points = []
+        all_batch_items = []
         all_prompts = []
         # Collect per-turn immediate rewards across evaluated samples
         eval_turn_rewards: List[List[float]] = [[] for _ in range(self.args.num_turns)]
@@ -513,8 +511,7 @@ class MAGRPOTrainer:
                     self._evaluate_sample(
                         batch_item,
                         all_agent_completions_turns,
-                        all_test_cases,
-                        all_entry_points,
+                        all_batch_items,
                         all_prompts,
                         eval_turn_rewards,
                     )
@@ -552,8 +549,7 @@ class MAGRPOTrainer:
 
         eval_metrics = self._log_eval_metrics(
             all_agent_completions_turns,
-            all_test_cases,
-            all_entry_points,
+            all_batch_items,
             all_prompts,
             extra_metrics=extra_eval_metrics,
         )
@@ -563,16 +559,14 @@ class MAGRPOTrainer:
         self,
         batch_item,
         all_agent_completions_turns,
-        all_test_cases,
-        all_entry_points,
+        all_batch_items,
         all_prompts,
         eval_turn_rewards,
     ):
         """Evaluate a single sample for any number of turns."""
         agent_sample_completions = [[] for _ in range(self.num_agents)]
 
-        all_test_cases.append(batch_item.get("test", ""))
-        all_entry_points.append(batch_item.get("entry_point", ""))
+        all_batch_items.append(batch_item)
         all_prompts.append(batch_item.get("prompt", ""))
 
         # Track the selected completions from the previous turn (evaluation traces a single path)
@@ -658,8 +652,7 @@ class MAGRPOTrainer:
     def _log_eval_metrics(
         self,
         all_agent_completions_turns,
-        all_test_cases,
-        all_entry_points,
+        all_batch_items,
         all_prompts,
         extra_metrics: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, float]:
@@ -675,8 +668,7 @@ class MAGRPOTrainer:
         ):
             detailed_metrics = self.eval_logger(
                 agent_completions_turns=all_agent_completions_turns,
-                test_cases=all_test_cases,
-                entry_points=all_entry_points,
+                batch_items=all_batch_items,
                 prompts=all_prompts,
             )
 

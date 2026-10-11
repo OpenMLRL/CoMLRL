@@ -97,7 +97,10 @@ def test_eval_passes_separate_roles_to_existing_logger(tokenizer):
     trainer.eval_logger = lambda **kwargs: observed.append(kwargs) or []
     trainer.eval_aggregator = lambda *a, **k: {"turn_1/domain_metric": 3.0}
     result = trainer.evaluate(num_eval_samples=1)
+    assert set(observed[0]) == {"agent_completions_turns", "batch_items", "prompts"}
     assert observed[0]["agent_completions_turns"] == [[["good"]], [["good"]]]
+    assert observed[0]["batch_items"] == [{"id": "task", "prompt": "task prompt"}]
+    assert observed[0]["prompts"] == ["task prompt"]
     assert result["eval/turn_1/reward_mean"] == 2.0
     assert result["eval/turn_1/domain_metric"] == 3.0
     assert not trainer._centralized_eval_items
