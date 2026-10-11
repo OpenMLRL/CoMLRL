@@ -108,7 +108,12 @@ class MAGRPOConfig:
         if mode == "mp" and self.agent_devices is None:
             raise ValueError("parallel_training='mp' requires explicit agent_devices.")
         self.parallel_training = mode
-        validate_reference_kl_config(self, self.num_agents)
+        actor_count = (
+            1
+            if getattr(self, "collaboration_mode", None) == "centralized"
+            else self.num_agents
+        )
+        validate_reference_kl_config(self, actor_count)
 
 
 @dataclass
@@ -496,6 +501,12 @@ class MAGRPOTrainer:
             }
             if hasattr(self.args, "num_generations"):
                 config_dict["num_generations"] = self.args.num_generations
+            if getattr(self, "centralized_collaboration", None) is not None:
+                config_dict["collaboration_mode"] = "centralized"
+                config_dict["num_roles"] = self.centralized_collaboration.num_roles
+                config_dict["num_actor_models"] = len(self.agents)
+                if hasattr(self.args, "comparator_generation_mode"):
+                    config_dict["comparator_generation_mode"] = "centralized"
 
             # Incorporate full config sections and derived fields for searchability
             sections = (
@@ -1246,9 +1257,12 @@ class MAGRPOTrainer:
         completion_input_ids = generation_output.sequences
 
         prompt_len = prompt_input_ids[0].shape[0]
-        pad_positions = (prompt_input_ids[0] == tokenizer.pad_token_id).nonzero()
-        if pad_positions.shape[0] > 0:
-            prompt_len = pad_positions[0].item()
+        joint_actor = getattr(self, "centralized_collaboration", None) is not None
+        # Joint prompts can contain EOS even when it is also the padding token.
+        if not joint_actor:
+            pad_positions = (prompt_input_ids[0] == tokenizer.pad_token_id).nonzero()
+            if pad_positions.shape[0] > 0:
+                prompt_len = pad_positions[0].item()
 
         completions = []
         completion_tokens_list = []
@@ -1269,6 +1283,12 @@ class MAGRPOTrainer:
                 if pad_positions.shape[0] > 0
                 else completion_tokens.shape[0]
             )
+            if (
+                joint_actor
+                and pad_positions.numel()
+                and tokenizer.pad_token_id == tokenizer.eos_token_id
+            ):
+                response_len += 1
             batch_completion_tokens.append(completion_tokens)
             batch_response_lens.append(int(response_len))
 

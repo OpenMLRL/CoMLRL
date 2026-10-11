@@ -1,5 +1,6 @@
 import gc
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import torch
@@ -11,6 +12,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenize
 
 from comlrl.utils.tokenizer_utils import ensure_pad_token
 
+from .collaboration import joint_policy_gradient_loss
 from .madpo import MADPOConfig, MADPOTrainer, PreferencePair
 from ..actor_critic import IACConfig, IACTrainer, MAACConfig, MAACTrainer
 from ..reinforce.magrpo import MAGRPOTrainer
@@ -73,9 +75,12 @@ class JointRewardModel(nn.Module):
             use_cache=False,
         )
         hidden_states = outputs.hidden_states[-1]
-        lengths = attention_mask.long().sum(dim=1).clamp(min=1) - 1
+        positions = torch.arange(
+            attention_mask.size(1), device=hidden_states.device
+        ).expand_as(attention_mask)
+        last_token = positions.masked_fill(attention_mask == 0, 0).max(dim=1).values
         batch_indices = torch.arange(hidden_states.size(0), device=hidden_states.device)
-        pooled = hidden_states[batch_indices, lengths]
+        pooled = hidden_states[batch_indices, last_token]
         return self.reward_head(pooled).squeeze(-1)
 
 
@@ -173,6 +178,15 @@ class MARLHFTrainer(MADPOTrainer):
         self.critic_model_source = critic_model
         self.critic_sources = critics
         super().__init__(*args, **kwargs)
+        if (
+            self.centralized_collaboration is not None
+            and self.metrics_callback is not None
+        ):
+            self.metrics_callback = (
+                self.centralized_collaboration.wrap_metrics_callback(
+                    self.metrics_callback
+                )
+            )
         self.reward_model: Optional[JointRewardModel] = None
         self.reward_tokenizer: Optional[PreTrainedTokenizerBase] = None
         self.reward_optimizer: Optional[torch.optim.Optimizer] = None
@@ -210,7 +224,7 @@ class MARLHFTrainer(MADPOTrainer):
         previous = self._evaluating_with_task_reward
         self._evaluating_with_task_reward = True
         try:
-            return MAGRPOTrainer.evaluate(self, num_eval_samples=num_eval_samples)
+            return super().evaluate(num_eval_samples=num_eval_samples)
         finally:
             self._evaluating_with_task_reward = previous
 
@@ -231,6 +245,19 @@ class MARLHFTrainer(MADPOTrainer):
             prompts,
             completions_list,
             batch_items=batch_items,
+        )
+
+    def _compute_loss_with_gradients(self, agent, completions_data, returns):
+        if self.centralized_collaboration is None:
+            return super()._compute_loss_with_gradients(
+                agent, completions_data, returns
+            )
+        return joint_policy_gradient_loss(
+            self,
+            agent,
+            completions_data,
+            returns,
+            sequence_log_prob=partial(self._sequence_log_prob, 0),
         )
 
     def _train_actor_critic_rl(self, **kwargs) -> None:
@@ -308,6 +335,8 @@ class MARLHFTrainer(MADPOTrainer):
         ac_trainer.wandb_config = self.wandb_config
         ac_trainer.wandb_initialized = self.wandb_initialized
         ac_trainer.verbose = self.verbose
+        if self.centralized_collaboration is not None:
+            ac_trainer.env_step = self.env_step
         ac_trainer.train()
         self.env_step = int(getattr(ac_trainer, "env_step", self.env_step))
         self.agents = [agent.model for agent in ac_trainer.agents]
