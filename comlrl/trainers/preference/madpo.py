@@ -524,8 +524,9 @@ class MADPOTrainer(MAGRPOTrainer):
         tokenizer = self.tokenizers[agent_idx]
         apply_tokenizer_specials(tokenizer, [agent_module])
 
-        prompt_ids = prompt_input_ids.to(device)
-        completion_tokens = completion_ids.to(device)
+        # Generation may return inference tensors; autograd saves token indices.
+        prompt_ids = prompt_input_ids.to(device).clone()
+        completion_tokens = completion_ids.to(device).clone()
         completion_tokens = self._trim_completion_tokens(
             completion_tokens,
             getattr(tokenizer, "pad_token_id", None),
