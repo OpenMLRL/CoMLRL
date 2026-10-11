@@ -48,9 +48,6 @@ pip install comlrl
 conda install -c conda-forge comlrl
 ```
 
-See the [optional CUDA cache guide](docs/runtime_cache.md) if you need private
-cache directories on a shared machine.
-
 ## Features
 
 - **Cooperative MARL trainers to optimize decentralized LLM collaboration:**

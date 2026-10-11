@@ -23,30 +23,28 @@ OUTPUT_DIRECTORIES = [
 
 @pytest.mark.parametrize("method,directory,cache_attribute", OUTPUT_DIRECTORIES)
 @pytest.mark.parametrize(
-    "wandb_config,job_id,base_dir",
+    "wandb_config,base_dir",
     [
-        (None, None, "."),
-        ([], "42", "."),
-        ({}, "42", "."),
-        ({"output_dir": "run/job_42"}, "42", "run/job_42"),
+        (None, "."),
+        ([], "."),
+        ({}, "."),
+        ({"output_dir": "runs/42"}, "runs/42"),
         (
             {
                 "output_dir": "run",
                 "config_sections": {"output": {"base_dir": "section"}},
                 "dir": "wandb",
             },
-            "42",
             "run",
         ),
-        ({"config_sections": {"output": {"base_dir": "section"}}}, None, "section"),
+        ({"config_sections": {"output": {"base_dir": "section"}}}, "section"),
         (
             {"config_sections": {"output": {"base_dir": "section"}}, "dir": "wandb"},
-            "42",
             "section",
         ),
-        ({"config_sections": ["ignored"], "dir": "wandb"}, "42", "wandb"),
-        ({"config_sections": {"output": []}, "dir": "wandb"}, None, "wandb"),
-        ({"output_dir": "", "dir": "wandb"}, "", "wandb"),
+        ({"config_sections": ["ignored"], "dir": "wandb"}, "wandb"),
+        ({"config_sections": {"output": []}, "dir": "wandb"}, "wandb"),
+        ({"output_dir": "", "dir": "wandb"}, "wandb"),
     ],
 )
 def test_output_directory_precedence(
@@ -54,15 +52,11 @@ def test_output_directory_precedence(
     directory,
     cache_attribute,
     wandb_config,
-    job_id,
     base_dir,
     tmp_path,
     monkeypatch,
 ):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
-    if job_id is not None:
-        monkeypatch.setenv("SLURM_JOB_ID", job_id)
     trainer = object.__new__(MADPOIterTrainer)
     trainer.args = SimpleNamespace()
     trainer.wandb_config = wandb_config
@@ -79,7 +73,6 @@ def test_explicit_output_directories_and_independent_caches(
     method, directory, cache_attribute, tmp_path, monkeypatch
 ):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("SLURM_JOB_ID", "42")
     trainer = object.__new__(MADPOIterTrainer)
     trainer.args = SimpleNamespace(
         preference_replay_dir="explicit-replay",

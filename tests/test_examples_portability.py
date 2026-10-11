@@ -1,5 +1,4 @@
 import importlib.util
-import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -61,9 +60,6 @@ def offline_entrypoint(monkeypatch):
         monkeypatch.setattr(
             trainer_cls, "save_model", lambda self, path: saved.append(path)
         )
-    for key in list(os.environ):
-        if key.startswith("SLURM_"):
-            monkeypatch.delenv(key)
 
     def run(script, *args):
         module = _load_example(script)
