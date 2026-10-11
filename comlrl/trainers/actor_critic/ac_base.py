@@ -71,6 +71,7 @@ class ActorCriticTrainerBase:
         logits: torch.Tensor,
         prompt_len: int,
         response_len: int,
+        completion_loss_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         shifted_logits = logits[:, :-1, :]
         shifted_targets = sequences[:, 1:]
@@ -83,6 +84,19 @@ class ActorCriticTrainerBase:
         start_index = max(prompt_len - 1, 0)
         end_index = start_index + response_len
         response_log_probs = token_log_probs[:, start_index:end_index]
+        if completion_loss_mask is not None:
+            if (
+                completion_loss_mask.ndim != 1
+                or completion_loss_mask.numel() != response_len
+                or response_log_probs.size(-1) != response_len
+            ):
+                raise ValueError(
+                    "completion_loss_mask must be one-dimensional and match response_len."
+                )
+            mask = completion_loss_mask.to(
+                device=response_log_probs.device, dtype=torch.bool
+            ).clone()
+            response_log_probs = response_log_probs.masked_fill(~mask, 0.0)
 
         return response_log_probs.sum(dim=-1)
 

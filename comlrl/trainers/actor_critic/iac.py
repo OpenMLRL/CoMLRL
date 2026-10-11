@@ -787,6 +787,7 @@ class IACTrainer(ActorCriticTrainerBase):
         prompt_len: int,
         response_len: int,
         output_values: bool = True,
+        completion_loss_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Evaluate the actor to retrieve log-probabilities and (optional) value prediction.
@@ -798,8 +799,11 @@ class IACTrainer(ActorCriticTrainerBase):
             output_values=output_values,
         )
 
+        stats_kwargs = {}
+        if completion_loss_mask is not None:
+            stats_kwargs["completion_loss_mask"] = completion_loss_mask
         logprob = self._compute_sequence_stats(
-            sequences, outputs.logits, prompt_len, response_len
+            sequences, outputs.logits, prompt_len, response_len, **stats_kwargs
         )
 
         value = None
@@ -876,6 +880,10 @@ class IACTrainer(ActorCriticTrainerBase):
             attention_mask = sample.attention_mask.to(agent_device).unsqueeze(0)
 
             # Policy uses the full sequence; value follows the configured critic type.
+            policy_kwargs = {}
+            completion_loss_mask = sample.metadata.get("completion_loss_mask")
+            if completion_loss_mask is not None:
+                policy_kwargs["completion_loss_mask"] = completion_loss_mask
             logprob, _ = self._policy_eval(
                 agent_model,
                 sequences,
@@ -883,6 +891,7 @@ class IACTrainer(ActorCriticTrainerBase):
                 sample.prompt_len,
                 sample.response_len,
                 output_values=False,
+                **policy_kwargs,
             )
             if self.args.use_separate_critic:
                 if critic_model is None:

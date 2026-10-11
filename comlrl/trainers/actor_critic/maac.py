@@ -814,6 +814,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         prompt_len: int,
         response_len: int,
         output_values: bool = False,
+        completion_loss_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         outputs = agent_model(
             input_ids=sequences,
@@ -821,8 +822,11 @@ class MAACTrainer(ActorCriticTrainerBase):
             output_values=output_values,
         )
 
+        stats_kwargs = {}
+        if completion_loss_mask is not None:
+            stats_kwargs["completion_loss_mask"] = completion_loss_mask
         logprob = self._compute_sequence_stats(
-            sequences, outputs.logits, prompt_len, response_len
+            sequences, outputs.logits, prompt_len, response_len, **stats_kwargs
         )
 
         value = None
@@ -846,6 +850,10 @@ class MAACTrainer(ActorCriticTrainerBase):
             sequences = sample.full_input_ids.to(agent_device).unsqueeze(0)
             attention_mask = sample.attention_mask.to(agent_device).unsqueeze(0)
 
+            policy_kwargs = {}
+            completion_loss_mask = sample.metadata.get("completion_loss_mask")
+            if completion_loss_mask is not None:
+                policy_kwargs["completion_loss_mask"] = completion_loss_mask
             logprob, _ = self._policy_eval(
                 agent_model,
                 sequences,
@@ -853,6 +861,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 sample.prompt_len,
                 sample.response_len,
                 output_values=False,
+                **policy_kwargs,
             )
 
             joint_ids = sample.metadata["joint_input_ids"].to(critic_device)
