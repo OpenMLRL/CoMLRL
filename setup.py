@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from setuptools import find_packages, setup
 
 # Core dependencies (excluding PyTorch which should be installed separately)
@@ -14,13 +12,9 @@ core_requires = [
     "wandb>=0.15.0",
 ]
 
-extras_require = {}
-
 short_description = (
     "Open-Source Library for Cooperative Multi-LLM Reinforcement Learning"
 )
-
-long_description = short_description
 
 setup(
     name="comlrl",
@@ -29,8 +23,7 @@ setup(
     packages=find_packages(),
     python_requires=">=3.10",
     install_requires=core_requires,
-    extras_require=extras_require,
     description=short_description,
-    long_description=long_description,
+    long_description=short_description,
     long_description_content_type="text/markdown",
 )

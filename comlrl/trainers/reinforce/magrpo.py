@@ -22,6 +22,7 @@ from comlrl.utils.distributed import (
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import infer_model_name, resolve_model_sources
 from comlrl.utils.reference_kl import (
+    _sequence_kl_values,
     clone_reference_models,
     load_reference_models_from_sources,
     reference_kl_coef,
@@ -473,7 +474,6 @@ class MAGRPOTrainer:
             wandb_project = self.wandb_config.get("project", "comlrl")
             wandb_entity = self.wandb_config.get("entity")
 
-            # Use different default names based on num_turns and algorithm
             algo_tag = str(self.algorithm_name or "magrpo").lower()
             wandb_name = (
                 self.wandb_config.get("name")
@@ -500,8 +500,6 @@ class MAGRPOTrainer:
             if hasattr(self.args, "num_generations"):
                 config_dict["num_generations"] = self.args.num_generations
 
-            # No per-turn weighting or early termination config
-
             # Incorporate full config sections and derived fields for searchability
             sections = (
                 self.wandb_config.get("config_sections")
@@ -514,7 +512,6 @@ class MAGRPOTrainer:
                 external_section = sections.get("external") or {}
                 trainer_section = sections.get("trainer") or {}
 
-                # Attach full sections
                 config_dict.update(
                     {
                         "dataset": dataset_section,
@@ -623,19 +620,14 @@ class MAGRPOTrainer:
             num_eval_samples = int(getattr(self.args, "eval_num_samples", 4))
         num_eval_samples = int(num_eval_samples)
 
-        # Storage for completions across turns for all agents
         all_agent_completions_turns = [[] for _ in range(self.num_agents)]
         all_test_cases = []
         all_entry_points = []
         all_prompts = []
         # Collect per-turn immediate rewards across evaluated samples
         eval_turn_rewards: List[List[float]] = [[] for _ in range(self.args.num_turns)]
-        # No per-function tracking; single reward function handles composition
-
-        # Get evaluation dataloader
         eval_dataloader = self.get_eval_dataloader()
 
-        # Evaluate on specified number of samples
         seen = 0
         with torch.no_grad():
             for batch in eval_dataloader:
@@ -680,9 +672,6 @@ class MAGRPOTrainer:
                     sum_returns[t] / n_samp if n_samp > 0 else 0.0
                 )
 
-        # No per-reward-function logging when using a single reward function
-
-        # Calculate and log metrics (including extra_eval_metrics)
         eval_metrics = self._log_eval_metrics(
             all_agent_completions_turns,
             all_test_cases,
@@ -700,13 +689,10 @@ class MAGRPOTrainer:
         all_entry_points,
         all_prompts,
         eval_turn_rewards,
-        # no per-function component tracking
     ):
         """Evaluate a single sample for any number of turns."""
-        # Storage for each agent's completions across turns
         agent_sample_completions = [[] for _ in range(self.num_agents)]
 
-        # Store sample information
         all_test_cases.append(batch_item.get("test", ""))
         all_entry_points.append(batch_item.get("entry_point", ""))
         all_prompts.append(batch_item.get("prompt", ""))
@@ -717,15 +703,12 @@ class MAGRPOTrainer:
         eval_prompt_history = [[] for _ in range(self.num_agents)]
         eval_response_history = [[] for _ in range(self.num_agents)]
 
-        # Run episode with configured number of turns
         for turn_idx in range(self.args.num_turns):
-            # Prepare external prompts for turns after the first
             agent_external_prompts = [None] * self.num_agents
 
             if turn_idx > 0 and all(c is not None for c in previous_turn_completions):
                 # Use previously selected completions to form next-turn prompts (single eval path)
                 selected_prev = list(previous_turn_completions)
-                # Get external transitions based on selected prior completions
                 if self.external_transition is not None:
                     transition_result = self.external_transition(
                         prompt=batch_item.get("prompt", ""),
@@ -782,7 +765,6 @@ class MAGRPOTrainer:
                 [prompt], agent_completions_for_reward, batch_items=[batch_item]
             )
             if rewards:
-                # Track per-turn reward across samples
                 eval_turn_rewards[turn_idx].append(float(rewards[0]))
                 # Update selected previous-turn completions for next-turn prompts
                 for agent_idx in range(self.num_agents):
@@ -790,7 +772,6 @@ class MAGRPOTrainer:
                     previous_turn_completions[agent_idx] = chosen
                     eval_response_history[agent_idx].append(chosen)
 
-        # Store completions for all agents
         for agent_idx in range(self.num_agents):
             all_agent_completions_turns[agent_idx].append(
                 agent_sample_completions[agent_idx]
@@ -821,7 +802,6 @@ class MAGRPOTrainer:
                 prompts=all_prompts,
             )
 
-            # Aggregate metrics for logging
             # Aggregate strictly per-turn; aggregator already returns turn_k/* keys only
             aggregated_detailed_metrics = self.eval_aggregator(
                 detailed_metrics, num_turns=self.args.num_turns
@@ -833,7 +813,6 @@ class MAGRPOTrainer:
         if isinstance(extra_metrics, dict) and extra_metrics:
             eval_metrics.update(extra_metrics)
 
-        # Log evaluation metrics
         if self.wandb_initialized and wandb.run is not None:
             wandb.log(eval_metrics, step=self.env_step)
 
@@ -843,7 +822,6 @@ class MAGRPOTrainer:
         """
         Unified train method that supports both single-turn and multi-turn training.
         """
-        # Initialize wandb if not already done
         if self.wandb_config is not None and not self.wandb_initialized:
             self._init_wandb()
 
@@ -851,7 +829,6 @@ class MAGRPOTrainer:
             agent.to(self.agent_devices[agent_idx])
             agent.train()
 
-        # Create the data pipeline for generating examples
         for epoch in range(0, int(self.args.num_train_epochs)):
             dl = self.get_train_dataloader()
             if getattr(self, "verbose", True):
@@ -865,7 +842,6 @@ class MAGRPOTrainer:
             else:
                 it = enumerate(dl)
             for batch_idx, batch in it:
-                # Periodic evaluation based on configuration
                 if int(self.args.eval_interval) > 0 and (
                     batch_idx % int(self.args.eval_interval) == 0
                 ):
@@ -873,7 +849,6 @@ class MAGRPOTrainer:
 
                 # Process single batch item (batch_size=1 enforced)
                 batch_item = batch[0]
-                # Unified training step (returns-based, backward updates)
                 batch_loss, _batch_stats = self._train_step_returns(
                     batch_item,
                     **kwargs,
@@ -891,21 +866,15 @@ class MAGRPOTrainer:
         batch_item,
         **kwargs,
     ):
-        """Branching rollout with returns; updates backward from last turn to first.
+        """Collect a rollout tree and buffer samples in environment-step order.
 
-        Returns an additional per-turn batch summary for logging:
-        - batch_mean_reward (immediate reward mean averaged across nodes at the turn)
-        - batch_expected_return (expected return averaged across nodes at the turn)
-        - no per-function breakdown (single reward function)
-        - levels (code-only: mean of level_1/2/3 and bonus across nodes)
+        Return the mean absolute root return and per-turn reward/return summaries.
         """
         num_turns = int(self.args.num_turns)
         num_gens = int(self.args.num_generations)
         # Per-turn accumulators for batch-level summaries
         turn_reward_node_means: List[List[float]] = [[] for _ in range(num_turns)]
         turn_return_node_means: List[List[float]] = [[] for _ in range(num_turns)]
-        # No per-function accumulation in single reward mode
-        turn_node_counts: List[int] = [0 for _ in range(num_turns)]
 
         def build_node(
             turn_idx: int,
@@ -937,7 +906,6 @@ class MAGRPOTrainer:
             ]
             formatted_prompt = comps_per_agent[0]["prompts"][0]
 
-            # Initialize history containers if not provided
             if prompt_history_per_agent is None:
                 prompt_history_per_agent = [[] for _ in range(self.num_agents)]
             if response_history_per_agent is None:
@@ -959,12 +927,10 @@ class MAGRPOTrainer:
                     for i in range(self.num_agents)
                 ]
                 for idx_tuple in itertools.product(*per_agent_ranges):
-                    # Build per-agent single-element lists
                     completion_args = [
                         [agent_completions_list[a][idx_tuple[a]]]
                         for a in range(self.num_agents)
                     ]
-                    # Call reward function for this joint action
                     try:
                         sig = inspect.signature(self.reward_func)
                         if "batch_items" in sig.parameters:
@@ -980,26 +946,18 @@ class MAGRPOTrainer:
                                 for a in range(self.num_agents)
                             ]
                         )
-                    # Apply processor
                     processed = [self.reward_processor(r) for r in rlist]
                     rewards_vec.append(float(processed[0] if processed else 0.0))
                     combo_indices.append(tuple(idx_tuple))
-            elif joint_mode in ["align", "aligned"] and self.num_agents > 1:
-                # Aligned by index
+            elif self.num_agents == 1 or (
+                joint_mode in ["align", "aligned"] and self.num_agents > 1
+            ):
                 rewards_vec = self._compute_rewards(
                     [formatted_prompt], agent_completions_list, batch_items=[batch_item]
                 )
                 # combo indices: align j with (j,j,...)
                 k = len(agent_completions_list[0]) if agent_completions_list else 0
                 combo_indices = [tuple([j] * self.num_agents) for j in range(k)]
-            elif self.num_agents == 1:
-                # Single-agent mode (GRPO)
-                rewards_vec = self._compute_rewards(
-                    [formatted_prompt], agent_completions_list, batch_items=[batch_item]
-                )
-                # combo indices: single agent, each completion gets its own index
-                k = len(agent_completions_list[0]) if agent_completions_list else 0
-                combo_indices = [tuple([j]) for j in range(k)]
             else:
                 raise ValueError(f"Unsupported joint_mode: {joint_mode}")
 
@@ -1008,8 +966,6 @@ class MAGRPOTrainer:
             node_env_step = int(self.env_step)
             node_mean_reward = float(np.mean(rewards_vec)) if rewards_vec else 0.0
             turn_reward_node_means[turn_idx].append(node_mean_reward)
-
-            turn_node_counts[turn_idx] += 1
 
             # Early termination: stop expanding this branch if mean reward exceeds threshold
             term_threshold = getattr(self.args, "early_termination_threshold", None)
@@ -1032,7 +988,6 @@ class MAGRPOTrainer:
 
             if turn_idx < num_turns - 1 and not terminate_here:
                 for j in range(len(rewards_vec)):
-                    # Map j to per-agent indices
                     idx_tuple = combo_indices[j]
                     parent_joint = [
                         agent_completions_list[i][idx_tuple[i]]
@@ -1092,7 +1047,6 @@ class MAGRPOTrainer:
 
         compute_returns(root)
 
-        # After returns computed, record per-turn mean returns
         def record_turn_returns(node):
             t = node["turn"]
             if 0 <= t < len(turn_return_node_means):
@@ -1120,20 +1074,16 @@ class MAGRPOTrainer:
             combo_idx_list = node.get("combo_indices") or []
             per_agent_joint_sums: List[List[float]] = []
             if joint_mode_local == "cross" and combo_idx_list:
-                # Determine K per agent
                 k = len(comps_per_agent[0]["completions"][0]) if comps_per_agent else 0
                 for a in range(self.num_agents):
                     sums = [0.0] * k
-                    counts = [0] * k
                     for j, ret in enumerate(returns_vec):
                         idx_a = combo_idx_list[j][a]
                         sums[idx_a] += float(ret)
-                        counts[idx_a] += 1
                     # Use joint reward sum per completion (no averaging)
                     per_agent_joint_sums.append(sums)
             else:
                 # Aligned: returns already length K
-                k = len(returns_vec)
                 per_agent_joint_sums = [
                     list(map(float, returns_vec)) for _ in range(self.num_agents)
                 ]
@@ -1185,7 +1135,6 @@ class MAGRPOTrainer:
                 stats["batch_expected_return"] = float(
                     np.mean(turn_return_node_means[t])
                 )
-            # No per-reward-function means; use a single reward function
             batch_stats[t] = stats
 
         return batch_loss, batch_stats
@@ -1246,7 +1195,6 @@ class MAGRPOTrainer:
             raise ValueError("Tokenizer is required for generating completions")
         tokenizer = self.tokenizers[agent_idx]
         apply_tokenizer_specials(tokenizer, [agent_module])
-        pad_id = tokenizer.pad_token_id
 
         prompt_encodings = tokenizer(
             prompts, padding=True, truncation=True, return_tensors="pt"
@@ -1353,7 +1301,7 @@ class MAGRPOTrainer:
 
         return {
             "prompts": prompts,
-            "batch_items": batch_items,  # Store original batch items for reference
+            "batch_items": batch_items,
             "prompt_input_ids": prompt_input_ids,
             "prompt_attention_mask": prompt_attention_mask,
             "completions": completions,
@@ -1379,7 +1327,6 @@ class MAGRPOTrainer:
 
         When num_turns=1 or external_prompts is None, behaves like _generate_completions.
         """
-        # If single-turn or no external prompts, use standard method directly
         if self.args.num_turns == 1 or external_prompts is None:
             return self._generate_completions(
                 agent,
@@ -1390,8 +1337,6 @@ class MAGRPOTrainer:
                 external_prompts=external_prompts,
                 **kwargs,
             )
-
-        # Multi-turn with external prompts: external modes return next-turn prompts.
 
         prompts = [external_prompts for _ in batch_items]
         if getattr(self.args, "external_prompt_passthrough", False):
@@ -1414,7 +1359,6 @@ class MAGRPOTrainer:
             modified_item["prompt"] = prompt
             modified_items.append(modified_item)
 
-        # Use _generate_completions with modified items
         completions_data = self._generate_completions(
             agent,
             modified_items,
@@ -1431,7 +1375,6 @@ class MAGRPOTrainer:
                 item["prompt"] = item["_original_prompt"]
                 del item["_original_prompt"]
 
-        # Update prompts in completions_data to reflect the formatted prompts
         completions_data["prompts"] = prompts
 
         return completions_data
@@ -1449,16 +1392,11 @@ class MAGRPOTrainer:
         Returns:
             List of final processed rewards
         """
-        # Initialize list to store rewards
         all_rewards = []
 
         for i in range(self.num_agents):
             if not isinstance(completions_list[i], list):
-                completions_list[i] = (
-                    [completions_list[i]]
-                    if not isinstance(completions_list[i], list)
-                    else completions_list[i]
-                )
+                completions_list[i] = [completions_list[i]]
 
         min_completions = min(len(completions_list[i]) for i in range(self.num_agents))
         try:
@@ -1519,18 +1457,15 @@ class MAGRPOTrainer:
                 "Reference KL is enabled but reference models are missing."
             )
         reference_model = self.reference_models[agent_idx]
-        values: List[float] = []
-        for seq, attn, response_len in zip(sequences, attention_mask, response_lens):
-            kl_value = reference_kl_for_sequence(
-                policy_model,
-                reference_model,
-                seq.unsqueeze(0),
-                attn.unsqueeze(0),
-                prompt_len,
-                int(response_len),
-            )
-            values.append(float(kl_value.view(-1)[0].item()))
-        return values
+        return _sequence_kl_values(
+            policy_model,
+            reference_model,
+            sequences,
+            attention_mask,
+            prompt_len,
+            response_lens,
+            sequence_kl=reference_kl_for_sequence,
+        )
 
     def _apply_reference_kl_to_returns(
         self, returns_tensor: torch.Tensor, completions_data: Dict[str, Any]
@@ -1694,11 +1629,9 @@ class MAGRPOTrainer:
         agent_module = unwrap_model(agent)
         device = next(agent_module.parameters()).device
 
-        # Make sure we have the correct number of rewards
         if len(returns) == 0:
             return torch.tensor(0.0, device=device, requires_grad=True)
 
-        # Convert returns to tensor
         returns_tensor = torch.tensor(returns, dtype=torch.float, device=device)
 
         effective_returns = self._apply_reference_kl_to_returns(
@@ -1710,7 +1643,6 @@ class MAGRPOTrainer:
             std = advantages.std(unbiased=False).clamp(min=1e-6)
             advantages = (advantages - mean) / std
 
-        # Set agent to train mode to ensure gradients are tracked
         agent.train()
 
         prompt_input_ids = completions_data["prompt_input_ids"].to(device)
@@ -1728,7 +1660,6 @@ class MAGRPOTrainer:
 
         # Token-based loss: concatenate prompt + completion
         for seq_idx, completion_tokens in enumerate(completion_input_ids[0]):
-            # Break if we've processed enough completions for the available rewards
             if seq_idx >= len(advantages):
                 break
 
@@ -1739,23 +1670,19 @@ class MAGRPOTrainer:
             if len(completion_tokens) > 0:
                 input_ids = torch.cat([prompt_ids, completion_tokens[:-1]])
 
-                # Target is the completion tokens
                 target_ids = completion_tokens
 
-                # Create attention mask for the full sequence
                 attention_mask = torch.ones(len(input_ids), device=device)
 
-                # Forward pass with gradients enabled
                 outputs = agent(
-                    input_ids=input_ids.unsqueeze(0),  # Add batch dimension
-                    attention_mask=attention_mask.unsqueeze(0),  # Add batch dimension
+                    input_ids=input_ids.unsqueeze(0),
+                    attention_mask=attention_mask.unsqueeze(0),
                     use_cache=False,
                 )
 
                 # Get logits for the completion part (excluding prompt)
                 completion_logits = outputs.logits[0, prompt_ids.size(0) - 1 : -1, :]
 
-                # Calculate log probabilities
                 log_probs = []
                 for i, token_id in enumerate(target_ids):
                     if i < completion_logits.size(
@@ -1774,11 +1701,9 @@ class MAGRPOTrainer:
                     total_loss = total_loss + loss
                     num_samples += 1
 
-        # Average the loss over all processed samples
         if num_samples > 0:
             total_loss = total_loss / num_samples
 
-        # Safety check for invalid loss values
         if torch.isnan(total_loss) or torch.isinf(total_loss):
             return torch.tensor(0.1, device=device, requires_grad=True)
 
@@ -1803,7 +1728,6 @@ class MAGRPOTrainer:
             if self.tokenizers:
                 self.tokenizers[agent_idx].save_pretrained(agent_dir)
 
-        # Log final model saving to wandb
         if self.wandb_initialized and wandb.run is not None:
             wandb.log({"final_model_saved": output_dir})
             wandb.finish()

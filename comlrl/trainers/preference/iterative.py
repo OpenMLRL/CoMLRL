@@ -881,10 +881,38 @@ class MADPOIterTrainer(MADPOTrainer):
         edges: np.ndarray,
         series: Sequence[Tuple[str, np.ndarray]],
     ) -> Optional[Any]:
+        return MADPOIterTrainer._reward_distribution_image(
+            title=title, edges=edges, series=series, kind="line"
+        )
+
+    @staticmethod
+    def _reward_distribution_bar_image(
+        *,
+        title: str,
+        edges: np.ndarray,
+        series: Sequence[Tuple[str, np.ndarray]],
+    ) -> Optional[Any]:
+        return MADPOIterTrainer._reward_distribution_image(
+            title=title, edges=edges, series=series, kind="bar"
+        )
+
+    @staticmethod
+    def _reward_distribution_image(
+        *,
+        title: str,
+        edges: np.ndarray,
+        series: Sequence[Tuple[str, np.ndarray]],
+        kind: str,
+    ) -> Optional[Any]:
         if not series:
             return None
+        if kind == "bar":
+            series = [(label, counts) for label, counts in series if len(counts) > 0]
+            if not series:
+                return None
 
-        xs = ((edges[:-1] + edges[1:]) / 2.0).tolist()
+        if kind == "line":
+            xs = ((edges[:-1] + edges[1:]) / 2.0).tolist()
         max_count = max(
             [float(np.max(counts)) for _, counts in series if len(counts) > 0] or [1.0]
         )
@@ -952,194 +980,97 @@ class MADPOIterTrainer(MADPOTrainer):
                 'fill="#4d4d4d">'
                 f"{MADPOIterTrainer._format_axis_tick(float(y_tick))}</text>"
             )
-        elements.append(
-            f'<line x1="{plot_left}" y1="{plot_bottom}" x2="{plot_right}" '
-            f'y2="{plot_bottom}" stroke="#505050" stroke-width="1"/>'
-        )
-        elements.append(
-            f'<line x1="{plot_left}" y1="{plot_top}" x2="{plot_left}" '
-            f'y2="{plot_bottom}" stroke="#505050" stroke-width="1"/>'
-        )
-        elements.append(
-            f'<text x="{(plot_left + plot_right) / 2:.1f}" y="{height - 3}" '
-            'font-size="5.5" font-family="Arial, sans-serif" '
-            'text-anchor="middle">reward</text>'
-        )
-        elements.append(
-            f'<text x="7" y="{(plot_top + plot_bottom) / 2:.1f}" '
-            'font-size="5.5" font-family="Arial, sans-serif" '
-            'text-anchor="middle" transform="rotate(-90 7 '
-            f'{(plot_top + plot_bottom) / 2:.1f})">count</text>'
-        )
-
-        legend_y = plot_top + 7
-        for label, counts in series:
-            if len(counts) == 0:
-                continue
-            color = palette.get(label, "#2878d6")
-            points: List[Tuple[int, int]] = []
-            for reward_value, count in zip(xs, counts.tolist()):
-                x_pos = x_position(float(reward_value))
-                y_pos = y_position(float(count))
-                points.append((int(round(x_pos)), int(round(y_pos))))
-
-            point_string = " ".join(f"{x_pos},{y_pos}" for x_pos, y_pos in points)
-            elements.append(
-                f'<polyline points="{point_string}" fill="none" stroke="{color}" '
-                'stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/>'
-            )
-            for x_pos, y_pos in points:
-                elements.append(
-                    f'<circle cx="{x_pos}" cy="{y_pos}" r="1.4" fill="{color}"/>'
-                )
-
-            elements.append(
-                f'<line x1="{plot_right - 52}" y1="{legend_y}" '
-                f'x2="{plot_right - 39}" y2="{legend_y}" stroke="{color}" '
-                'stroke-width="1.25" stroke-linecap="round"/>'
-            )
-            elements.append(
-                f'<text x="{plot_right - 36}" y="{legend_y + 2}" '
-                'font-size="6" font-family="Arial, sans-serif">'
-                f"{MADPOIterTrainer._xml_escape(label)}</text>"
-            )
-            legend_y += 8
-
-        elements.append("</svg></div>")
-        return wandb.Html("".join(elements))
-
-    @staticmethod
-    def _reward_distribution_bar_image(
-        *,
-        title: str,
-        edges: np.ndarray,
-        series: Sequence[Tuple[str, np.ndarray]],
-    ) -> Optional[Any]:
-        if not series:
-            return None
-
-        active_series = [(label, counts) for label, counts in series if len(counts) > 0]
-        if not active_series:
-            return None
-
-        max_count = max(float(np.max(counts)) for _, counts in active_series)
-        max_count = max(max_count, 1.0)
-
-        width, height = 240, 80
-        left, right = 29, 10
-        top, bottom = 14, 18
-        plot_left = left
-        plot_right = width - right
-        plot_top = top
-        plot_bottom = height - bottom
-
-        palette = {
-            "target": "#e87030",
-            "comparator": "#6e6e6e",
-        }
-
-        elements: List[str] = [
-            '<div style="max-width:240px;width:100%;overflow:hidden;">',
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
-            f'height="{height}" viewBox="0 0 {width} {height}" '
-            'style="display:block;max-width:100%;height:auto;">',
-            '<rect width="100%" height="100%" fill="white"/>',
+        axes = [
             (
-                f'<text x="{plot_left}" y="9" font-size="7" '
-                f'font-family="Arial, sans-serif" font-weight="700">'
-                f"{MADPOIterTrainer._xml_escape(title)}</text>"
+                f'<line x1="{plot_left}" y1="{plot_bottom}" x2="{plot_right}" '
+                f'y2="{plot_bottom}" stroke="#505050" stroke-width="1"/>'
+            ),
+            (
+                f'<line x1="{plot_left}" y1="{plot_top}" x2="{plot_left}" '
+                f'y2="{plot_bottom}" stroke="#505050" stroke-width="1"/>'
+            ),
+            (
+                f'<text x="{(plot_left + plot_right) / 2:.1f}" y="{height - 3}" '
+                'font-size="5.5" font-family="Arial, sans-serif" '
+                'text-anchor="middle">reward</text>'
+            ),
+            (
+                f'<text x="7" y="{(plot_top + plot_bottom) / 2:.1f}" '
+                'font-size="5.5" font-family="Arial, sans-serif" '
+                'text-anchor="middle" transform="rotate(-90 7 '
+                f'{(plot_top + plot_bottom) / 2:.1f})">count</text>'
             ),
         ]
 
-        x_min = float(edges[0])
-        x_range = max(float(edges[-1] - edges[0]), 1e-12)
-
-        def x_position(value: float) -> float:
-            return plot_left + ((float(value) - x_min) / x_range) * (
-                plot_right - plot_left
-            )
-
-        def y_position(value: float) -> float:
-            return plot_bottom - (float(value) / max_count) * (plot_bottom - plot_top)
-
-        for x_tick in np.linspace(float(edges[0]), float(edges[-1]), 5):
-            x_pos = int(round(x_position(float(x_tick))))
-            elements.append(
-                f'<line x1="{x_pos}" y1="{plot_top}" x2="{x_pos}" '
-                f'y2="{plot_bottom}" stroke="#dddddd" stroke-width="1"/>'
-            )
-            elements.append(
-                f'<text x="{x_pos}" y="{plot_bottom + 8}" font-size="5.5" '
-                'font-family="Arial, sans-serif" text-anchor="middle" '
-                'fill="#4d4d4d">'
-                f"{MADPOIterTrainer._format_axis_tick(float(x_tick))}</text>"
-            )
-
-        for y_tick in np.linspace(0.0, max_count, 5):
-            y_pos = int(round(y_position(float(y_tick))))
-            elements.append(
-                f'<line x1="{plot_left}" y1="{y_pos}" x2="{plot_right}" '
-                f'y2="{y_pos}" stroke="#dddddd" stroke-width="1"/>'
-            )
-            elements.append(
-                f'<text x="{plot_left - 4}" y="{y_pos + 2}" font-size="6" '
-                'font-family="Arial, sans-serif" text-anchor="end" '
-                'fill="#4d4d4d">'
-                f"{MADPOIterTrainer._format_axis_tick(float(y_tick))}</text>"
-            )
-
-        for bin_idx in range(len(edges) - 1):
-            bin_left = x_position(float(edges[bin_idx]))
-            bin_right = x_position(float(edges[bin_idx + 1]))
-            bin_width = max(bin_right - bin_left, 1.0)
-            group_left = bin_left + bin_width * 0.12
-            group_width = bin_width * 0.76
-            bar_width = group_width / max(len(active_series), 1)
-            for series_idx, (label, counts) in enumerate(active_series):
+        if kind == "line":
+            elements.extend(axes)
+            legend_y = plot_top + 7
+            for label, counts in series:
+                if len(counts) == 0:
+                    continue
                 color = palette.get(label, "#2878d6")
-                count = float(counts[bin_idx])
-                bar_x = group_left + series_idx * bar_width
-                bar_y = y_position(count)
-                bar_height = max(plot_bottom - bar_y, 0.0)
+                points: List[Tuple[int, int]] = []
+                for reward_value, count in zip(xs, counts.tolist()):
+                    x_pos = x_position(float(reward_value))
+                    y_pos = y_position(float(count))
+                    points.append((int(round(x_pos)), int(round(y_pos))))
+
+                point_string = " ".join(f"{x_pos},{y_pos}" for x_pos, y_pos in points)
                 elements.append(
-                    f'<rect x="{bar_x:.1f}" y="{bar_y:.1f}" '
-                    f'width="{max(bar_width - 0.5, 0.5):.1f}" '
-                    f'height="{bar_height:.1f}" fill="{color}" opacity="0.82"/>'
+                    f'<polyline points="{point_string}" fill="none" stroke="{color}" '
+                    'stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/>'
                 )
+                for x_pos, y_pos in points:
+                    elements.append(
+                        f'<circle cx="{x_pos}" cy="{y_pos}" r="1.4" fill="{color}"/>'
+                    )
 
-        elements.append(
-            f'<line x1="{plot_left}" y1="{plot_bottom}" x2="{plot_right}" '
-            f'y2="{plot_bottom}" stroke="#505050" stroke-width="1"/>'
-        )
-        elements.append(
-            f'<line x1="{plot_left}" y1="{plot_top}" x2="{plot_left}" '
-            f'y2="{plot_bottom}" stroke="#505050" stroke-width="1"/>'
-        )
-        elements.append(
-            f'<text x="{(plot_left + plot_right) / 2:.1f}" y="{height - 3}" '
-            'font-size="5.5" font-family="Arial, sans-serif" '
-            'text-anchor="middle">reward</text>'
-        )
-        elements.append(
-            f'<text x="7" y="{(plot_top + plot_bottom) / 2:.1f}" '
-            'font-size="5.5" font-family="Arial, sans-serif" '
-            'text-anchor="middle" transform="rotate(-90 7 '
-            f'{(plot_top + plot_bottom) / 2:.1f})">count</text>'
-        )
+                elements.append(
+                    f'<line x1="{plot_right - 52}" y1="{legend_y}" '
+                    f'x2="{plot_right - 39}" y2="{legend_y}" stroke="{color}" '
+                    'stroke-width="1.25" stroke-linecap="round"/>'
+                )
+                elements.append(
+                    f'<text x="{plot_right - 36}" y="{legend_y + 2}" '
+                    'font-size="6" font-family="Arial, sans-serif">'
+                    f"{MADPOIterTrainer._xml_escape(label)}</text>"
+                )
+                legend_y += 8
 
-        legend_y = plot_top + 7
-        for label, _ in active_series:
-            color = palette.get(label, "#2878d6")
-            elements.append(
-                f'<rect x="{plot_right - 52}" y="{legend_y - 4}" '
-                f'width="12" height="5" fill="{color}" opacity="0.82"/>'
-            )
-            elements.append(
-                f'<text x="{plot_right - 36}" y="{legend_y + 1}" '
-                'font-size="6" font-family="Arial, sans-serif">'
-                f"{MADPOIterTrainer._xml_escape(label)}</text>"
-            )
-            legend_y += 8
+        else:
+            for bin_idx in range(len(edges) - 1):
+                bin_left = x_position(float(edges[bin_idx]))
+                bin_right = x_position(float(edges[bin_idx + 1]))
+                bin_width = max(bin_right - bin_left, 1.0)
+                group_left = bin_left + bin_width * 0.12
+                group_width = bin_width * 0.76
+                bar_width = group_width / max(len(series), 1)
+                for series_idx, (label, counts) in enumerate(series):
+                    color = palette.get(label, "#2878d6")
+                    count = float(counts[bin_idx])
+                    bar_x = group_left + series_idx * bar_width
+                    bar_y = y_position(count)
+                    bar_height = max(plot_bottom - bar_y, 0.0)
+                    elements.append(
+                        f'<rect x="{bar_x:.1f}" y="{bar_y:.1f}" '
+                        f'width="{max(bar_width - 0.5, 0.5):.1f}" '
+                        f'height="{bar_height:.1f}" fill="{color}" opacity="0.82"/>'
+                    )
+
+            elements.extend(axes)
+            legend_y = plot_top + 7
+            for label, _ in series:
+                color = palette.get(label, "#2878d6")
+                elements.append(
+                    f'<rect x="{plot_right - 52}" y="{legend_y - 4}" '
+                    f'width="12" height="5" fill="{color}" opacity="0.82"/>'
+                )
+                elements.append(
+                    f'<text x="{plot_right - 36}" y="{legend_y + 1}" '
+                    'font-size="6" font-family="Arial, sans-serif">'
+                    f"{MADPOIterTrainer._xml_escape(label)}</text>"
+                )
+                legend_y += 8
 
         elements.append("</svg></div>")
         return wandb.Html("".join(elements))
@@ -1240,15 +1171,34 @@ class MADPOIterTrainer(MADPOTrainer):
         return shards
 
     def _preference_replay_dir(self) -> str:
-        cached = getattr(self, "_preference_replay_dir_path", None)
+        return self._resolve_output_dir(
+            "preference_replay",
+            cache_attribute="_preference_replay_dir_path",
+            config_attribute="preference_replay_dir",
+        )
+
+    def _reward_distribution_dir(self) -> str:
+        return self._resolve_output_dir(
+            "reward_distributions",
+            cache_attribute="_reward_distribution_dir_path",
+        )
+
+    def _resolve_output_dir(
+        self,
+        directory: str,
+        *,
+        cache_attribute: str,
+        config_attribute: Optional[str] = None,
+    ) -> str:
+        cached = getattr(self, cache_attribute, None)
         if cached:
             return cached
 
-        path = getattr(self.args, "preference_replay_dir", None)
+        path = getattr(self.args, config_attribute, None) if config_attribute else None
         if not path and isinstance(self.wandb_config, dict):
             output_dir = self.wandb_config.get("output_dir")
             if output_dir:
-                path = os.path.join(str(output_dir), "preference_replay")
+                path = os.path.join(str(output_dir), directory)
             else:
                 sections = self.wandb_config.get("config_sections") or {}
                 output_section = (
@@ -1261,54 +1211,16 @@ class MADPOIterTrainer(MADPOTrainer):
                 if base_dir:
                     job_id = os.environ.get("SLURM_JOB_ID")
                     path = (
-                        os.path.join(
-                            str(base_dir), f"job_{job_id}", "preference_replay"
-                        )
+                        os.path.join(str(base_dir), f"job_{job_id}", directory)
                         if job_id
-                        else os.path.join(str(base_dir), "preference_replay")
+                        else os.path.join(str(base_dir), directory)
                     )
         if not path:
-            path = os.path.join(os.getcwd(), "preference_replay")
+            path = os.path.join(os.getcwd(), directory)
 
         path = os.path.abspath(str(path))
         os.makedirs(path, exist_ok=True)
-        self._preference_replay_dir_path = path
-        return path
-
-    def _reward_distribution_dir(self) -> str:
-        cached = getattr(self, "_reward_distribution_dir_path", None)
-        if cached:
-            return cached
-
-        path = None
-        if isinstance(self.wandb_config, dict):
-            output_dir = self.wandb_config.get("output_dir")
-            if output_dir:
-                path = os.path.join(str(output_dir), "reward_distributions")
-            else:
-                sections = self.wandb_config.get("config_sections") or {}
-                output_section = (
-                    sections.get("output") if isinstance(sections, dict) else {}
-                )
-                base_dir = None
-                if isinstance(output_section, dict):
-                    base_dir = output_section.get("base_dir")
-                base_dir = base_dir or self.wandb_config.get("dir")
-                if base_dir:
-                    job_id = os.environ.get("SLURM_JOB_ID")
-                    path = (
-                        os.path.join(
-                            str(base_dir), f"job_{job_id}", "reward_distributions"
-                        )
-                        if job_id
-                        else os.path.join(str(base_dir), "reward_distributions")
-                    )
-        if not path:
-            path = os.path.join(os.getcwd(), "reward_distributions")
-
-        path = os.path.abspath(str(path))
-        os.makedirs(path, exist_ok=True)
-        self._reward_distribution_dir_path = path
+        setattr(self, cache_attribute, path)
         return path
 
     def _write_iteration_preference_pairs(
@@ -1471,40 +1383,11 @@ class MADPOIterTrainer(MADPOTrainer):
         return list(reversed(newest_first))
 
     def _policy_checkpoint_dir(self) -> str:
-        cached = getattr(self, "_policy_checkpoint_dir_path", None)
-        if cached:
-            return cached
-
-        path = getattr(self.args, "policy_checkpoint_dir", None)
-        if not path and isinstance(self.wandb_config, dict):
-            output_dir = self.wandb_config.get("output_dir")
-            if output_dir:
-                path = os.path.join(str(output_dir), "policy_checkpoints")
-            else:
-                sections = self.wandb_config.get("config_sections") or {}
-                output_section = (
-                    sections.get("output") if isinstance(sections, dict) else {}
-                )
-                base_dir = None
-                if isinstance(output_section, dict):
-                    base_dir = output_section.get("base_dir")
-                base_dir = base_dir or self.wandb_config.get("dir")
-                if base_dir:
-                    job_id = os.environ.get("SLURM_JOB_ID")
-                    path = (
-                        os.path.join(
-                            str(base_dir), f"job_{job_id}", "policy_checkpoints"
-                        )
-                        if job_id
-                        else os.path.join(str(base_dir), "policy_checkpoints")
-                    )
-        if not path:
-            path = os.path.join(os.getcwd(), "policy_checkpoints")
-
-        path = os.path.abspath(str(path))
-        os.makedirs(path, exist_ok=True)
-        self._policy_checkpoint_dir_path = path
-        return path
+        return self._resolve_output_dir(
+            "policy_checkpoints",
+            cache_attribute="_policy_checkpoint_dir_path",
+            config_attribute="policy_checkpoint_dir",
+        )
 
     def _save_initial_policy_checkpoint(self) -> str:
         if getattr(self, "_initial_policy_checkpoint_saved", False):

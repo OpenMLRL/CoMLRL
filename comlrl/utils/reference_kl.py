@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping, List, Sequence
+from typing import Any, Callable, Mapping, List, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -112,6 +112,30 @@ def response_token_logprobs(
     start_index = max(int(prompt_len) - 1, 0)
     end_index = start_index + int(response_len)
     return token_log_probs[:, start_index:end_index]
+
+
+def _sequence_kl_values(
+    policy_model: Any,
+    reference_model: Any,
+    sequences: torch.Tensor,
+    attention_mask: torch.Tensor,
+    prompt_len: int,
+    response_lens: Sequence[int],
+    *,
+    sequence_kl: Callable[..., torch.Tensor],
+) -> List[float]:
+    values: List[float] = []
+    for seq, attn, response_len in zip(sequences, attention_mask, response_lens):
+        kl_value = sequence_kl(
+            policy_model,
+            reference_model,
+            seq.unsqueeze(0),
+            attn.unsqueeze(0),
+            prompt_len,
+            int(response_len),
+        )
+        values.append(float(kl_value.view(-1)[0].item()))
+    return values
 
 
 def reference_kl_for_sequence(

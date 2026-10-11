@@ -332,13 +332,10 @@ class MADPOTrainer(MAGRPOTrainer):
             agent_loss.backward()
             self.optimizers[agent_idx].step()
 
+        reward_mean = float(np.mean([pair.candidate_reward_mean for pair in batch]))
         return {
-            "turn_1/reward_mean": float(
-                np.mean([pair.candidate_reward_mean for pair in batch])
-            ),
-            "turn_1/expected_return": float(
-                np.mean([pair.candidate_reward_mean for pair in batch])
-            ),
+            "turn_1/reward_mean": reward_mean,
+            "turn_1/expected_return": reward_mean,
         }
 
     def _detached_agent_deltas(

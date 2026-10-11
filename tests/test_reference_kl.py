@@ -1,3 +1,4 @@
+import importlib
 from types import SimpleNamespace
 
 import pytest
@@ -250,3 +251,68 @@ def test_maac_uses_reference_kl_shaped_reward():
     assert shaped_reward == pytest.approx(0.9)
     assert metadata["reference_kl"] == pytest.approx(0.4)
     assert metadata["reference_kl_penalty"] == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("trainer_cls", [IACTrainer, MAACTrainer, MAGRPOTrainer])
+def test_sequence_kl_keeps_disabled_and_missing_model_behavior(trainer_cls):
+    trainer = trainer_cls.__new__(trainer_cls)
+    trainer.args = SimpleNamespace(reference_kl_enabled=False)
+    assert trainer._reference_kl_values(0, None, None, None, 2, []) == []
+    trainer.args.reference_kl_enabled = True
+    with pytest.raises(RuntimeError, match="reference models are missing"):
+        trainer._reference_kl_values(0, None, None, None, 2, [])
+
+
+@pytest.mark.parametrize("trainer_cls", [IACTrainer, MAACTrainer, MAGRPOTrainer])
+@pytest.mark.parametrize("response_lens", [[], [2], [2, 1, 3]])
+def test_sequence_kl_keeps_order_shortest_input_and_module_hook(
+    trainer_cls, response_lens, monkeypatch
+):
+    trainer = trainer_cls.__new__(trainer_cls)
+    trainer.args = SimpleNamespace(reference_kl_enabled=True)
+    trainer.reference_models = [object(), object()]
+    policy = object()
+    ids = torch.tensor([[2, 3, 4, 5], [6, 7, 8, 9]])
+    mask = torch.tensor([[1, 1, 1, 1], [1, 1, 1, 0]])
+    calls = []
+
+    def sequence_kl(
+        model, reference, sequences, attention_mask, prompt_len, response_len
+    ):
+        idx = len(calls)
+        assert model is policy
+        assert reference is trainer.reference_models[1]
+        assert torch.equal(sequences, ids[idx : idx + 1])
+        assert torch.equal(attention_mask, mask[idx : idx + 1])
+        calls.append((prompt_len, response_len))
+        return torch.tensor([idx + 0.25, 100.0])
+
+    module = importlib.import_module(trainer_cls.__module__)
+    monkeypatch.setattr(module, "reference_kl_for_sequence", sequence_kl)
+    values = trainer._reference_kl_values(1, policy, ids, mask, 2, response_lens)
+    count = min(len(ids), len(response_lens))
+    assert values == [idx + 0.25 for idx in range(count)]
+    assert calls == [(2, length) for length in response_lens[:count]]
+
+
+@pytest.mark.parametrize("trainer_cls", [IACTrainer, MAACTrainer, MAGRPOTrainer])
+def test_sequence_kl_restores_training_modes_and_rng(trainer_cls):
+    trainer = trainer_cls.__new__(trainer_cls)
+    trainer.args = SimpleNamespace(reference_kl_enabled=True)
+    policy, reference = _tiny_model(), _tiny_model()
+    policy.train()
+    reference.eval()
+    trainer.reference_models = [reference]
+    ids = torch.tensor([[2, 3, 4, 5], [6, 7, 8, 9]])
+    mask = torch.ones_like(ids)
+    rng_before = torch.get_rng_state().clone()
+
+    first = trainer._reference_kl_values(0, policy, ids, mask, 2, [2, 1])
+    second = trainer._reference_kl_values(0, policy, ids, mask, 2, [2, 1])
+
+    assert first == second
+    assert len(first) == 2 and all(value >= 0.0 for value in first)
+    assert policy.training is True
+    assert reference.training is False
+    assert torch.equal(torch.get_rng_state(), rng_before)
+    assert all(parameter.grad is None for parameter in policy.parameters())

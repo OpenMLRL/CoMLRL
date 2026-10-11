@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 from datasets import Dataset, IterableDataset
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 import wandb
@@ -15,6 +14,7 @@ from comlrl.utils.distributed import local_context, unwrap_model
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_sources
 from comlrl.utils.reference_kl import (
+    _sequence_kl_values,
     clone_reference_models,
     load_reference_models_from_sources,
     reference_kl_coef,
@@ -350,9 +350,6 @@ class MAACTrainer(ActorCriticTrainerBase):
                 if isinstance(out, dict) and "verbose" in out:
                     self.verbose = bool(out.get("verbose"))
 
-    def _agent_device(self, agent_idx: int) -> torch.device:
-        return self.agent_devices[agent_idx]
-
     def _init_wandb(self) -> None:
         if not self.dist_env.is_main:
             return
@@ -566,35 +563,15 @@ class MAACTrainer(ActorCriticTrainerBase):
                 "Reference KL is enabled but reference models are missing."
             )
         reference_model = self.reference_models[agent_idx]
-        values: List[float] = []
-        for seq, attn, response_len in zip(sequences, attention_mask, response_lens):
-            kl_value = reference_kl_for_sequence(
-                policy_model,
-                reference_model,
-                seq.unsqueeze(0),
-                attn.unsqueeze(0),
-                prompt_len,
-                int(response_len),
-            )
-            values.append(float(kl_value.view(-1)[0].item()))
-        return values
-
-    def _kl_shaped_reward(
-        self, reward: float, data: Dict[str, Any], index: int
-    ) -> Tuple[float, Dict[str, float]]:
-        if not reference_kl_enabled(self.args):
-            return reward, {}
-        reference_kl = 0.0
-        penalty = 0.0
-        raw_kls = data.get("reference_kls") or []
-        if index < len(raw_kls):
-            reference_kl = float(raw_kls[index])
-        penalty = reference_kl_coef(self.args) * reference_kl
-        return reward - penalty, {
-            "reference_kl": reference_kl,
-            "reference_kl_penalty": penalty,
-            "environment_reward": reward,
-        }
+        return _sequence_kl_values(
+            policy_model,
+            reference_model,
+            sequences,
+            attention_mask,
+            prompt_len,
+            response_lens,
+            sequence_kl=reference_kl_for_sequence,
+        )
 
     def _collect_rollouts(self, item: Dict[str, Any]) -> List[RolloutSample]:
         num_turns = max(1, int(getattr(self.args, "num_turns", 1)))
@@ -646,18 +623,10 @@ class MAACTrainer(ActorCriticTrainerBase):
             num_generations=num_ret,
             algorithm="MAAC",
         )
-        num_agents = self.args.num_agents
-        if len(rewards) == 1:
-            rewards_matrix = [[rewards[0]] * num_ret for _ in range(num_agents)]
-        elif len(rewards) == num_ret:
-            rewards_matrix = [list(rewards) for _ in range(num_agents)]
-        elif len(rewards) == num_agents:
-            rewards_matrix = [[rewards[a]] * num_ret for a in range(num_agents)]
-        else:
-            raise ValueError(
-                "Reward function must return 1 value, num_generations values, "
-                "or num_agents values."
-            )
+        # Single-turn broadcasting has never dispatched to subclass overrides.
+        rewards_matrix = ActorCriticTrainerBase._expand_rewards(
+            self, rewards, num_ret=num_ret
+        )
 
         rollouts: List[RolloutSample] = []
         critic_type = (self.args.critic_type or "v").lower()
@@ -921,21 +890,6 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         return rollouts
 
-    def _expand_rewards(self, rewards: List[float], num_ret: int) -> List[List[float]]:
-        """Map reward list to [num_agents x num_ret] matrix."""
-        num_agents = self.args.num_agents
-        if len(rewards) == 1:
-            return [[rewards[0]] * num_ret for _ in range(num_agents)]
-        if len(rewards) == num_ret:
-            return [list(rewards) for _ in range(num_agents)]
-        if len(rewards) == num_agents:
-            return [[rewards[a]] * num_ret for a in range(num_agents)]
-        raise ValueError(
-            "Reward function must return 1 value, num_generations values, or num_agents values."
-        )
-
-    # Advantage prep
-    # Losses
     def _policy_eval(
         self,
         agent_model: CausalLMWithValueHead,
@@ -962,48 +916,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             )
 
         return logprob, value
-
-    def _value_on_prompt_only(
-        self,
-        model: CausalLMWithValueHead,
-        sequences: torch.Tensor,
-        attention_mask: torch.Tensor,
-        prompt_len: int,
-    ) -> torch.Tensor:
-        prompt_ids = sequences[:, :prompt_len]
-        prompt_mask = (
-            attention_mask[:, :prompt_len] if attention_mask is not None else None
-        )
-        outputs = model(
-            input_ids=prompt_ids,
-            attention_mask=prompt_mask,
-            output_values=True,
-        )
-        if outputs.values is None:
-            raise RuntimeError("Value head is missing for value computation.")
-        last_index = prompt_len - 1
-        return outputs.values[:, last_index]
-
-    def _compute_sequence_stats(
-        self,
-        sequences: torch.Tensor,
-        logits: torch.Tensor,
-        prompt_len: int,
-        response_len: int,
-    ) -> torch.Tensor:
-        shifted_logits = logits[:, :-1, :]
-        shifted_targets = sequences[:, 1:]
-
-        log_probs = F.log_softmax(shifted_logits, dim=-1)
-        token_log_probs = log_probs.gather(
-            dim=-1, index=shifted_targets.unsqueeze(-1)
-        ).squeeze(-1)
-
-        start_index = max(prompt_len - 1, 0)
-        end_index = start_index + response_len
-        response_log_probs = token_log_probs[:, start_index:end_index]
-
-        return response_log_probs.sum(dim=-1)
 
     def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> None:
         agent_model = self.agents[agent_idx]
@@ -1035,7 +947,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             )
 
             value_device = value.device
-            old_value = sample.old_value.to(value_device, dtype=value.dtype)
             policy_advantage = sample.normalized_advantage.to(
                 agent_device, dtype=logprob.dtype
             )
