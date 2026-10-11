@@ -1,0 +1,14 @@
+{{/* Math assets are loaded once by docs/inject/head, independently of content caching. */}}
+{{- $attributes := partial "docs/text/mapper" (dict
+  "attributes" (cond .IsNamedParams .Params dict)
+  "merge" (dict
+    "class" "book-katex"
+  )
+) -}}
+{{- if .Inner -}}
+  {{- if .Get "display" -}}
+  <div {{ partial "docs/html-attrs" $attributes | safeHTMLAttr }}>{{ printf "\\[ %s \\]" .Inner }}</div>
+  {{- else -}}
+  <span {{ partial "docs/html-attrs" $attributes | safeHTMLAttr }}>{{ printf "\\( %s \\)" .Inner }}</span>
+  {{- end -}}
+{{- end -}}

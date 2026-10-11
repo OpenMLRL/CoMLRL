@@ -1,0 +1,9 @@
+{{ if not .IsHome }}
+  {{ with .Parent }}{{ if and (not .IsHome) .Title }}
+  <div class="docs-eyebrow">{{ .Title }}</div>
+  {{ end }}{{ end }}
+{{ end }}
+{{/* Titles are presentation metadata; leave the Markdown body untouched. */}}
+{{ if not (findRE "<h1[ >]" .Content 1) }}
+  <h1 class="docs-page-title">{{ partial "docs/title" . | default .Site.Title }}</h1>
+{{ end }}

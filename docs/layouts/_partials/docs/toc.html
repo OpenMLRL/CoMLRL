@@ -1,0 +1,5 @@
+{{ partial "docs/inject/toc-before" . }}
+<h2 class="docs-toc-title">On this page</h2>
+{{/* Each viewport gets its own outline, without duplicate element IDs. */}}
+{{ .TableOfContents | replaceRE ` id="TableOfContents"` ` class="docs-toc-nav" aria-label="Page sections"` | safeHTML }}
+{{ partial "docs/inject/toc-after" . }}

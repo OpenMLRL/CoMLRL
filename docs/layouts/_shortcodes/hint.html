@@ -1,0 +1,24 @@
+{{- $kind := or (.Get 0) "default" -}}
+{{- $inner := strings.TrimSpace .Inner -}}
+{{- $lines := split $inner "\n" -}}
+{{- $title := index $lines 0 -}}
+{{/* Present API parameter lists in always-visible cards; Markdown stays intact. */}}
+{{- $isAPI := and (eq $kind "info") (gt (len (findRE `^(\*\*[A-Za-z]+(Config|Trainer)\*\*|Custom External Feedback Interface:)` $title)) 0) -}}
+{{- if $isAPI -}}
+  {{- $body := strings.TrimSpace (strings.TrimPrefix $title $inner) -}}
+  {{- $name := replaceRE `^\*\*([^*]+)\*\*.*$` "$1" $title -}}
+<div class="docs-api-reference" id="api-{{ $name | plainify | anchorize }}">
+  <div class="docs-api-title">{{ $title | .Page.RenderString (dict "display" "inline") }}</div>
+  <div class="docs-api-body">
+    {{ $body | .Page.RenderString (dict "display" "block") }}
+  </div>
+</div>
+{{- else -}}
+  {{- $attributes := partial "docs/text/mapper" (dict
+    "attributes" (cond .IsNamedParams .Params dict)
+    "merge" (dict "class" (slice "book-hint" $kind))
+  ) -}}
+<blockquote {{ partial "docs/html-attrs" $attributes | safeHTMLAttr }}>
+{{ .Inner | safeHTML -}}
+</blockquote>
+{{- end -}}
