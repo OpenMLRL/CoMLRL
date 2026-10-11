@@ -1,44 +1,48 @@
-# Slurm CUDA cache isolation
+# Optional CUDA cache isolation
 
-Call the standard-library-only launch helper before any CUDA initialization:
+CoMLRL runs directly with Python. Cache isolation is optional and independent of
+the job scheduler; importing the library does not create directories or change
+the environment.
+
+To keep a launch's CUDA JIT cache separate from other processes, call this helper
+before initializing CUDA:
 
 ```python
-from comlrl.runtime import configure_job_cuda_cache
+from comlrl.runtime import configure_cuda_cache
 
-configure_job_cuda_cache()
+configure_cuda_cache()
 ```
 
-The domain training entrypoints call this at the start of `main()`. Update the
-CoMLRL checkout/environment together with the domain checkout. Importing CoMLRL
-alone does not change the environment or create directories.
+`configure_cuda_cache(root=None, *, run_id=None)` uses an explicit `root`, then
+`COMLRL_CUDA_CACHE_ROOT`, then `/tmp`. The root must be an existing absolute
+directory on local storage. The optional `run_id` labels the directory and may
+contain letters, digits, underscores, and hyphens.
 
-- Outside Slurm, nothing changes.
-- An explicit `CUDA_CACHE_PATH` or `CUDA_CACHE_DISABLE=1` is respected.
-- Otherwise, each launch gets a private mode-0700 cache under `SLURM_TMPDIR` when
-  it is an existing local directory, falling back to `/tmp`. Network/shared
-  mounts are rejected; `TMPDIR` is deliberately not used as an implicit root.
-- `COMLRL_CUDA_CACHE_ROOT` can explicitly select an existing, writable node-local
-  directory. An invalid override fails clearly instead of silently using NFS.
-- Repeated calls reuse the exported path, and subprocesses inherit it. Different
-  launches/jobs do not contend for the same CUDA cache index.
-- One `[runtime]` stderr line records the selected path. Reward, seeds, candidate
-  counts, training budgets, model loading options and CUDA cache size are unchanged.
+- Explicit `CUDA_CACHE_PATH` and `CUDA_CACHE_DISABLE=1` settings are respected.
+- A new cache directory has private mode-0700 permissions. Repeated calls reuse
+  its exported path, which subprocesses inherit.
+- Shared filesystems are rejected. `TMPDIR` is not used implicitly because it
+  can point to shared storage.
+- The helper reports the selected path once and never deletes existing caches.
+  Remove a cache only after all processes using it have stopped.
 
-The helper never deletes an existing/shared cache. Cache lifetime follows the
-cluster's temporary-storage cleanup policy; `/tmp` caches may persist after a
-job, so sites without automatic cleanup should provide job-local `SLURM_TMPDIR`.
-Do not remove a cache while its processes are still alive.
+This changes cache placement, not rewards, seeds, training configuration, or CUDA
+cache size. It cannot redirect an already-initialized CUDA context.
 
-This fixes future launches from updated sources. Already-running processes and
-old frozen source snapshots are unchanged. Updating a shell variable or pulling
-a repository cannot redirect an already-initialized CUDA context. New snapshots
-must include both the domain hook and this CoMLRL helper.
+## Compatibility with existing launchers
 
-CPU-only tests:
+`configure_job_cuda_cache()` remains available for existing Slurm launchers. It
+reads `SLURM_JOB_ID` (or `SLURM_JOBID`) and prefers a local `SLURM_TMPDIR`, falling
+back to `/tmp`; `COMLRL_CUDA_CACHE_ROOT` takes precedence. Outside Slurm it does
+nothing. New Python programs can use the scheduler-independent helper above.
+
+Trainer output paths no longer gain an implicit `job_<id>` subdirectory from the
+environment. To retain an existing directory layout, pass the complete run path
+as `wandb_config["output_dir"]`, including any desired job subdirectory. The
+existing domain preference launchers already pass this path explicitly.
+
+CPU-only checks:
 
 ```bash
 python -m unittest discover -s tests -p test_runtime_cache.py -v
 ```
-
-Background: [NVIDIA CUDA cache environment variables](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/environment-variables.html#cuda-cache-path)
-and [NVIDIA's NFS cache guidance](https://developer.nvidia.com/blog/cuda-pro-tip-understand-fat-binaries-jit-caching/).

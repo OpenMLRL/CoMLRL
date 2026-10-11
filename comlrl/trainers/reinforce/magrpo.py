@@ -474,11 +474,8 @@ class MAGRPOTrainer:
             wandb_project = self.wandb_config.get("project", "comlrl")
             wandb_entity = self.wandb_config.get("entity")
 
-            algo_tag = str(self.algorithm_name or "magrpo").lower()
-            wandb_name = (
-                self.wandb_config.get("name")
-                or self.wandb_config.get("run_name")
-                or f"test-{algo_tag}"
+            wandb_name = self.wandb_config.get("name") or self.wandb_config.get(
+                "run_name"
             )
 
             wandb_dir = self.wandb_config.get("dir", None)

@@ -45,41 +45,35 @@ def _filesystem_type(path: Path) -> Optional[str]:
     return best[1]
 
 
-def configure_job_cuda_cache() -> Optional[str]:
-    """Isolate an unset CUDA JIT cache for a Slurm launch, before CUDA starts.
+def configure_cuda_cache(
+    root: Optional[str] = None, *, run_id: Optional[str] = None
+) -> Optional[str]:
+    """Opt in to a private local CUDA JIT cache before initializing CUDA.
 
-    Non-Slurm processes and explicit CUDA cache settings are unchanged. A private
-    directory is created on node-local storage; subprocesses inherit its path.
-    No shared cache is removed, and no model/training configuration is changed.
+    Explicit CUDA cache settings take precedence. The root defaults to
+    COMLRL_CUDA_CACHE_ROOT or /tmp; subprocesses inherit the created cache.
     """
-    job_id = os.environ.get("SLURM_JOB_ID") or os.environ.get("SLURM_JOBID")
-    if not job_id or os.environ.get("CUDA_CACHE_DISABLE") == "1":
+    if os.environ.get("CUDA_CACHE_DISABLE") == "1":
         return None
     existing = os.environ.get("CUDA_CACHE_PATH")
     if existing:
         return existing
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", job_id):
-        raise ValueError(
-            "SLURM_JOB_ID must not contain path separators or special characters."
-        )
+    if run_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]+", run_id):
+        raise ValueError("run_id must contain only letters, digits, '_' or '-'.")
 
     # Inspect an already-imported torch only; this helper itself needs no torch.
     torch = sys.modules.get("torch")
     if torch is not None and torch.cuda.is_initialized():
         raise RuntimeError(
-            "Configure the job CUDA cache before initializing CUDA; restart the launch."
+            "Configure the CUDA cache before initializing CUDA; restart the launch."
         )
 
-    override = os.environ.get("COMLRL_CUDA_CACHE_ROOT")
-    root = Path(override or os.environ.get("SLURM_TMPDIR") or "/tmp")
+    root = Path(root or os.environ.get("COMLRL_CUDA_CACHE_ROOT") or "/tmp")
     if not root.is_absolute():
         raise ValueError(
             "The CUDA cache root must be an absolute node-local directory."
         )
     shared = _filesystem_type(root) in _SHARED_FILESYSTEMS
-    if not override and (not root.is_dir() or shared):
-        root = Path("/tmp")
-        shared = _filesystem_type(root) in _SHARED_FILESYSTEMS
     if shared or not root.is_dir():
         raise RuntimeError(
             "CUDA cache root must be an existing node-local directory, not a shared filesystem. "
@@ -89,11 +83,30 @@ def configure_job_cuda_cache() -> Optional[str]:
     # mkdtemp atomically creates a mode-0700 directory, avoiding predictable
     # /tmp paths and symlink races. A subsequent call reuses the exported path.
     try:
-        cache = tempfile.mkdtemp(prefix=f"comlrl-cuda-{job_id}-", dir=str(root))
+        prefix = f"comlrl-cuda-{run_id}-" if run_id is not None else "comlrl-cuda-"
+        cache = tempfile.mkdtemp(prefix=prefix, dir=str(root))
     except OSError as exc:
         raise RuntimeError(f"Cannot create a private CUDA cache under {root}") from exc
     os.environ["CUDA_CACHE_PATH"] = cache
-    print(
-        f"[runtime] job={job_id} CUDA_CACHE_PATH={cache}", file=sys.stderr, flush=True
-    )
+    print(f"[runtime] CUDA_CACHE_PATH={cache}", file=sys.stderr, flush=True)
     return cache
+
+
+def configure_job_cuda_cache() -> Optional[str]:
+    """Compatibility wrapper for existing Slurm launchers; otherwise a no-op."""
+    job_id = os.environ.get("SLURM_JOB_ID") or os.environ.get("SLURM_JOBID")
+    if not job_id or os.environ.get("CUDA_CACHE_DISABLE") == "1":
+        return None
+    if os.environ.get("CUDA_CACHE_PATH"):
+        return os.environ["CUDA_CACHE_PATH"]
+
+    root = os.environ.get("COMLRL_CUDA_CACHE_ROOT")
+    if not root:
+        root = os.environ.get("SLURM_TMPDIR")
+        if root and Path(root).is_absolute():
+            if (
+                not Path(root).is_dir()
+                or _filesystem_type(Path(root)) in _SHARED_FILESYSTEMS
+            ):
+                root = None
+    return configure_cuda_cache(root, run_id=job_id)

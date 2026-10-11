@@ -1,5 +1,4 @@
-# Shuo: Tested 2 * Qwen2.5-1.5B model on a A100, at least 70GB VRAM is required
-
+import argparse
 import ast
 import contextlib
 import io
@@ -358,18 +357,33 @@ def example_writer_formatter(
     return prompt
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Train function-writing and testing agents."
+    )
+    parser.add_argument("--model-name", default="Qwen/Qwen2.5-1.5B")
+    parser.add_argument("--num-train-epochs", type=int, default=100)
+    parser.add_argument("--wandb", action="store_true", help="Enable W&B logging.")
+    parser.add_argument("--wandb-project", help="Enable W&B with this project.")
+    parser.add_argument("--wandb-entity", help="W&B workspace (default: OpenMLRL).")
+    parser.add_argument("--wandb-run-name", help="Optional W&B run name.")
+    return parser.parse_args()
+
+
 def main():
     """Main function to run the experiment."""
+    args = parse_args()
     train_dataset = create_code_dataset()
 
-    model_name = "Qwen/Qwen2.5-1.5B"
+    model_name = args.model_name
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     config = MAGRPOConfig(
-        num_train_epochs=100,
+        num_train_epochs=args.num_train_epochs,
+        num_turns=1,
         agent_learning_rate=1e-5,
         logging_steps=1,
         num_generations=4,
@@ -383,11 +397,13 @@ def main():
         example_writer_formatter, generate_new_examples=generate_new_examples
     )
 
-    wandb_config = {
-        "project": "code-agents-magrpo",
-        "entity": "OpenMLRL",
-        "name": "3-basic-2-edge" if generate_new_examples else "3-basic",
-    }
+    wandb_config = None
+    if args.wandb or any((args.wandb_project, args.wandb_entity, args.wandb_run_name)):
+        wandb_config = {
+            "entity": args.wandb_entity or "OpenMLRL",
+            "project": args.wandb_project or "comlrl",
+            "name": args.wandb_run_name,
+        }
 
     trainer = MAGRPOTrainer(
         agents=[AutoModelForCausalLM.from_pretrained(model_name) for _ in range(2)],

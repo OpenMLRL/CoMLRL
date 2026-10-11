@@ -357,11 +357,8 @@ class MAACTrainer(ActorCriticTrainerBase):
             self.wandb_config = {}
         wandb_project = self.wandb_config.get("project", "comlrl")
         wandb_entity = self.wandb_config.get("entity")
-        algo_tag = str(self.algorithm_name or "maac").lower()
-        wandb_run_name = (
-            self.wandb_config.get("name")
-            or self.wandb_config.get("run_name")
-            or f"test-{algo_tag}"
+        wandb_run_name = self.wandb_config.get("name") or self.wandb_config.get(
+            "run_name"
         )
         wandb_dir = self.wandb_config.get("dir")
 

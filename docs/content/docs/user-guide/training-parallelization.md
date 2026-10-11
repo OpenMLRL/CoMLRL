@@ -4,35 +4,33 @@ linkTitle: Training Parallelization
 weight: 6
 ---
 
-CoMLRL supports fine-tuning multi-LLM systems with larger models and more agents when multiple GPUs are available.
-Users can configure the parallelization training with `iac.parallel_training`.
-Currently, `parallel_training` supports two modes: `none` or `null` is the default mode for single-device training; `mp`is the model parallel scheduling across explicit agent/critic devices.
-
-{{% hint success %}}
-We will support more parallelization modes (e.g., [data parallelization](https://docs.pytorch.org/docs/stable/elastic/run.html), [multi-node training](ray.io)) in the future.
-{{% /hint %}}
+CoMLRL trainers run in a Python process. For IAC, `parallel_training="none"` is
+the default; `"mp"` enables scheduling agents and critics on explicitly assigned
+devices. Neither mode requires a job scheduler.
 
 ## Model Parallelization
 
-When `parallel_training=mp`, CoMLRL requires explicit `agent_devices` / `critic_devices` configuration and deploys the agents and critics accordingly.
-The training and inference for each model (agent/critic) are running separately on its assigned device.
-The responses are aggregated on the CPU and pass to the reward function. The reward is then broadcast back to all devices for training.
-MP supports training larger and more models than a single GPU can hold, but the training throughput is limited by the slowest model.
+Pass an `IACConfig` to your `IACTrainer` through its `args` parameter. For example,
+with four visible CUDA devices and two agents:
 
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 python train_iac.py
-  --config configs/iac_xxx.yaml
-  --override
-    agent_model="model_a"
-    agents=None
-    critic_model="model_b"
-    critics=None
-    iac.use_separate_critic=true
-    iac.parallel_training=mp
-    iac.agent_devices='["cuda:0","cuda:1"]'
-    iac.critic_devices='["cuda:2","cuda:3"]'
+```python
+from comlrl.trainers.actor_critic import IACConfig
+
+config = IACConfig(
+    num_agents=2,
+    num_turns=1,
+    use_separate_critic=True,
+    parallel_training="mp",
+    agent_devices=["cuda:0", "cuda:1"],
+    critic_devices=["cuda:2", "cuda:3"],
+)
 ```
 
-{{% hint note %}}
-Note that when devices are changed, the training is not deterministic due to the non-deterministic GPU scheduling and aggregation on CPU.
-{{% /hint %}}
+`agent_devices` is required in `"mp"` mode. `critic_devices` is also required
+when `use_separate_critic=True`. Each model stays on its assigned device; this
+does not split an individual model across GPUs. Responses are passed to the
+reward function and rewards are used for each agent's update.
+
+Device indices refer to the GPUs visible to the Python process. Configure the
+device lists to match your machine and the memory needed by each model. Changing
+device placement or parallel scheduling can change numerical training results.

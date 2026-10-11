@@ -1,5 +1,4 @@
-# Shuo: Tested on a 5090, at least 24GB VRAM is required
-
+import argparse
 import math
 from functools import partial
 
@@ -39,12 +38,27 @@ def proper_length_ratio_reward(
     return rewards
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Train two agents on story length ratios."
+    )
+    parser.add_argument("--model-name", default="Qwen/Qwen2.5-0.5B")
+    parser.add_argument("--num-train-epochs", type=int, default=3)
+    parser.add_argument("--wandb", action="store_true", help="Enable W&B logging.")
+    parser.add_argument("--wandb-project", help="Enable W&B with this project.")
+    parser.add_argument("--wandb-entity", help="W&B workspace (default: OpenMLRL).")
+    parser.add_argument("--wandb-run-name", help="Optional W&B run name.")
+    return parser.parse_args()
+
+
 def example_usage():
-    model_name = "Qwen/Qwen2.5-0.5B"
+    args = parse_args()
+    model_name = args.model_name
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     config = MAGRPOConfig(
-        num_train_epochs=3,
+        num_train_epochs=args.num_train_epochs,
+        num_turns=1,
         agent_learning_rate=5e-5,
         logging_steps=10,
         num_generations=8,
@@ -89,11 +103,13 @@ def example_usage():
     }
     train_dataset = Dataset.from_dict(train_data)
 
-    wandb_config = {
-        "project": "mlrl",
-        "entity": "OpenMLRL",
-        "name": "qwen-magrpo-length-ratio",
-    }
+    wandb_config = None
+    if args.wandb or any((args.wandb_project, args.wandb_entity, args.wandb_run_name)):
+        wandb_config = {
+            "entity": args.wandb_entity or "OpenMLRL",
+            "project": args.wandb_project or "comlrl",
+            "name": args.wandb_run_name,
+        }
 
     agents = [AutoModelForCausalLM.from_pretrained(model_name) for _ in range(2)]
     configured_reward_func = partial(

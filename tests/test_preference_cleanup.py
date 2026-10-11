@@ -28,6 +28,7 @@ OUTPUT_DIRECTORIES = [
         (None, None, "."),
         ([], "42", "."),
         ({}, "42", "."),
+        ({"output_dir": "run/job_42"}, "42", "run/job_42"),
         (
             {
                 "output_dir": "run",
@@ -41,9 +42,9 @@ OUTPUT_DIRECTORIES = [
         (
             {"config_sections": {"output": {"base_dir": "section"}}, "dir": "wandb"},
             "42",
-            "section/job_42",
+            "section",
         ),
-        ({"config_sections": ["ignored"], "dir": "wandb"}, "42", "wandb/job_42"),
+        ({"config_sections": ["ignored"], "dir": "wandb"}, "42", "wandb"),
         ({"config_sections": {"output": []}, "dir": "wandb"}, None, "wandb"),
         ({"output_dir": "", "dir": "wandb"}, "", "wandb"),
     ],

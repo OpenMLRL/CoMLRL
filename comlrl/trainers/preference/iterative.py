@@ -1209,12 +1209,7 @@ class MADPOIterTrainer(MADPOTrainer):
                     base_dir = output_section.get("base_dir")
                 base_dir = base_dir or self.wandb_config.get("dir")
                 if base_dir:
-                    job_id = os.environ.get("SLURM_JOB_ID")
-                    path = (
-                        os.path.join(str(base_dir), f"job_{job_id}", directory)
-                        if job_id
-                        else os.path.join(str(base_dir), directory)
-                    )
+                    path = os.path.join(str(base_dir), directory)
         if not path:
             path = os.path.join(os.getcwd(), directory)
 

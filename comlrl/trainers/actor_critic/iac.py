@@ -404,12 +404,7 @@ class IACTrainer(ActorCriticTrainerBase):
 
         wandb_project = self.wandb_config.get("project", "comlrl")
         wandb_entity = self.wandb_config.get("entity")
-        algo_tag = str(self.algorithm_name or "iac").lower()
-        wandb_name = (
-            self.wandb_config.get("name")
-            or self.wandb_config.get("run_name")
-            or f"test-{algo_tag}"
-        )
+        wandb_name = self.wandb_config.get("name") or self.wandb_config.get("run_name")
         wandb_dir = self.wandb_config.get("dir")
 
         config_dict: Dict[str, Any] = {

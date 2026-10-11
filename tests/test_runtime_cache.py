@@ -35,6 +35,55 @@ class RuntimeCacheTests(unittest.TestCase):
     def launch_env(self, job="123"):
         os.environ.update(SLURM_JOB_ID=job, COMLRL_CUDA_CACHE_ROOT=self.temp.name)
 
+    def test_plain_python_cache_is_private_and_reused(self):
+        before = dict(os.environ)
+        cache = runtime.configure_cuda_cache(self.temp.name)
+        self.assertEqual(Path(cache).parent.resolve(), Path(self.temp.name).resolve())
+        self.assertEqual(stat.S_IMODE(Path(cache).stat().st_mode), 0o700)
+        self.assertEqual(dict(os.environ), {**before, "CUDA_CACHE_PATH": cache})
+        self.assertEqual(runtime.configure_cuda_cache(self.temp.name), cache)
+
+    def test_generic_cache_ignores_scheduler_environment(self):
+        os.environ.update(
+            SLURM_JOB_ID="../../invalid",
+            SLURM_TMPDIR="/network/scheduler/tmp",
+            TMPDIR="/network/home/tmp",
+        )
+        with patch.object(runtime, "_filesystem_type", return_value="ext4"):
+            with patch.object(
+                runtime.tempfile, "mkdtemp", return_value="/tmp/private"
+            ) as create:
+                runtime.configure_cuda_cache()
+        create.assert_called_once_with(prefix="comlrl-cuda-", dir="/tmp")
+
+    def test_generic_root_and_run_id_are_explicit(self):
+        os.environ["COMLRL_CUDA_CACHE_ROOT"] = "/missing/environment/root"
+        cache = runtime.configure_cuda_cache(self.temp.name, run_id="experiment_1")
+        self.assertEqual(Path(cache).parent.resolve(), Path(self.temp.name).resolve())
+        self.assertTrue(Path(cache).name.startswith("comlrl-cuda-experiment_1-"))
+
+    def test_generic_cache_uses_environment_root(self):
+        os.environ["COMLRL_CUDA_CACHE_ROOT"] = self.temp.name
+        cache = runtime.configure_cuda_cache()
+        self.assertEqual(Path(cache).parent.resolve(), Path(self.temp.name).resolve())
+
+    def test_generic_cache_preserves_disabled_and_explicit_settings(self):
+        os.environ["CUDA_CACHE_PATH"] = "/explicit/cache"
+        with patch.object(runtime.tempfile, "mkdtemp") as create:
+            self.assertEqual(runtime.configure_cuda_cache(), "/explicit/cache")
+            os.environ["CUDA_CACHE_DISABLE"] = "1"
+            self.assertIsNone(runtime.configure_cuda_cache())
+            self.assertEqual(os.environ["CUDA_CACHE_PATH"], "/explicit/cache")
+            create.assert_not_called()
+
+    def test_generic_cache_rejects_shared_root_and_invalid_run_id(self):
+        with patch.object(runtime, "_filesystem_type", return_value="nfs"):
+            with self.assertRaisesRegex(RuntimeError, "node-local"):
+                runtime.configure_cuda_cache(self.temp.name)
+        with self.assertRaisesRegex(ValueError, "run_id"):
+            runtime.configure_cuda_cache(self.temp.name, run_id="../escape")
+        self.assertNotIn("CUDA_CACHE_PATH", os.environ)
+
     def test_non_slurm_is_unchanged(self):
         with patch.object(runtime.tempfile, "mkdtemp") as create:
             self.assertIsNone(runtime.configure_job_cuda_cache())

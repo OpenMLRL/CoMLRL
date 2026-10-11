@@ -21,29 +21,35 @@
 
 <img src="docs/assets/demo.gif" width="500px;" alt=""/>
 
-## Installation
+## Installation and first run
 
-CoMLRL can be installed via PyPI, conda-forge, or from source:
+Install a PyTorch build compatible with your machine, then run an example directly
+with Python. No job scheduler or W&B account is required.
 
 ```bash
-# Install from PyPI
-pip install comlrl
-
-# Install from conda-forge
-conda install -c conda-forge comlrl
-
-# Install from source
 git clone https://github.com/OpenMLRL/CoMLRL.git
-cd CoMLRL && pip install -e .
-
-# Install Compatible PyTorch
+cd CoMLRL
+pip install -e .
+python examples/story-len-ratio.py
 ```
 
-## Slurm runtime cache
+Memory requirements depend on the model, number of agents, batch size, and response
+length. The examples leave W&B logging disabled by default; enable it explicitly:
 
-Domain launchers can isolate CUDA JIT caches per job on node-local storage,
-avoiding contention in a shared NFS home directory. See the
-[runtime cache guide](docs/runtime_cache.md); this does not change trainer algorithms.
+```bash
+python examples/story-len-ratio.py --wandb-project comlrl --wandb-entity OpenMLRL
+```
+
+For use in your own Python programs, CoMLRL is also available via PyPI or conda-forge:
+
+```bash
+pip install comlrl
+# Or:
+conda install -c conda-forge comlrl
+```
+
+See the [optional CUDA cache guide](docs/runtime_cache.md) if you need private
+cache directories on a shared machine.
 
 ## Features
 
@@ -89,8 +95,7 @@ trainer = MAGRPOTrainer(
     train_dataset=dataset,
     reward_func=lambda a, b: [abs(max(len(b[0]), 1) / max(len(a[0]), 1) - 3.0)],
     formatters=[lambda example: example["prompt"]] * 2,
-    args=MAGRPOConfig(
-    ),
+    args=MAGRPOConfig(num_turns=1),
 )
 trainer.train()
 ```
