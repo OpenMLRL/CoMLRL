@@ -1,0 +1,6 @@
+{{- $active := .Page.Eq .CurrentPage -}}
+{{- $class := default "" .Class -}}
+{{- if $active }}{{ $class = printf "%s active" $class }}{{ end -}}
+<a href="{{ default .Page.RelPermalink .Page.Params.BookHref }}"{{ with $class }} class="{{ . }}"{{ end }}{{ if $active }} aria-current="page"{{ end }}{{ if .Page.Params.BookHref }} target="_blank" rel="noopener"{{ end }}>
+  {{- default (partial "docs/title" .Page) .Title -}}
+</a>

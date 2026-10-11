@@ -3,6 +3,8 @@ $docs-accent: #79539c;
 $docs-ink: #25222c;
 $docs-muted: #6c6875;
 $docs-border: #eeecf1;
+$docs-header-height: 7.5rem;
+$docs-content-top: 10.5rem;
 
 // Font URLs resolve beside Hugo's root-level, fingerprinted book stylesheet.
 @font-face {
@@ -49,14 +51,14 @@ a:focus-visible, button:focus-visible, input:focus-visible {
   position: fixed;
   inset: 0 0 auto;
   z-index: 20;
-  height: 4.5rem;
+  height: $docs-header-height;
   background: rgba(255, 255, 255, .96);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid $docs-border;
 }
 .docs-header-inner {
   max-width: $container-max-width;
-  height: 100%;
+  height: 4.5rem;
   margin: auto;
   padding: 0 2.5rem;
   display: flex;
@@ -70,6 +72,7 @@ a:focus-visible, button:focus-visible, input:focus-visible {
 }
 .docs-header-search {
   position: relative;
+  z-index: 2;
   min-width: 0;
   flex: 1 1 23rem;
   max-width: 24rem;
@@ -154,8 +157,33 @@ a:focus-visible, button:focus-visible, input:focus-visible {
   a { display: flex; gap: .5rem; color: $docs-muted; }
   a:hover { color: $docs-accent; }
 }
+.docs-area-tabs {
+  border-top: 1px solid #f5f3f7;
+  height: 3rem;
+}
+.docs-area-tabs-inner {
+  display: flex;
+  align-items: stretch;
+  gap: 1.75rem;
+  max-width: $container-max-width;
+  height: 100%;
+  margin: auto;
+  padding: 0 2.5rem;
+  a {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    padding: .1rem 0 0;
+    border-bottom: 2px solid transparent;
+    color: $docs-muted;
+    font-size: .875rem;
+    font-weight: 500;
+  }
+  a:hover { color: $docs-accent; }
+  a.active { color: $docs-ink; border-bottom-color: $docs-accent; font-weight: 600; }
+}
 main.container {
-  padding: 7.5rem 2.5rem 0;
+  padding: $docs-content-top 2.5rem 0;
   gap: 3rem;
   align-items: flex-start;
 }
@@ -164,10 +192,10 @@ main.container {
   font-size: .875rem;
   .book-menu-content {
     position: sticky;
-    top: 7.5rem;
+    top: $docs-content-top;
     bottom: auto;
     width: 100%;
-    max-height: calc(100vh - 9rem);
+    max-height: calc(100vh - 12rem);
     padding: 0 .75rem .5rem 0;
     overflow-y: auto;
     scrollbar-width: thin;
@@ -178,10 +206,11 @@ main.container {
     &:hover::-webkit-scrollbar-thumb, &:focus-within::-webkit-scrollbar-thumb { background: #d9d3df; }
   }
   position: sticky;
-  top: 7.5rem;
+  top: $docs-content-top;
   a, label { color: $docs-muted; line-height: 1.55; }
   nav > ul > li { margin: 1.5rem 0 0; }
-  nav > ul > li > a, nav > ul > li > label {
+  nav > ul > li > a, nav > ul > li > label, .docs-nav-group-title {
+    display: block;
     color: $docs-ink;
     font-size: .6875rem;
     font-weight: 650;
@@ -230,7 +259,7 @@ main.container {
     color: $docs-ink;
     line-height: 1.35;
     letter-spacing: -.03em;
-    scroll-margin-top: 6.5rem;
+    scroll-margin-top: 9.5rem;
   }
   h1 { font-size: 2.375rem; line-height: 1.2; letter-spacing: -.045em; }
   h2 { font-size: 1.5625rem; margin: 2.5rem 0 .875rem; }
@@ -277,6 +306,7 @@ main.container {
     display: block;
     max-width: 100%;
     overflow-x: auto;
+    overflow-wrap: normal;
     font-size: .9375rem;
     th, td { border-color: $docs-border; padding: .75rem 1rem; }
     th { background: #f8f7fa; font-weight: 550; }
@@ -319,6 +349,51 @@ main.container {
   &.is-copied { color: #408365; }
   &.is-error { color: #ac495c; }
 }
+.book-article.markdown {
+  .docs-resource-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0 2rem;
+  }
+  .docs-resource-card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: .7rem;
+    padding: 1.4rem;
+    border: 1px solid #e8e3ed;
+    border-radius: .8rem;
+    background: #fff;
+    color: inherit;
+    text-decoration: none;
+    transition: border-color .15s ease, background-color .15s ease;
+    &:hover, &:focus-visible {
+      background: #fcf9ff;
+      border-color: #b99bd0;
+      text-decoration: none;
+    }
+    .docs-resource-kicker {
+      color: $docs-accent;
+      font-size: .6875rem;
+      font-weight: 600;
+      letter-spacing: .055em;
+      text-transform: uppercase;
+    }
+    h3 {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: .75rem;
+      margin: 0;
+      font-size: 1.0625rem;
+      line-height: 1.45;
+      letter-spacing: -.025em;
+      svg { flex: 0 0 1rem; width: 1rem; height: 1rem; color: $docs-accent; }
+    }
+    p { margin: 0; font-size: .9375rem; line-height: 1.7; color: $docs-muted; }
+  }
+}
 .docs-sr-only {
   position: absolute;
   width: 1px;
@@ -337,7 +412,7 @@ main.container {
   border-radius: .625rem;
   background: white;
   overflow: hidden;
-  scroll-margin-top: 6.5rem;
+  scroll-margin-top: 9.5rem;
   .docs-api-title {
     margin: 0;
     padding: 1rem 1.125rem;
@@ -363,14 +438,14 @@ main.container {
 }
 .book-toc {
   position: sticky;
-  top: 7.5rem;
+  top: $docs-content-top;
   flex: 0 0 $toc-width;
   min-width: 0;
   font-size: .875rem;
   .book-toc-content {
     position: static;
     width: 100%;
-    max-height: calc(100vh - 9rem);
+    max-height: calc(100vh - 12rem);
     padding: 0 0 1rem;
     overflow-y: auto;
     scrollbar-width: thin;
@@ -408,6 +483,7 @@ main.container {
   font-size: .8125rem;
 }
 .book-copyright { justify-content: flex-start; margin-top: 0; }
+.docs-page-navigation { gap: 1rem; margin-bottom: 1.5rem; }
 .book-header { margin-bottom: 1.75rem; }
 .docs-mobile-controls {
   display: flex;
@@ -429,6 +505,7 @@ main.container {
 
 @media screen and (max-width: 72rem) {
   .docs-header-inner, main.container { gap: 2.5rem; padding-left: 1.5rem; padding-right: 1.5rem; }
+  .docs-area-tabs-inner { padding: 0 1.5rem; }
   .docs-header-links { gap: 1rem; }
   .docs-header-links > a:first-child { display: none; }
   .book-toc { display: none; }
@@ -438,16 +515,16 @@ main.container {
   #toc-control:checked ~ main .book-header aside { display: block; }
 }
 @media screen and (max-width: $mobile-breakpoint) {
-  .docs-site-header { height: 4.5rem; }
   .docs-header-inner { padding: 0 1.25rem; gap: 1.25rem; }
+  .docs-area-tabs-inner { padding: 0 1.25rem; gap: 1.5rem; }
   .docs-brand { flex: 0 0 auto; img { width: 112px; } }
   .docs-header-search { max-width: none; }
   .docs-header-links { display: none; }
-  main.container { display: block; padding: 6rem 1.25rem 0; }
+  main.container { display: block; padding: 9rem 1.25rem 0; }
   .book-page { max-width: none; }
   .book-menu {
     position: fixed;
-    top: 4.5rem;
+    top: $docs-header-height;
     left: 0;
     bottom: 0;
     width: $menu-width;
@@ -468,12 +545,13 @@ main.container {
   .docs-mobile-controls button[data-toggle="menu-control"] { display: flex; }
   #menu-control:checked ~ main {
     .book-page { opacity: 1; }
-    .book-menu-overlay { top: 4.5rem; z-index: 25; background: rgba(25, 20, 35, .25); }
+    .book-menu-overlay { top: $docs-header-height; z-index: 25; background: rgba(25, 20, 35, .25); }
   }
   .docs-page-title { font-size: 1.875rem; letter-spacing: -.04em; margin-bottom: 1.5rem; }
   .book-article.markdown {
     font-size: 1rem;
     line-height: 1.8;
+    .docs-resource-grid { grid-template-columns: 1fr; }
     h1 { font-size: 1.875rem; }
     h2 { font-size: 1.375rem; margin-top: 2rem; }
     h3 { font-size: 1.125rem; }
@@ -486,7 +564,7 @@ main.container {
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  .book-menu-content, .book-toc-content { transition: none; }
+  .book-menu-content, .book-toc-content, .book-article.markdown .docs-resource-card { transition: none; }
 }
 @media print {
   .docs-site-header, .docs-skip-link, .book-header, .book-menu, .book-toc, .copy-code-button { display: none !important; }

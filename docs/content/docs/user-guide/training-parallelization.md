@@ -1,7 +1,7 @@
 ---
 title: Training Parallelization
 linkTitle: Training Parallelization
-weight: 6
+weight: 4
 ---
 
 CoMLRL trainers run in a Python process. For IAC, `parallel_training="none"` is

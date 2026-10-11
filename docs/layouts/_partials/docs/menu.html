@@ -1,5 +1,6 @@
-<nav>
-<a class="docs-home-link{{ if .IsHome }} active{{ end }}" href="{{ .Site.Home.RelPermalink }}">Overview</a>
+{{ $navigation := partial "docs/navigation" . }}
+<nav aria-label="{{ if eq $navigation.Area "example" }}Example{{ else }}Documentation{{ end }} pages">
+{{ partial "docs/nav-link" (dict "Page" $navigation.Home "CurrentPage" . "Title" $navigation.HomeTitle "Class" "docs-home-link") }}
 {{ if hugo.IsMultilingual }}
   {{ partial "docs/languages" . }}
 {{ end }}
@@ -7,7 +8,22 @@
 {{ partial "docs/inject/menu-before" . }}
 {{ partial "docs/menu-hugo" (dict "Page" .Page "Menu" .Site.Menus.before) }}
 
-{{ partial "docs/menu-filetree" . }}
+<ul class="docs-navigation">
+  {{ range $navigation.Groups }}
+    <li class="docs-nav-group">
+      {{ if .Linked }}
+        {{ partial "docs/nav-link" (dict "Page" .Page "CurrentPage" $ "Title" .Title "Class" "docs-nav-group-title") }}
+      {{ else }}
+        <span class="docs-nav-group-title">{{ .Title }}</span>
+      {{ end }}
+      <ul>
+        {{ range .Children }}
+          <li>{{ partial "docs/nav-link" (dict "Page" . "CurrentPage" $) }}</li>
+        {{ end }}
+      </ul>
+    </li>
+  {{ end }}
+</ul>
 
 {{ partial "docs/menu-hugo" (dict "Page" .Page "Menu" .Site.Menus.after) }}
 {{ partial "docs/inject/menu-after" . }}

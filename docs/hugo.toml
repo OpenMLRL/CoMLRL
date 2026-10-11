@@ -3,7 +3,7 @@ title = "CoMLRL"
 copyright = "© OpenMLRL. All rights reserved."
 languageCode = "en-us"
 defaultContentLanguage = "en"
-relativeURLs = true        # Keep links working under /CoMLRL/ path
+relativeURLs = false       # Preserve Hugo's baseURL-prefixed paths on GitHub Pages
 
 # Do not build a /public folder into the repo; GitHub Action will publish.
 publishDir = "public"

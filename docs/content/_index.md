@@ -1,5 +1,5 @@
 ---
-title: ""
+title: Overview
 ---
 
 <p style="font-family: 'Futura', 'Futura PT', 'Avenir Next', 'Segoe UI', Arial, sans-serif; font-weight: 700; font-size: 1.7rem; letter-spacing: 0.em; line-height: 1; margin-top: 1.8em 0;">Welcome to CoMLRL's documentation &nbsp;👋</p>
@@ -7,7 +7,7 @@ title: ""
 **Co**operative **M**ulti-**L**LM **R**einforcement **L**earning (**CoMLRL**) is an open-source library for training multiple LLMs to collaborate using Multi-Agent Reinforcement Learning (MARL). It provides implementations of various MARL algorithms for LLM collaboration and supports different environments and benchmarks.
 
 <p align="center">
-  <img src="/img/demo.gif" width="700px;" alt=""/>
+  <img src="{{< relurl "img/demo.gif" >}}" width="700px;" alt=""/>
 </p>
 
 ## About
@@ -20,7 +20,7 @@ title: ""
 
 A lot of works use role-conditioned, parameter-sharing approaches built on single-agent RL training framework to implement multi-agent training. Using truly distinct agents provides a better modeling where highly heterogeneous LLMs possess fundamentally different capabilities and aligns better with the concept of study — "multi-agent".
 
-Compare with other multi-LLM training frameworks, agents can either be trained centralizedly or decentralizedly with CoMLRL, while their execution is always fully decentralized to ensure efficient inference. CoMLRL implements standard MARL algorithms from scratch to maximize flexibility and customizability while maintaining simplicity for usage.
+CoMLRL supports separate actors with decentralized execution, including training with a centralized critic. Its centralized collaboration mode instead uses one actor to generate the complete joint response. The available trainers include REINFORCE, Actor-Critic, and [Multi-Agent Preference Learning]({{< relref "docs/mapl" >}}); each method's page describes its implemented objective and constraints.
 
 <em style="font-weight: 600; color: #9555af; margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support single-agent fine-tuning?"</em>
 
@@ -32,7 +32,7 @@ Compare with other multi-LLM training frameworks, agents can either be trained c
 
 <em style="font-weight: 600; color: #9555af; margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support distributed training?"</em>
 
-<strong>Not yet.</strong> We are currently focusing on <a href="https://arxiv.org/abs/2409.03052">CTDE</a> on light-weighted training small-scale LLMs with cooperative MARL for proof of the concept. Resource-consuming distributed training with slow and complex gradient accumulation is under development and will be open-sourced in the near future.
+CoMLRL supports placing whole actor and critic models on multiple devices with `parallel_training="mp"` in one Python process. It does not provide multi-process data-parallel training or shard an individual model across devices. See [Training Parallelization]({{< relref "docs/user-guide/training-parallelization" >}}) for device configuration.
 
 {{% /tab %}}
 
@@ -57,7 +57,7 @@ Many studies have explored LLM-based multi-agent systems for completing tasks wi
 
 <em style="font-weight: 600; color: #9555af;"> "What are the benefits of decentralized reasoning?"</em>
 
-Cooperative MARL methods are grounded in the theory of <a href="https://www.fransoliehoek.net/docs/OliehoekAmato16book.pdf">Dec-POMDP</a>. The agents execute in a decentralized manner, which has many advantages. Unlike knowledge distillation, pruning, or quantization, it accelerates LLM inference without incurring information loss. Moreover, decentralization reduces the computational and memory burden of maintaining long-context dependencies and conducting joint decision-making within a single model. By assigning specific subtasks to individual agents, the system achieves more modular, efficient, and lightweight reasoning. In addition, effective cooperation among small local language models can offer a safe and cost-efficient solution for offline and edge intelligence.
+In decentralized execution, agents use their own prompts and policies, so independent generations can run concurrently when the device configuration allows it. This supports role-specific models and modular task decomposition. Latency, memory use, and task quality depend on model sizes, prompt lengths, communication, and hardware; decentralization alone does not guarantee a speedup or preserve all information available to a centralized model.
 
 {{% /tab %}}
 
@@ -65,13 +65,16 @@ Cooperative MARL methods are grounded in the theory of <a href="https://www.fran
 
 ## Features
 
-- **Cooperative MARL trainers to optimize decentralized LLM collaboration:**
+- **Cooperative trainers for LLM collaboration:**
   - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFORCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/maremax.py).
     - Aligned individual response joint with `joint_mode='aligned'`.
-    - Memory-efficient cross joint with `joint_mode='cross'`.
+    - Cartesian-product joint responses with `joint_mode='cross'`.
   - **_Multi-Agent Actor-Critic:_** Actor-Critic methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/maac.py).
     - Independent actor-critic (separate critic or value-head over LLM backbone).
     - Centralized critic over joint prompts with separate actors.
+  - **_[Multi-Agent Preference Learning]({{< relref "docs/mapl" >}}):_** MADPO, MARLHF, and their iterative variants.
+    - Direct joint preference optimization or a learned joint reward followed by RL.
+    - Decentralized actors or one centralized actor with role-aware joint responses.
 - **Environments that simulate real-world tasks for training and evaluating LLM collaboration:**
   - [**_Writing_**](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
     - [TLDR](https://huggingface.co/datasets/trl-lib/tldr) - Summarizing Reddit posts.

@@ -15,7 +15,7 @@ Hugo will fetch the Book theme via Hugo Modules on first run (requires internet 
 
 ## Deploy (GitHub Pages – native actions)
 
-Pushing to `main` runs `.github/workflows/docs.yml`, which:
+Publishing is currently manual. Run `.github/workflows/docs.yml` with the workflow-dispatch input `publish=true`; a push to `main` does not deploy this site. The workflow:
 
 - Configures Pages and computes the correct base URL for a project site.
 - Builds the Hugo site from `docs/`.

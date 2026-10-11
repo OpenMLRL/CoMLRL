@@ -1,7 +1,7 @@
 ---
 title: Multi-Turn Interaction
 linkTitle: Multi-Turn Interaction
-weight: 5
+weight: 3
 math: true
 ---
 
@@ -12,7 +12,7 @@ Many complex problems cannot be solved in a single turn. LLM agents need to inte
 MAGRPO in the multi-turn setting forms a tree-structured rollout expansion where branches represent different joint responses ([TreeRPO](https://arxiv.org/abs/2506.05183)).
 
 <p align="center">
-    <img src="/img/joint-tree.svg" width="450px;" alt=""/>
+    <img src="{{< relurl "img/joint-tree.svg" >}}" width="450px;" alt=""/>
 </p>
 
 In each episode, a task is sampled from the dataset to construct initial observations {{< katex inline=true >}}\mathbf{o}_0=\{o_{1, 0}, \cdots, o_{n, 0}\}{{< /katex >}} and histories {{< katex inline=true >}}\mathbf{h}_0=\{h_{1, 0}, \cdots, h_{n, 0}\}{{< /katex >}} for all agents. At each turn, agents generate a group of joint responses {{< katex inline=true >}}\mathbf{a}^{\mathcal{G}}_t\gets\boldsymbol{\pi}^{\mathcal{G}}(\cdot|\mathbf{h}_t){{< /katex >}} from their current observation-action history {{< katex inline=true >}}\mathbf{h}_t{{< /katex >}}, with each response initiating a distinct rollout. Agents receive joint rewards {{< katex inline=true >}}r^{(g)}_{t}{{< /katex >}} for each response based on the accumulated history {{< katex inline=true >}}\mathbf{a}^{(g)}_{t} \in \mathbf{a}^{\mathcal{G}}_{t}{{< /katex >}} and current action. **Each rollout then evolves independently**, producing new joint observations {{< katex inline=true >}}\mathbf{o}^{\mathcal{G}}_{t+1}{{< /katex >}} as the environment dynamics unfold and spawning more rollouts at the next turn {{< katex inline=true >}}t+1{{< /katex >}}. This process continues until the terminal turn is reached {{< katex inline=true >}}H{{< /katex >}}.
@@ -21,30 +21,31 @@ In each episode, a task is sampled from the dataset to construct initial observa
 
 MAGRPO supports two modes for forming joint responses at each turn:
 
-- **Align**: Provides flexibility in the number of joint responses generated per turn, allowing any number of generations at each turn. However, generations are not fully utilized since only aligned responses across agents are combined. As training progresses over {{< katex inline=true >}}T{{< /katex >}} turns with {{< katex inline=true >}}N{{< /katex >}} agents, the total number of leaves grows as {{< katex inline=true >}}G^T{{< /katex >}}, where {{< katex inline=true >}}G{{< /katex >}} is the number of generations per turn.
+- **Aligned** (`joint_mode="aligned"`): Combines the responses with the same generation index across agents. Each agent samples the fixed `num_generations` value {{< katex inline=true >}}G{{< /katex >}} at every node. With {{< katex inline=true >}}T{{< /katex >}} turns and no early termination, the tree has {{< katex inline=true >}}G^T{{< /katex >}} leaves.
 
 <p align="center">
-    <img src="/img/align-tree.svg" width="500px;" alt=""/>
+    <img src="{{< relurl "img/align-tree.svg" >}}" width="500px;" alt=""/>
 </p>
 
-- **Cross**: Maximizes the utilization of generations and provides more accurate value estimation with more samples by forming the Cartesian product of all agent responses. As training progresses over {{< katex inline=true >}}T{{< /katex >}} turns with {{< katex inline=true >}}N{{< /katex >}} agents, the total number of leaves grows as {{< katex inline=true >}}G^{N \cdot T}{{< /katex >}}, where each node has {{< katex inline=true >}}G^N{{< /katex >}} sibling joint actions.
+- **Cross** (`joint_mode="cross"`): Evaluates the Cartesian product of the agents' sampled responses, yielding {{< katex inline=true >}}G^N{{< /katex >}} joint actions per node. With no early termination, the tree has {{< katex inline=true >}}G^{N \cdot T}{{< /katex >}} leaves. Responses are reused across combinations, so these are not independent joint samples. This increases reward evaluations and rollout size; it does not guarantee more accurate value estimates.
 
 <p align="center">
-    <img src="/img/cross-tree.svg" width="500px;" alt=""/>
+    <img src="{{< relurl "img/cross-tree.svg" >}}" width="500px;" alt=""/>
 </p>
 
 {{% hint warning %}}
 Note that only responses originating from the same rollout can be combined, as rollouts evolve independently.
+The current MAGRPO implementation accumulates undiscounted returns: `discount` does not change its tree recursion. See [MA-REINFORCE]({{< relref "docs/marl/multi-agent-reinforce" >}}) for return aggregation and advantage normalization.
 {{% /hint %}}
 
 ## Multi-Turn MAAC/IAC
 
 Different from MAGRPO rollout tree that generates numerous samples in each episode, MAAC/IAC with multi-turn training only generates one sample per agent at each turn in the multi-turning setting, and the episode continues for multiple turns until termination.
-Since the value estimation in MAAC/IAC is updated based on temporal difference error, the agents don't need to wait until the end of the episode to update their policies, and can learn online. This feature is especially useful in the coordination optimization in long-horizon settings.
+MAAC/IAC use one-step temporal-difference targets, with `discount` applied to the next rollout value and no bootstrap after the final or early-terminated turn. The current implementation collects the full episode first, then buffers its samples and updates when `rollout_buffer_size` is reached (or flushes the remaining buffer at epoch end). It does not update policies between turns of the same episode.
 The external feedback mechanism controls how environment observations are incorporated into prompts for subsequent turns, which is usually implemented in CoMLRL's downstreaming environments.
 
 <p align="center">
-    <img src="/img/ac.svg" width="480px;" alt=""/></br>
+    <img src="{{< relurl "img/ac.svg" >}}" width="480px;" alt=""/></br>
 </p>
 
 ## Environment Transition
@@ -75,6 +76,8 @@ In MAGRPO, the external transition is called per rollout branch with that branch
 For example:
 
 ```python
+from typing import List, Optional
+
 def custom_external(
     prompt: str,
     agent_completions: List[str],
@@ -109,76 +112,10 @@ An [environment for code generation](https://github.com/OpenMLRL/LLM_Collab_Code
 - `external.mode=plain`: Self-improvement mode that just includes prompts and responses in the previous turns and a revision instruction.
 {{% /hint %}}
 
-## Centralized Preference Collaboration
+<div id="centralized-preference-collaboration"></div>
+<div id="api-comparators"></div>
 
-`MADPOConfig`, `MARLHFConfig`, and their iterative variants accept
-`collaboration_mode="centralized"` (default: `"decentralized"`). In this mode,
-one trainable actor receives all role prompts and generates one joint response.
-The complete response, including role delimiters, is optimized by one actor
-and one optimizer. Later roles are causally conditioned on earlier roles.
-
-Pass a downstream `centralized_comparator_adapter` implementing `build_prompt`
-and `parse_completion`. The same adapter is used for the actor and comparator;
-domain instructions and parsing stay outside CoMLRL. Parsing happens only at
-the task reward and evaluation boundaries. Preference replay, learned reward
-scoring, and policy training keep the complete joint text.
-
-- Keep `num_agents` equal to the number of task roles (for example, 2). Use
-  `agent_model` once, or supply exactly one entry in `agents` and its tokenizer.
-- `agent_devices` describes one actor. The optional reward model and external
-  comparator retain their independent device settings.
-- Centralized actor training currently requires `num_turns=1`. If reference KL
-  is enabled, `reference_devices` also describes one actor. MADPO retains its
-  existing reference-free preference objective; MARLHF's online RL phase uses
-  the configured KL penalty.
-- Iterative trainers force `comparator_generation_mode="centralized"` and
-  require `comparator_centralized_agent_index=0`. Current, current-copy, history,
-  model, and API comparator sources retain their existing meanings.
-- `max_new_tokens` is the **total joint response** budget, not a per-role
-  budget. Consider doubling a previous per-role limit. For MARLHF, also allow
-  enough `reward_max_length` for the joint prompt and both outputs.
-- One joint completion still counts as one environment step; a preference pair
-  uses `environment_steps_per_pair` (default 2). Role count does not multiply
-  these counters. Checkpoints contain one actor (`agent_0`).
-
-W&B records `collaboration_mode`, `num_roles`, `num_actor_models`, and the
-effective comparator generation mode. Decentralized collaboration continues to
-use the existing separate-actor generation, loss, and evaluation paths.
-
-## API Comparators
-
-Iterative MADPO and MARLHF can use a remote model with `comparator_policy=api`.
-The existing `comparator_api_format=openai` path remains compatible with
-OpenAI-style Chat Completions endpoints such as DeepSeek. Two native formats
-are also supported:
-
-- `anthropic`: Anthropic Messages API. Use `https://api.anthropic.com/v1/messages`,
-  `ANTHROPIC_API_KEY`, and a model such as `claude-sonnet-4-20250514`.
-- `openai_responses` (or `responses`/`codex`): OpenAI Responses API. Use
-  `https://api.openai.com/v1/responses`, `OPENAI_API_KEY`, and a model such as
-  `gpt-5.1-codex`.
-
-The native APIs are queried once per candidate because they do not use the
-Chat Completions `n` parameter. The prompt remains the same centralized or
-decentralized comparator prompt, and the trainer extracts text from the
-provider-specific response format.
-
-Example Anthropic comparator overrides:
-
-```text
-comparator_policy=api
-comparator_api_format=anthropic
-comparator_api_url=https://api.anthropic.com/v1/messages
-comparator_api_model=claude-sonnet-4-20250514
-comparator_api_key_env=ANTHROPIC_API_KEY
-```
-
-Example OpenAI/Codex comparator overrides:
-
-```text
-comparator_policy=api
-comparator_api_format=openai_responses
-comparator_api_url=https://api.openai.com/v1/responses
-comparator_api_model=gpt-5.1-codex
-comparator_api_key_env=OPENAI_API_KEY
-```
+{{% hint info %}}
+For actor/comparator layouts and centralized preference training, see [Training Paradigms]({{< relref "/docs/mapl/training-paradigms#centralized-preference-collaboration" >}}).
+Remote comparator configuration is covered in [Comparator]({{< relref "/docs/mapl/comparator#api-comparators" >}}).
+{{% /hint %}}

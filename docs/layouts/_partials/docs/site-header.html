@@ -1,3 +1,4 @@
+{{ $area := partial "docs/nav-area" . }}
 <header class="docs-site-header">
   <div class="docs-header-inner">
     <a class="docs-brand" href="{{ .Site.Home.RelPermalink }}" aria-label="CoMLRL documentation home">
@@ -15,4 +16,12 @@
       </a>
     </nav>
   </div>
+  <nav class="docs-area-tabs" aria-label="Documentation areas">
+    <div class="docs-area-tabs-inner">
+      <a href="{{ .Site.Home.RelPermalink }}"{{ if eq $area "docs" }} class="active" aria-current="page"{{ end }}>Documentation</a>
+      {{ with .Site.GetPage "/docs/examples" }}
+        <a href="{{ .RelPermalink }}"{{ if eq $area "example" }} class="active" aria-current="page"{{ end }}>Example</a>
+      {{ end }}
+    </div>
+  </nav>
 </header>

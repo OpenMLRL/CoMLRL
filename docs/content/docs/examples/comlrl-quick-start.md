@@ -3,7 +3,7 @@ title: CoMLRL Quick Start
 weight: 1
 ---
 
-This tutorial demonstrates how to train two LLM agents to collaborate to tell a story. The first agent generates a compact story setup, while the second agent produces a longer version. The reward function encourages the second agent's output to be 2–3× longer than the first agent's.
+This tutorial demonstrates a simple two-agent training task with a length-ratio reward. Both agents receive the same prompt and generate independently; the second agent does not see the first agent's response. The reward encourages the second output to contain 2–3× as many characters as the first. It does not evaluate story quality or semantic collaboration.
 
 Run the example directly from an installed source checkout:
 
@@ -107,7 +107,7 @@ config = MAGRPOConfig(
 
 ## Create the Trainer
 
-We instantiate the MAGRPO trainer with our agents, reward function, and configuration. The reward is scaled by 100× to provide a stronger learning signal.
+We instantiate the MAGRPO trainer with our agents, reward function, and configuration. `RewardProcessors.scale` multiplies task rewards by 100. With the default `advantage_normalization=True`, this positive scaling is largely canceled by normalization and should not be interpreted as a 100× stronger policy gradient.
 
 ```python
 configured_reward_func = partial(
