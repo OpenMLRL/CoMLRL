@@ -70,10 +70,10 @@ a:focus-visible, button:focus-visible, input:focus-visible {
 .docs-brand {
   flex: 0 0 $menu-width;
   display: flex;
-  img { display: block; width: 138px; height: auto; }
+  img { display: block; width: 154px; height: auto; }
   .docs-logo-dark {
     display: none;
-    width: 138px;
+    width: 154px;
     aspect-ratio: 1280 / 333;
     // Use the original alpha so every letter and crescent stays pixel-aligned.
     // URLs resolve beside Hugo's root-level stylesheet, including on Pages.
@@ -91,7 +91,7 @@ html[data-theme="dark"] .docs-brand {
   display: inline-flex;
   align-items: center;
   gap: .125rem;
-  margin-left: -1.75rem;
+  margin-left: -.5rem;
   padding: .1875rem;
   background: var(--docs-surface-tint);
   border: 1px solid $docs-border;
@@ -197,7 +197,7 @@ html[data-theme="dark"] .docs-brand {
 .docs-header-links {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
+  gap: 2.5rem;
   margin-left: auto;
   font-size: .875rem;
   white-space: nowrap;
@@ -207,12 +207,12 @@ html[data-theme="dark"] .docs-brand {
 .docs-github-stars {
   display: inline-flex;
   align-items: center;
-  gap: .25rem;
+  gap: .1875rem;
   margin-left: 0;
   font-variant-numeric: tabular-nums;
   [data-star-count] { min-width: 3ch; }
 }
-.docs-header-links .docs-github-link { gap: .375rem; }
+.docs-header-links .docs-github-link { gap: .25rem; }
 .docs-area-tabs {
   border-top: 1px solid var(--docs-border);
   height: 3rem;
@@ -220,7 +220,7 @@ html[data-theme="dark"] .docs-brand {
 .docs-area-tabs-inner {
   display: flex;
   align-items: stretch;
-  gap: 1.75rem;
+  gap: 2.5rem;
   max-width: $container-max-width;
   height: 100%;
   margin: auto;
@@ -268,12 +268,24 @@ main.container {
   nav > ul > li > a, nav > ul > li > label, .docs-nav-group-title {
     display: block;
     color: $docs-ink;
-    font-size: .6875rem;
+    font-size: .75rem;
     font-weight: 650;
     letter-spacing: .075em;
     text-transform: uppercase;
     padding: .4rem .75rem;
     margin-bottom: .35rem;
+  }
+  .docs-nav-group-title {
+    display: flex;
+    align-items: flex-start;
+    gap: .5rem;
+    .docs-nav-icon {
+      flex: 0 0 .9375rem;
+      width: .9375rem;
+      height: .9375rem;
+      margin-top: .075rem;
+    }
+    .docs-nav-label { min-width: 0; }
   }
   nav > ul > li > ul { padding-inline-start: 0; }
   nav ul ul a, .docs-home-link {
@@ -370,7 +382,19 @@ main.container {
   }
   img, svg { max-width: 100%; height: auto; }
   .katex-display { overflow-x: auto; overflow-y: hidden; padding: .65rem 0; }
-  .book-hint { padding: 1.1rem 1.25rem; border-radius: .5rem; border-inline-start-width: 2px; font-size: 1rem; }
+  .book-hint {
+    padding: .75rem 1rem;
+    border-radius: .5rem;
+    border-inline-start-width: 2px;
+    font-size: 1rem;
+    line-height: 1.65;
+    p, ul, ol { margin: .5rem 0; }
+    ul, ol { padding-inline-start: 1.25rem; }
+    li { margin: .35rem 0; }
+    li > p { margin: .35rem 0; }
+    > :first-child, li > :first-child { margin-top: 0; }
+    > :last-child, li > :last-child { margin-bottom: 0; }
+  }
   .book-hint.info { background: var(--docs-info-bg); border-color: var(--docs-info-line); }
   .book-hint.warning { background: var(--docs-warning-bg); border-color: var(--docs-warning-line); }
   .book-hint.danger { background: var(--docs-danger-bg); border-color: var(--docs-danger-line); }
@@ -807,7 +831,7 @@ body.docs-visual-open { overflow: hidden; }
   .docs-header-inner, main.container { gap: 2.5rem; padding-left: 1.5rem; padding-right: 1.5rem; }
   .docs-area-tabs-inner { padding: 0 1.5rem; }
   .docs-header-links { gap: 1rem; }
-  .docs-theme-switcher { margin-left: -1.25rem; }
+  .docs-theme-switcher { margin-left: -.5rem; }
   .docs-header-links > a:first-child { display: none; }
   .book-toc { display: none; }
   .book-header { display: block; }
@@ -817,8 +841,8 @@ body.docs-visual-open { overflow: hidden; }
 }
 @media screen and (max-width: $mobile-breakpoint) {
   .docs-header-inner { padding: 0 1.25rem; gap: 1.25rem; }
-  .docs-area-tabs-inner { padding: 0 7.25rem 0 1.25rem; gap: 1rem; }
-  .docs-brand { flex: 0 0 auto; img, .docs-logo-dark { width: 112px; } }
+  .docs-area-tabs-inner { padding: 0 7.25rem 0 1.25rem; gap: 1.75rem; }
+  .docs-brand { flex: 0 0 auto; img, .docs-logo-dark { width: 124px; } }
   .docs-header-search { max-width: none; }
   .docs-header-links {
     position: absolute;
@@ -827,7 +851,7 @@ body.docs-visual-open { overflow: hidden; }
     height: 3rem;
     .docs-github-label { display: none; }
   }
-  .docs-github-stars { margin-left: 0; gap: .25rem; font-size: .8125rem; }
+  .docs-github-stars { margin-left: 0; font-size: .8125rem; }
   .docs-theme-switcher { margin-left: -.5rem; }
   main.container { display: block; padding: 9rem 1.25rem 0; }
   .book-page { max-width: none; }
@@ -879,7 +903,7 @@ body.docs-visual-open { overflow: hidden; }
   .docs-theme-switcher { margin-left: auto; }
   .docs-header-search { position: absolute; top: 4.1rem; left: 1.25rem; right: 7.25rem; }
   .docs-header-links { top: 4.1rem; height: 2.5rem; }
-  .docs-area-tabs-inner { padding-right: 1.25rem; }
+  .docs-area-tabs-inner { padding-right: 1.25rem; gap: clamp(1rem, 5vw, 1.5rem); }
   main.container { padding-top: 12rem; }
   .book-menu { top: 10.5rem; }
   #menu-control:checked ~ main .book-menu-overlay { top: 10.5rem; }

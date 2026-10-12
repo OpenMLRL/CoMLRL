@@ -12,9 +12,9 @@
   {{ range $navigation.Groups }}
     <li class="docs-nav-group">
       {{ if .Linked }}
-        {{ partial "docs/nav-link" (dict "Page" .Page "CurrentPage" $ "Title" .Title "Class" "docs-nav-group-title") }}
+        {{ partial "docs/nav-link" (dict "Page" .Page "CurrentPage" $ "Title" .Title "Class" "docs-nav-group-title" "Icon" true) }}
       {{ else }}
-        <span class="docs-nav-group-title">{{ .Title }}</span>
+        <span class="docs-nav-group-title">{{ partial "docs/nav-icon" .Page }}<span class="docs-nav-label">{{ .Title }}</span></span>
       {{ end }}
       <ul>
         {{ range .Children }}

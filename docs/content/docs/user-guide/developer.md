@@ -1,6 +1,6 @@
 ---
 title: Developer
-weight: 5
+weight: 7
 aliases:
   - /docs/dev/
   - /docs/dev/support/

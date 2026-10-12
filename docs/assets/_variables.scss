@@ -1,5 +1,5 @@
-// Keep Hugo Book's drawer dimensions in sync with the documentation layout.
-$menu-width: 14rem;
-$toc-width: 12rem;
+// Keep both sidebars and Hugo Book's drawer dimensions in sync.
+$toc-width: 14rem;
+$menu-width: $toc-width;
 $container-max-width: 84rem;
 $mobile-breakpoint: 52rem;
