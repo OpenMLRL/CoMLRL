@@ -21,11 +21,22 @@ ANNOTATIONS = re.compile(
 )
 # Boundaries fall between complete rows/formulae, never through a formula.
 # The chain has five visible nodes; its trailing ellipsis shares the final stage.
+# The baseline chart reveals the node, its returns, then one variant row at a time.
+# Training flows reveal one step per band, ending with the updated models.
 LAYOUTS = {
     "joint-tree": (1, (26, 60, 94)),
     "align-tree": (1, (22, 60, 92)),
     "cross-tree": (1, (30, 74, 118)),
     "ac": (0, (42, 95, 144, 197)),
+    "reinforce-baselines": (1, (25, 53, 80, 131, 180, 225, 275)),
+    "reinforce-training": (1, (52, 91, 136, 167, 207)),
+    "ac-training": (1, (51, 87, 129, 188, 231)),
+    "marlhf-training": (1, (23, 57, 89, 122, 157)),
+    "madpo-training": (1, (23, 57, 89, 122, 156)),
+    "mapl-layouts": (1, (21, 65, 109)),
+    "mapl-iterative": (1, (30, 66, 102, 138, 173)),
+    "comparator-pairs": (1, (47, 78, 127, 159)),
+    "replay-modes": (1, (31, 70, 100, 129, 160)),
 }
 
 

@@ -1,6 +1,6 @@
 baseURL = "/"            # Hugo will be built with CLI baseURL override
 title = "CoMLRL"
-copyright = "© OpenMLRL. All rights reserved."
+copyright = "© {year} OpenMLRL. All rights reserved."
 languageCode = "en-us"
 defaultContentLanguage = "en"
 relativeURLs = false       # Preserve Hugo's baseURL-prefixed paths on GitHub Pages

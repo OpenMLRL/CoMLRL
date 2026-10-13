@@ -3,7 +3,7 @@
   <div class="docs-header-inner">
     <a class="docs-brand" href="{{ .Site.Home.RelPermalink }}" aria-label="CoMLRL documentation home">
       <img class="docs-logo-light" src="{{ .Site.Params.BookLogo | relURL }}" alt="CoMLRL" width="150" height="39" />
-      <span class="docs-logo-dark" role="img" aria-label="CoMLRL"></span>
+      <span class="docs-logo-themed" role="img" aria-label="CoMLRL"></span>
     </a>
     <div class="docs-header-search">
       {{ partial "docs/search" . }}
@@ -39,9 +39,6 @@
       <a href="{{ .Site.Home.RelPermalink }}"{{ if eq $area "docs" }} class="active" aria-current="page"{{ end }}>Documentation</a>
       {{ with .Site.GetPage "/docs/examples" }}
         <a href="{{ .RelPermalink }}"{{ if eq $area "example" }} class="active" aria-current="page"{{ end }}>Examples</a>
-      {{ end }}
-      {{ with .Site.GetPage "/docs/research" }}
-        <a href="{{ .RelPermalink }}"{{ if eq $area "research" }} class="active" aria-current="page"{{ end }}>Research</a>
       {{ end }}
     </div>
   </nav>

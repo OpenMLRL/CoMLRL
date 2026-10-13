@@ -6,19 +6,19 @@ aliases:
 math: true
 ---
 
-REINFORCE is a class of policy gradient methods that optimize the policy directly using sampled returns.
-It has been widely used to fine-tune LLMs because of its simplicity and efficiency, e.g., [GRPO](https://arxiv.org/pdf/2402.03300), [Dr. GRPO](https://arxiv.org/abs/2503.20783), [RLOO](https://openreview.net/forum?id=r1lgTGL5DE), [ReMax](https://arxiv.org/abs/2310.1050), [TreeRPO](https://arxiv.org/abs/2506.05183), and [REINFORCE++](https://arxiv.org/abs/2501.03262).
+REINFORCE is a class of policy-gradient methods that optimize the policy directly using sampled returns.
+It has been widely used to fine-tune LLMs because of its simplicity and efficiency, e.g., [GRPO](https://arxiv.org/pdf/2402.03300), [Dr. GRPO](https://arxiv.org/abs/2503.20783), [RLOO](https://openreview.net/forum?id=r1lgTGL5DE), [ReMax](https://arxiv.org/abs/2310.10505), [TreeRPO](https://arxiv.org/abs/2506.05183), and [REINFORCE++](https://arxiv.org/abs/2501.03262).
 REINFORCE can be extended to multi-agent settings, where multiple LLM agents respond at each turn and their joint responses receive a shared reward.
 
-## MA-REINFORCE
+## MAREINFORCE
 
-The policy-gradient surrogate for Multi‑Agent REINFORCE (MA-REINFORCE), before advantage normalization or reference regularization, can be expressed as:
+The policy-gradient surrogate for Multi-Agent REINFORCE (MAREINFORCE), before advantage normalization or reference regularization, can be expressed as:
 
 {{< katex display=true >}}
 J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t \sim \boldsymbol{\pi}_{\boldsymbol{\theta}}}
 \Bigg[\sum_{t=0}^{H-1} R_t \cdot \log \pi_{\theta_i}(a_{i,t}\mid h_{i,t})\Bigg],
 {{< /katex >}}
-where {{< katex >}}R_t{{< /katex >}} is the return at turn {{< katex >}}t{{< /katex >}} and {{< katex >}}H{{< /katex >}} is the horizon (i.e., number of dialog turns).
+where {{< katex >}}R_t{{< /katex >}} is the return at turn {{< katex >}}t{{< /katex >}} and {{< katex >}}H{{< /katex >}} is the horizon (i.e., the number of dialog turns).
 The expectation is taken over initial observations from the dataset {{< katex >}}\mathcal{D}{{< /katex >}} and the joint action history of all episodes following policy {{< katex >}}\boldsymbol{\pi}_{\boldsymbol{\theta}}{{< /katex >}}.
 
 REINFORCE methods do not use a critic model for value estimation. Their policy-gradient estimates can have high variance due to stochastic sampling and long-term credit assignment.
@@ -32,7 +32,7 @@ where the baseline {{< katex >}}b(\mathbf{h}_t){{< /katex >}} is action-independ
 
 ## MAGRPO
 
-Multi‑Agent Group‑Relative Policy Optimization (MAGRPO) is an instantiation of MA-REINFORCE inspired by GRPO, where the group-average baseline is the mean return of {{< katex >}}K{{< /katex >}} samples. In the default `aligned` joint mode, its surrogate before advantage normalization is:
+Multi-Agent Group-Relative Policy Optimization (MAGRPO) is an instantiation of MAREINFORCE inspired by GRPO, where the group-average baseline is the mean return of {{< katex >}}K{{< /katex >}} samples. In the default `aligned` joint mode, its surrogate before advantage normalization is:
 
 {{< katex display=true >}}
 J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t  \sim \boldsymbol{\pi}_{\boldsymbol{\theta}}}
@@ -42,6 +42,10 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t  \sim \bol
 The sampled group mean includes the sample being updated, so it is not the action-independent baseline assumed in the general expression above. In multi-turn training, each branch's return is its immediate reward plus the mean return of its child node, with no discount applied. In `cross` mode, each agent's completion instead receives the **sum** of returns over all joint combinations containing that completion.
 
 By default, `advantage_normalization=True` then centers and scales the advantages within each node's generation group using the population standard deviation, with a minimum denominator of `1e-6`. If reference KL regularization is enabled, the sampled reference penalty is subtracted from returns before the baseline and normalization are applied.
+
+MAGRPO and the variants below share one trainer loop. At each rollout node, every agent samples {{< katex >}}K{{< /katex >}} responses, the trainer scores the index-aligned joint responses with one shared reward, and each agent weights its own log-probabilities by the resulting shared advantages before a buffered optimizer step.
+
+{{< rollout-diagram diagram="reinforce-training" title="MAREINFORCE training step" description="Each agent samples K responses; index-aligned joint responses share one reward and return, a group baseline gives shared advantages, and each agent updates on its own log-probabilities." >}}
 
 {{% hint warning %}}
 The current `MAGRPOTrainer` loss slice omits the final completion token, so its implemented sequence score differs from the full sequence log-probability in the surrogate above. Use the canonical `joint_mode="cross"`: the accepted `"crossed"` alias generates Cartesian combinations but does not apply the same per-completion return aggregation.
@@ -93,12 +97,12 @@ The current `MAGRPOTrainer` loss slice omits the final completion token, so its 
 - `model_config`: Model configuration dict (optional)
 - `wandb_config`: Configuration for Weights & Biases logging (optional)
 - `external_transition`: Function providing transitions between turns; required when `num_turns > 1` (the default is `2`)
-- `eval_logger`: Optional task metrics, called as `eval_logger(agent_completions_turns=..., batch_items=..., prompts=...)`; returns one metrics dict per evaluated item. Used together with `eval_aggregator`
-- `eval_aggregator`: Optional, called as `eval_aggregator(metrics, num_turns=...)`; the returned `turn_k/...` metrics are logged under `eval/`. Both evaluation callbacks must be supplied for custom metrics
+- `eval_logger`: Optional task-metrics callback, called as `eval_logger(agent_completions_turns=..., batch_items=..., prompts=...)`; returns one metrics dict per evaluated item. Used together with `eval_aggregator`
+- `eval_aggregator`: Optional callback, called as `eval_aggregator(metrics, num_turns=...)`; the returned `turn_k/...` metrics are logged under `eval/`. Both evaluation callbacks must be supplied for custom metrics
 {{% /hint %}}
 
 {{% hint warning %}}
-MAGRPO collects samples into a rollout buffer and recomputes their log probabilities during updates, without importance sampling or ratio clipping. Samples may therefore predate earlier updates from the same buffer or rollout tree. Since the trainer has no critic model, `value_clip_range` does not apply.
+MAGRPO collects samples into a rollout buffer and recomputes their log-probabilities during updates, without importance sampling or ratio clipping. Samples may therefore predate earlier updates from the same buffer or rollout tree. Since the trainer has no critic model, `value_clip_range` does not apply.
 {{% /hint %}}
 
 {{% hint warning %}}
@@ -107,16 +111,16 @@ The trainer uses a fixed training DataLoader batch size of 1 and requires at lea
 
 ## Other Variants
 
-CoMLRL also provides other MA-REINFORCE variants with different baselines:
+CoMLRL also provides other MAREINFORCE variants with different baselines:
 
-- **MARLOO**: Multi‑Agent REINFORCE Leave‑One‑Out. The baseline is the mean return of the other generations in the same node's sample group, not the other agents.
+- **MARLOO**: Multi-Agent REINFORCE Leave-One-Out. The baseline is the mean return of the other generations in the same node's sample group, not the other agents.
 
 {{< katex display=true >}}
 J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t  \sim \boldsymbol{\pi}_{\boldsymbol{\theta}}}
 \Bigg[\frac{1}{K}\sum_{k=1}^{K}\sum_{t=0}^{H-1} \left(R^{k}_t - \frac{1}{K-1}\sum_{l=1, l\neq k}^{K}R^{l}_t\right) \cdot \log \pi_{\theta_i}(a^{k}_{i,t}\mid h_{i,t})\Bigg].
 {{< /katex >}}
 
-- **MAReMax**: Multi‑Agent REINFORCE with Group Max (`MAReMaxConfig` and `MAReMaxTrainer`). The baseline is the maximum sampled group return at the node; this implementation does not generate a separate greedy baseline response.
+- **MAReMax**: Multi-Agent REINFORCE with Group Max (`MAReMaxConfig` and `MAReMaxTrainer`). The baseline is the maximum sampled group return at the node; this implementation does not generate a separate greedy baseline response.
 
 {{< katex display=true >}}
 J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t  \sim \boldsymbol{\pi}_{\boldsymbol{\theta}}}
@@ -124,9 +128,13 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t  \sim \bol
 {{< /katex >}}
 
 {{% hint success %}}
-`MAREINFORCETrainer`, `MARLOOTrainer`, and `MAReMaxTrainer` derive from `comlrl.trainers.reinforce.MAGRPOTrainer`. Their corresponding configuration classes inherit `MAGRPOConfig`, with default `advantage_mode` values of `raw`, `rloo`, and `max` respectively. They share the same trainer interface and configuration fields.
+`MAREINFORCETrainer`, `MARLOOTrainer`, and `MAReMaxTrainer` derive from `comlrl.trainers.reinforce.MAGRPOTrainer`. Their corresponding configuration classes inherit `MAGRPOConfig`, with default `advantage_mode` values of `raw`, `rloo`, and `max`, respectively. They share the same trainer interface and configuration fields.
 {{% /hint %}}
 
+The four trainers differ only in the baseline subtracted from the shared return. For one node with {{< katex >}}K=4{{< /katex >}} joint responses, the animation below compares their advantages before normalization: MAREINFORCE keeps the raw return, as in [REINFORCE](https://doi.org/10.1007/BF00992696); MAGRPO subtracts the group mean, as in GRPO; MARLOO subtracts the mean of the other {{< katex >}}K-1{{< /katex >}} returns, as in RLOO, which scales the MAGRPO advantages by {{< katex >}}K/(K-1){{< /katex >}}; and MAReMax subtracts the group maximum, so no response receives a positive advantage.
+
+{{< rollout-diagram diagram="reinforce-baselines" title="Baselines across MAREINFORCE variants" description="Each row subtracts a different baseline from the same shared returns; shaded bars mark the advantages before normalization." >}}
+
 {{% hint warning %}}
-The variant formulas describe advantages **before normalization**. All variants inherit `advantage_normalization=True`, which re-centers even raw returns and max-baseline advantages. Except for the standard-deviation floor and numerical precision, the four modes then yield the same normalized advantages. Set `advantage_normalization=False` to retain the baseline differences shown above, including the raw-return MA-REINFORCE estimator.
+The variant formulas describe advantages **before normalization**. All variants inherit `advantage_normalization=True`, which re-centers even raw returns and max-baseline advantages. Except for the standard-deviation floor and numerical precision, the four modes then yield the same normalized advantages. Set `advantage_normalization=False` to retain the baseline differences shown above, including the raw-return MAREINFORCE estimator.
 {{% /hint %}}

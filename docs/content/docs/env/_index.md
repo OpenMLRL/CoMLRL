@@ -12,10 +12,16 @@ Environments that simulate real-world tasks for training and evaluating LLM coll
   - ArXiv - Expanding abstracts into introductions.
 
 - **Coding**: Generate code solutions for programming problems.
-  - MBPP - Mostly basic python problems.
+  - MBPP - Mostly basic Python problems.
   - HumanEval - Handwritten evaluation problems.
-  - CoopHumanEval - HumanEval with cooperative nature.
+  - CoopHumanEval - HumanEval with a cooperative nature.
 
 - **Minecraft**: Multi-agent building environments.
   - StrBuild - Structured builds from text.
   - HouseBuild - Coordinated house construction.
+
+- **Travel**: Collaborative travel planning under user constraints.
+  - TravelPlanner - Planning multi-day trip itineraries.
+
+- **BFCL v4**: Collaborative function calling with tools.
+  - Native Parallel - Making parallel function calls.

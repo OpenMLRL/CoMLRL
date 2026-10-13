@@ -13,9 +13,15 @@ hugo server -s docs -D
 
 Hugo will fetch the Book theme via Hugo Modules on first run (requires internet access). Open the local URL printed by Hugo (usually http://localhost:1313).
 
+## Research publications
+
+Research publications are maintained in the OpenMLRL website repository at `content/research/` for `https://openmlrl.github.io/research/`. This documentation site shows only Documentation and Examples in its area navigation. The former `content/docs/research/_index.md` is retained as a draft for reference and excluded from search.
+
 ## Appearance
 
-The header groups three theme buttons: sun for the light palette, moon for the blue-tinted dark palette, and eye for the warm ivory reading palette. Light and reading modes use the original purple logo; dark mode uses amber accents. The first visit follows the system preference; an explicit choice is saved locally. `assets/theme.js` applies it before the first paint, and `assets/_theme.scss` defines the shared color roles. The dark header logo uses the original `static/img/comlrl-logo.png` alpha as a CSS mask with a gold-to-orange gradient, retaining the exact lettering and emblem while recoloring every part.
+The header groups three theme buttons: sun for the light palette, moon for the blue-tinted dark palette, and eye for the warm ivory reading palette. Light mode uses the original purple logo. Dark mode uses gold, coral, rose, and violet accents; reading mode uses ochre, copper, rose-brown, and muted olive accents. The first visit follows the system preference; an explicit choice is saved locally. `assets/theme.js` applies it before the first paint, and `assets/_theme.scss` defines the shared color roles and logo backgrounds. The dark and reading header logos use the original `static/img/comlrl-logo.png` alpha as a CSS mask, retaining the exact lettering and emblem. Both themed wordmarks use vertical gradients across the letters' actual height so the color change remains visible at header size.
+
+The `static/img/comlrl-logo-dark-colors.svg` and `static/img/comlrl-logo-reading-colors.svg` color maps preserve the daylight emblem's four alternating gradient groups: two outer groups and two inner groups, each repeated on three petals. Every other petal in a ring shares the same palette, normalized over that petal's local vertical height; the central C stays solid. The group assignments come from the original PNG's colors, which follow local vertical gradients rather than gradients rotated around the flower. Both maps share the original color regions and keep neighboring petals separate, while the PNG supplies the outlines.
 
 Keep syntax highlighting class-based (`markup.highlight.noClasses = false`) so `assets/_syntax.scss` can style both themes. `assets/_diagram-theme.scss` adjusts SVG paint for dark backgrounds without changing mathematical glyphs, geometry, or animation stages. Printing uses the light palette.
 

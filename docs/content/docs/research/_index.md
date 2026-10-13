@@ -1,5 +1,8 @@
 ---
 title: Research
+draft: true
+bookHidden: true
+bookSearchExclude: true
 weight: 4
 bookCollapseSection: false
 bookFlatSection: true

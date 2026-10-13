@@ -17,5 +17,5 @@ Only the task reward and evaluation logger receive the parsed role responses.
 
 Only `num_turns=1` is supported. `max_new_tokens` is the total joint-output budget;
 `num_generations` counts complete joint responses. Each sampled joint response
-adds one environment step. Single-turn steps are therefore
-`dataset_size * num_generations * num_train_epochs` for a complete run.
+adds one environment step. A complete single-turn run therefore takes
+`dataset_size * num_generations * num_train_epochs` environment steps.

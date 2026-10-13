@@ -1,5 +1,5 @@
 ---
-title: MARL
+title: Multi-LLM RL
 weight: 2
 bookCollapseSection: false
 bookFlatSection: true

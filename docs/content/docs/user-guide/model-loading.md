@@ -4,25 +4,16 @@ linkTitle: Model Loading & Saving
 weight: 2
 ---
 
-CoMLRL supports both homogeneous and heterogeneous models.
-Users can assign `agent_model`/`critic_model` with [HuggingFace model identifiers](https://huggingface.co/models) for homogeneous setups, or provide `agents`/`critics` lists for heterogeneous setups.
+CoMLRL supports both homogeneous and heterogeneous models from Hugging Face or local directories.
+Users can set `agent_model`/`critic_model` to [Hugging Face model identifiers](https://huggingface.co/models) for homogeneous setups, or provide `agents`/`critics` lists for heterogeneous setups. Users can also save trained actors, load their weights into a new trainer, and train them further. The sections below cover model loading, the saved directory layout, and which training state must be initialized again.
 
-Local model directories are also supported. You can save trained actors, load their weights into a new trainer, and train them further. The sections below cover model loading, the saved directory layout, and which training state must be initialized again.
-
-The examples below assume you have defined a task-specific `reward_func` and `train_dataset`, as shown in the [quick start]({{< relref "docs/examples/comlrl-quick-start" >}}). They use `num_turns=1`; multi-turn training additionally requires an `external_transition`.
-
-```python
-from transformers import AutoTokenizer
-from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
-from comlrl.trainers.actor_critic import IACConfig, IACTrainer, MAACConfig, MAACTrainer
-```
 
 ## Homogeneous Agents
 
-The easiest way to start the journey of CoMLRL is to load `num_agents` homogeneous agents with a single model identifier.
+The easiest way to get started with CoMLRL is to load `num_agents` homogeneous agents with a single model identifier.
 Set `agent_model` to a model identifier string while keeping `agents=None`. For MAGRPO, pass the actor count directly as the trainer's `num_agents` argument; setting only `MAGRPOConfig.num_agents` does not change the number of homogeneous actors.
 
-For example, to load 3 _Qwen/Qwen2.5-1.5B_ agents:
+For example, to load three _Qwen/Qwen2.5-1.5B_ agents:
 
 ```python
 trainer = MAGRPOTrainer(
@@ -37,9 +28,9 @@ trainer = MAGRPOTrainer(
 
 ## Heterogeneous Agents
 
-Although homogeneous LLM agents can be specified into different roles by prompting, using heterogeneous LLMs with different skills can further unleash the potential of multi-agent collaboration.
+Although homogeneous LLM agents can be assigned different roles through prompting, using heterogeneous LLMs with different skills can further unleash the potential of multi-agent collaboration.
 Pass model identifier strings or loaded model objects in `agents`, and pass compatible tokenizers separately through `tokenizer`. MAGRPO infers the actor count from `agents` when `agent_model=None`; MAAC/IAC require the list length to match `args.num_agents`. For MAGRPO, use a list of identifiers or a list of loaded objects, without mixing the two.
-When `agents` is provided, set `agent_model=None`. If both are provided, they must match (same model names and correct length), otherwise training raises an error.
+When `agents` is provided, set `agent_model=None`. If both are provided, they must match (same model names and correct length); otherwise, training raises an error.
 
 For example, to load a _Qwen/Qwen2.5-Coder-3B_ and a _Qwen/Qwen2.5-Coder-7B_:
 
@@ -77,8 +68,8 @@ trainer = MAACTrainer(
 ```
 
 In Independent Actor-Critic (IAC), each agent can have its own critic. When `use_separate_critic=True`, provide one `critic_model` identifier to load a separate copy per agent, or a `critics` list of length `num_agents`. Each separate critic receives token IDs from its corresponding actor's tokenizer and must be compatible with it.
-When `use_separate_critic=false`, each agent shares its LLM agent backbone with its critic, and the critic is loaded at the same time as the agent. In this case, `critic_model` and `critics` should not be provided and set to null or None.
-Similarly to agents, if both `critic_model` and `critics` are provided, they must match (same names, correct length) or training will raise an error.
+When `use_separate_critic=false`, each agent shares its LLM agent backbone with its critic, and the critic is loaded at the same time as the agent. In this case, `critic_model` and `critics` should not be provided; leave them as null or None.
+As with agents, if both `critic_model` and `critics` are provided, they must match (same names, correct length) or training will raise an error.
 
 For example, to load a _Qwen/Qwen2.5-Coder-3B_ and a _Qwen/Qwen2.5-Coder-7B_ with separate critics of the same models:
 
@@ -105,7 +96,7 @@ trainer = IACTrainer(
 )
 ```
 
-Or actor can share the same model with its critic:
+Alternatively, each actor can share the same model with its critic:
 
 ```python
 trainer = IACTrainer(
@@ -151,7 +142,7 @@ The directory layout depends on the trainer. In the table, `output_dir` is the d
 
 | Trainer | Actor and tokenizer | Additional saved weights |
 | --- | --- | --- |
-| MA-REINFORCE family, including MAGRPO | `output_dir/agent_i/` | None |
+| MAREINFORCE family, including MAGRPO | `output_dir/agent_i/` | None |
 | MADPO, MARLHF, and their iterative variants | `output_dir/agent_i/` | None |
 | IAC, one actor | `output_dir/` | Shared head: `value_head.pt`; separate critic: `critic/` with its own `value_head.pt` |
 | IAC, multiple actors | `output_dir/agent_i/` | Shared head: `agent_i/value_head.pt`; separate critic: `agent_i/critic/` with its own `value_head.pt` |
@@ -160,7 +151,7 @@ The directory layout depends on the trainer. In the table, `output_dir` is the d
 Paths without an `output_dir` prefix are relative to `output_dir`. Critic directories contain the critic backbone configuration and weights; they use the corresponding actor's tokenizer, or the first actor's tokenizer for MAAC.
 
 {{% hint info %}}
-The MA-REINFORCE and preference trainers use `agent_0/` even with one actor. Centralized MAPL also saves one actor in `agent_0/`, while `num_agents` continues to describe the number of task roles.
+The MAREINFORCE and preference trainers use `agent_0/` even with one actor. Centralized MAPL also saves one actor in `agent_0/`, while `num_agents` continues to describe the number of task roles.
 
 MARLHF's inherited `save_model` exports the actors and tokenizers. It does not export the learned reward model, reward head, or critics created by its online actor-critic backend.
 {{% /hint %}}
@@ -196,7 +187,7 @@ continued_trainer.save_model("./saved-models/run-2")
 
 MAGRPO loads the tokenizers from those actor directories automatically. Here, `num_train_epochs=3` means three epochs in the new training run. Supply the dataset, reward function, training configuration, and any custom formatters, reward processor, or external transition again; these are not stored by `save_model`.
 
-Use the same local-directory approach with the other trainers, retaining their tokenizer and actor-count requirements described above. For centralized MAPL, provide only the saved `agent_0` model, retain the original task-role count, and set `collaboration_mode="centralized"` again. Preference trainers start their preference collection and reward-learning stages according to the new run's configuration.
+Use the same local-directory approach with the other trainers, following their tokenizer and actor-count requirements described above. For centralized MAPL, provide only the saved `agent_0` model, retain the original task-role count, and set `collaboration_mode="centralized"` again. Preference trainers start their preference collection and reward-learning stages according to the new run's configuration.
 
 ## Restoring Value Heads
 
@@ -244,4 +235,4 @@ Saved weights support further training, but CoMLRL currently has no complete `re
 
 When reference KL is enabled, a new trainer builds its frozen reference models from the actor sources supplied to that constructor. Reloading trained actors therefore uses those reloaded weights as the new reference, rather than restoring the previous run's reference models.
 
-Iterative MAPL's `policy_checkpoint_dir` stores actor snapshots for comparator history. Its persisted preference pairs and replay files are also separate from `save_model`; creating a new iterative trainer does not automatically reconstruct the previous iteration or replay state from those files. See [Comparator]({{< relref "/docs/mapl/comparator" >}}) and [Replay Buffer]({{< relref "/docs/mapl/replay-buffer" >}}) for their roles in an active run.
+Iterative MAPL's `policy_checkpoint_dir` stores actor snapshots for comparator history. Its persisted preference pairs and replay files are also separate from `save_model`; creating a new iterative trainer does not automatically reconstruct the previous iteration or replay state from those files. See the [comparator]({{< relref "/docs/mapl/training-framework#comparator" >}}) and [replay buffer]({{< relref "/docs/mapl/training-framework#replay-buffer" >}}) sections for their roles in an active run.

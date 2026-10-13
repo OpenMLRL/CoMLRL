@@ -48,7 +48,7 @@ train_dataset = Dataset.from_dict(train_data)
 
 ## Agent Initialization
 
-We load a tokenizer to convert text into tokens that the model can process and initialize two separate instances.
+We load a tokenizer to convert text into tokens that the model can process, and then initialize two separate model instances.
 
 ```python
 model_name = "Qwen/Qwen2.5-0.5B"
@@ -58,7 +58,7 @@ agents = [AutoModelForCausalLM.from_pretrained(model_name) for _ in range(2)]
 
 ## Define the Reward Function
 
-The reward function measures how well the agents collaborate. It gives maximum reward (1.0) when the second agent's output is 2–3× longer than the first agent's. If the length ratio falls outside this range, the reward decays exponentially based on how far it deviates.
+The reward function measures how well the agents collaborate. It gives the maximum reward (1.0) when the second agent's output is 2–3× longer than the first agent's. If the length ratio falls outside this range, the reward decays exponentially based on how far it deviates.
 
 ```python
 def proper_length_ratio_reward(

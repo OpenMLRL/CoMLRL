@@ -74,6 +74,10 @@ conda install -c conda-forge comlrl
   - [**_Minecraft_**](https://github.com/OpenMLRL/LLM_Collab_Minecraft): Collaborative building tasks in Minecraft.
     - [StrBuild](https://github.com/OpenMLRL/LLM_Collab_Minecraft/tree/main/str_build) - Building structures based on string blueprints.
     - [HouseBuild](https://github.com/OpenMLRL/LLM_Collab_Minecraft/tree/main/house_build) - Constructing houses from given blueprints while defending against spider attacks.
+  - [**_Travel_**](https://github.com/OpenMLRL/LLM_Collab_Travel): Collaborative travel planning under user constraints.
+    - [TravelPlanner](https://huggingface.co/datasets/osunlp/TravelPlanner) - Planning multi-day trip itineraries.
+  - [**_BFCL v4_**](https://github.com/OpenMLRL/LLM_Collab_BFCL-v4): Collaborative function calling with tools.
+    - [Native Parallel](https://huggingface.co/datasets/OpenMLRL/BFCL-V4-Parallel-Native) - Making parallel function calls.
 
 ## Usage
 

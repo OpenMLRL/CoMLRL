@@ -26,7 +26,7 @@
     {{- end -}}
   {{- end -}}
 {{- else -}}
-  {{- range slice "/docs/user-guide" "/docs/marl" "/docs/mapl" -}}
+  {{- range slice "/docs/user-guide" "/docs/marl" "/docs/mapl" "/docs/multi-turn" "/docs/dev" -}}
     {{- with $current.Site.GetPage . -}}
       {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
       {{- $groups = $groups | append (dict "Title" .Title "Page" . "Linked" false "Children" $children) -}}

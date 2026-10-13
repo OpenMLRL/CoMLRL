@@ -54,6 +54,8 @@ html[data-theme="dark"] {
   --docs-accent-strong: #ffc18a;
   --docs-accent-soft: #302219;
   --docs-accent-line: #e49550;
+  // Repeat the daylight logo's alternating petal groups under the original alpha mask.
+  --docs-logo-gradient: url("img/comlrl-logo-dark-colors.svg") center / 100% 100% no-repeat;
   --docs-selection: #684025;
   --docs-selection-ink: #fff4e8;
   --docs-scrollbar: #495466;
@@ -89,6 +91,7 @@ html[data-theme="reading"] {
   --docs-accent-strong: #634929;
   --docs-accent-soft: #e8ddc4;
   --docs-accent-line: #b5a07d;
+  --docs-logo-gradient: url("img/comlrl-logo-reading-colors.svg") center / 100% 100% no-repeat;
   --docs-selection: #e1d2b4;
   --docs-selection-ink: #342c22;
   --docs-scrollbar: #c6baa5;

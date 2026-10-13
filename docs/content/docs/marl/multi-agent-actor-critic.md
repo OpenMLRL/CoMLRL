@@ -6,7 +6,7 @@ aliases:
 math: true
 ---
 
-Actor-Critic (AC) methods are widely-used policy gradient methods that employ critics to facilitate training.
+Actor-Critic (AC) methods are widely used policy gradient methods that employ critics to facilitate training.
 AC methods can achieve lower variance and better sample efficiency than REINFORCE, but this requires careful design and tuning of the critic to ensure stable training.
 In Multi-Agent Reinforcement Learning (MARL), Actor-Critic methods can be instantiated as Multi-Agent Actor-Critic (MAAC) and Independent Actor-Critic (IAC).
 
@@ -33,6 +33,10 @@ The actor and critic minimize the following losses over each agent's mini-batch 
 
 Here {{< katex >}}\widehat A{{< /katex >}} is the optionally normalized residual and {{< katex >}}\operatorname{sg}{{< /katex >}} means stop-gradient. The completion log-probability is the sum of generated-token log-probabilities; prompt and trailing padding tokens are excluded. The loss then averages across samples. Buffers are grouped by agent and turn before updating, and `advantage_normalization` normalizes the residuals within each such group. Targets and advantages remain fixed during the update. The shared critic is updated sequentially with each agent's batch, and `value_loss_coef` scales its loss.
 
+The animation below follows one MAAC turn from sampling to update for two agents. Both actors take their residuals from the same centralized critic, which is then regressed toward the TD targets with each agent's batch in turn; IAC instead gives each agent its own critic.
+
+{{< rollout-diagram diagram="ac-training" title="MAAC training step" description="Each agent samples one response per turn; the centralized critic turns the reward and next history into TD targets and residuals that weight each actor's loss and regress the critic." >}}
+
 In Q mode, the implementation uses the same TD-residual actor weight, with a sampled next action in the bootstrap. It does not implement a separate actor objective weighted directly by Q or a state-only baseline for Q.
 
 {{% hint info %}}
@@ -42,7 +46,7 @@ In Q mode, the implementation uses the same TD-residual actor weight, with a sam
 - `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
 - `num_train_epochs`: Number of training epochs
 - `agent_learning_rate`: Learning rate for agents
-- `critic_learning_rate`: Learning rate for shared critic
+- `critic_learning_rate`: Learning rate for the shared critic
 - `value_loss_coef`: Weight on critic loss
 - `advantage_normalization`: Whether to normalize advantages before updates
 - `rollout_buffer_size`: Number of samples to collect per agent before an update
@@ -93,7 +97,7 @@ The trainer uses a fixed training DataLoader batch size of 1. For `num_turns > 1
 
 ## IAC
 
-Independent Actor-Critic (IAC) optimizes each agent's policy with its own critic; other agents serve as part of the environment. Rewards can be shared or agent-specific. The critic conditions on that agent's prompt/history in V mode, or its prompt and completion in Q mode. Using the same detached-target convention as MAAC:
+Independent Actor-Critic (IAC) optimizes each agent's policy with its own critic; other agents serve as part of the environment. Rewards can be shared or agent-specific. The critic conditions on that agent's prompt/history in V mode, or on its prompt and completion in Q mode. IAC uses the same detached-target convention as MAAC:
 
 {{< katex display=true >}}
 y_{i,t}=\tilde r_{i,t}+\gamma m_t\bar C_i(x_{i,t+1}),
@@ -106,7 +110,7 @@ CoMLRL supports two IAC variants:
 
 - **Separate Critic**: Uses an independent model for value estimation. Actor and critic parameters are optimized separately, at the cost of storing an additional model per agent.
 
-- **Shared Model**: Attaches a small value-head to the transformer backbone, sharing the actor model's history (or history-action) representations to reduce the space costs.
+- **Shared Model**: Attaches a small value head to the transformer backbone, sharing the actor model's history (or history-action) representations to reduce space costs.
 
 The critics are updated by minimizing the TD error:
 
@@ -134,17 +138,17 @@ where {{< katex >}}\epsilon{{< /katex >}} is `value_clip_range` and these errors
 - `value_loss_coef`: Coefficient for value loss
 - `value_clip_range`: Value clipping range in shared-model mode; `None` disables clipping
 - `advantage_normalization`: Whether to normalize advantages
-- `rollout_buffer_size`: Number of samples to collect before update
+- `rollout_buffer_size`: Number of samples to collect before an update
 - `train_batch_size`: Mini-batch size for policy updates
 - `max_new_tokens`: Maximum new tokens to generate
 - `temperature`: Temperature for sampling
 - `top_p`: Top-p for nucleus sampling
 - `top_k`: Top-k for sampling
 - `num_generations`: Number of generations per prompt per agent
-- `use_separate_critic`: Whether to use separate critic model
+- `use_separate_critic`: Whether to use a separate critic model
 - `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
 - `critic_value_head_hidden_dim`: Hidden dimension for critic value head
-- `value_head_hidden_dim`: Hidden dimension for value head in shared-critic mode
+- `value_head_hidden_dim`: Hidden dimension for value head in shared-model mode
 - `external_prompt_passthrough`: Use external prompts directly in multi-turn
 - `discount`: Discount factor in TD targets; logged `expected_return` uses undiscounted reward sums
 - `early_termination_threshold`: Stop when a turn's mean processed reward exceeds this threshold; `None` disables early stopping

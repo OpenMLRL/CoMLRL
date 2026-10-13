@@ -1,0 +1,83 @@
+% Source for docs/static/img/madpo-training.svg. Rebuild from the repository root:
+%   pdflatex -output-directory=/tmp docs/scripts/madpo-training.tex
+%   pdf2svg /tmp/madpo-training.pdf docs/static/img/madpo-training.svg
+%   python3 docs/scripts/prepare_rollout_svgs.py
+% Keep the stage boundaries in prepare_rollout_svgs.py in sync with the row positions.
+% Shared preamble for the CoMLRL training-flow diagrams. Paste it verbatim at the
+% top of every diagram so each .tex stays standalone.
+\documentclass[tikz,border=3pt]{standalone}
+\usepackage{amsmath,amssymb,bm}
+\usetikzlibrary{arrows.meta,positioning,calc,fit}
+
+% Only these paints have dark-theme mappings (assets/_diagram-theme.scss).
+\colorlet{agentA}{red!80!black}     % agent 1: policy, prompts, responses, loss
+\colorlet{agentB}{blue!80!black}    % agent 2
+\colorlet{learned}{orange!80!black} % learned evaluators: critic, reward model
+\colorlet{update}{green!50!black}   % gradients and parameter updates
+% Joint or shared quantities are black. Gray = black with fill opacity.
+
+\tikzset{
+  >={Stealth[length=3.2pt,width=3pt]},
+  box/.style={draw, line width=1pt, inner sep=2.5pt, minimum height=13pt},
+  policy/.style={box, rounded corners=3pt, minimum width=30pt},
+  flow/.style={->, line width=.8pt},
+  note/.style={font=\scriptsize, align=left},
+  label/.style={anchor=west, font=\footnotesize},
+}
+
+% MADPO: task-reward preference pairs, then one joint loss on the summed
+% per-agent margins; no reward model and no RL stage.
+% Rows are animation stages; avoid \frac and \_ (their rules animate as edges).
+% Rows 0-2 match marlhf-training.tex exactly.
+\begin{document}
+\begin{tikzpicture}[x=1pt, y=1pt, font=\footnotesize]
+  \def\xa{130}  % agent 1 column
+  \def\xc{190}  % shared column
+  \def\xb{250}  % agent 2 column
+
+  % Stage 0: prompts and policies.
+  \node[label] at (0,0) {prompts};
+  \node[policy, agentA] (p1) at (\xa,0) {$\pi_{\theta_1}$};
+  \node[policy, agentB] (p2) at (\xb,0) {$\pi_{\theta_2}$};
+  \node[box] (h1) at (\xc-17,0) {$h_{1,0}$};
+  \node[box] (h2) at (\xc+17,0) {$h_{2,0}$};
+  \draw[flow] (h1) -- (p1);
+  \draw[flow] (h2) -- (p2);
+
+  % Stage 1: candidates with the same index k form a joint response and share
+  % one task reward.
+  \node[label] at (0,-34) {sample, score};
+  \node[box, agentA] (a1) at (\xa,-34) {$a^k_{1,0}$};
+  \node[box, agentB] (a2) at (\xb,-34) {$a^k_{2,0}$};
+  \node (r) at (\xc,-34) {$R(\mathbf{h}_0,\mathbf{a}^k_0)$};
+  \draw[flow, agentA] (p1) -- (a1);
+  \draw[flow, agentB] (p2) -- (a2);
+  \draw[flow, agentA] (a1) -- (r);
+  \draw[flow, agentB] (a2) -- (r);
+
+  % Stage 2: a higher-reward joint response is the winner.
+  \node[label] at (0,-66) {pair $w\succ l$};
+  \node[box] (B) at (\xc,-66) {$(\mathbf{h}^w_H,\mathbf{h}^l_H)$};
+  \draw[flow] (r) -- (B);
+
+  % Stage 3: each agent's log-probability margin on the pair.
+  \node[label] at (0,-98) {agent margins};
+  \node[box, agentA] (d1) at (\xa,-98) {$\Delta_{\theta_1}$};
+  \node[box, agentB] (d2) at (\xb,-98) {$\Delta_{\theta_2}$};
+  \draw[flow] (B) -- (d1);
+  \draw[flow] (B) -- (d2);
+
+  % Stage 4: the joint margin enters one loss.
+  \node[label] at (0,-132) {joint loss};
+  \node[box, minimum width=150pt] (L) at (\xc,-132) {$-\log\sigma(\eta\,\Delta_{\bm\theta}),\ \Delta_{\bm\theta}=\textcolor{agentA}{\Delta_{\theta_1}}+\textcolor{agentB}{\Delta_{\theta_2}}$};
+  \draw[flow, agentA] (d1) -- (d1 |- L.north);
+  \draw[flow, agentB] (d2) -- (d2 |- L.north);
+
+  % Stage 5: each agent backpropagates only through its own margin.
+  \node[label] at (0,-166) {update via own $\Delta_{\theta_i}$};
+  \node[policy, agentA] (q1) at (\xa,-166) {$\pi_{\theta_1}'$};
+  \node[policy, agentB] (q2) at (\xb,-166) {$\pi_{\theta_2}'$};
+  \draw[flow, update] (q1 |- L.south) -- (q1);
+  \draw[flow, update] (q2 |- L.south) -- (q2);
+\end{tikzpicture}
+\end{document}

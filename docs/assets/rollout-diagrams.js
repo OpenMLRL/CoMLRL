@@ -1,9 +1,9 @@
 (function () {
   'use strict';
 
-  var STEP_DURATION = 1100;
-  var EDGE_DURATION = 650;
-  var NODE_DURATION = 250;
+  var STEP_DURATION = 1800;
+  var EDGE_DURATION = 900;
+  var NODE_DURATION = 450;
 
   function initializeRollouts() {
     var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');

@@ -29,7 +29,7 @@ config = IACConfig(
 `agent_devices` is required in `"mp"` mode. `critic_devices` is also required
 when `use_separate_critic=True`. Each model stays on its assigned device; this
 does not split an individual model across GPUs. Responses are passed to the
-reward function and rewards are used for each agent's update.
+reward function, and the rewards are used for each agent's update.
 
 Device indices refer to the GPUs visible to the Python process. Configure the
 device lists to match your machine and the memory needed by each model. Changing

@@ -80,7 +80,7 @@ assert reward_func(["Hi"], ["Hello"], batch_items=[item]) == [1.0]
 assert reward_func([""], ["Hello"], batch_items=[item]) == [0.0]
 ```
 
-For multi-turn tasks, formatters may also accept `external_prompts`. See [Multi-Turn Interaction]({{< relref "docs/user-guide/multi-turn-training" >}}) for the transition interface.
+For multi-turn tasks, formatters may also accept `external_prompts`. See [Multi-Turn Interaction]({{< relref "docs/multi-turn/transition" >}}) for the transition interface.
 
 ## Training and Evaluation
 
@@ -116,7 +116,7 @@ metrics = trainer.evaluate(num_eval_samples=len(eval_dataset))
 print(metrics)
 ```
 
-For the MA-REINFORCE family, IAC, and MAAC, `eval_interval` counts training dataset items: evaluation runs before item zero of each epoch, then every configured interval. Set it to `0` for manual evaluation only. `eval_num_samples` limits the number of dataset rows evaluated, starting from the beginning of the evaluation split. Use a positive count; to evaluate the entire split, use its length. `eval_batch_size` controls the evaluation data loader batch size, not the number of generated responses per agent.
+For the MAREINFORCE family, IAC, and MAAC, `eval_interval` counts training dataset items: evaluation runs before item zero of each epoch, then at every configured interval. Set it to `0` for manual evaluation only. `eval_num_samples` limits the number of dataset rows evaluated, starting from the beginning of the evaluation split. Use a positive count; to evaluate the entire split, use its length. `eval_batch_size` controls the evaluation data loader batch size, not the number of generated responses per agent.
 
 MAGRPO, IAC, and MAAC generate one response per agent per turn during evaluation. IAC and MAAC use their rollout collection path, with the configured turn structure, but their `evaluate()` method takes no sample-count argument:
 

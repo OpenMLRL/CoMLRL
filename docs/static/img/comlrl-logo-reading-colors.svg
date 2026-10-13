@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 333">
+  <!-- Color map only: the original PNG remains the CSS alpha mask.
+       Four alternating groups repeat the daylight design: three petals per group.
+       Outer A: 0/8/9; outer B: 1/2/12; inner A: 3/6/10; inner B: 4/5/11.
+       Each petal uses its local vertical gradient; the central C (7) is solid.
+       Regions follow the original alpha components; do not resize independently.
+       Original PNG SHA-256: 638b1bb4bf1925873a540c3f2958f73234e558e1fd14ac62da221c7e73531436 -->
+  <defs>
+    <linearGradient id="outer-a">
+      <stop offset="0" stop-color="#9c681d"/>
+      <stop offset="1" stop-color="#9b4057"/>
+    </linearGradient>
+    <linearGradient id="outer-b">
+      <stop offset="0" stop-color="#755386"/>
+      <stop offset="1" stop-color="#b35d2c"/>
+    </linearGradient>
+    <linearGradient id="inner-a">
+      <stop offset="0" stop-color="#6d7843"/>
+      <stop offset="1" stop-color="#a77833"/>
+    </linearGradient>
+    <linearGradient id="inner-b">
+      <stop offset="0" stop-color="#a76032"/>
+      <stop offset="1" stop-color="#925b81"/>
+    </linearGradient>
+    <linearGradient id="petal-0" href="#outer-a" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="57"/>
+    <linearGradient id="petal-1" href="#outer-b" gradientUnits="userSpaceOnUse" x1="0" y1="53" x2="0" y2="152"/>
+    <linearGradient id="petal-2" href="#outer-b" gradientUnits="userSpaceOnUse" x1="0" y1="61" x2="0" y2="163"/>
+    <linearGradient id="petal-3" href="#inner-a" gradientUnits="userSpaceOnUse" x1="0" y1="71" x2="0" y2="122"/>
+    <linearGradient id="petal-4" href="#inner-b" gradientUnits="userSpaceOnUse" x1="0" y1="74" x2="0" y2="126"/>
+    <linearGradient id="petal-5" href="#inner-b" gradientUnits="userSpaceOnUse" x1="0" y1="129" x2="0" y2="195"/>
+    <linearGradient id="petal-6" href="#inner-a" gradientUnits="userSpaceOnUse" x1="0" y1="137" x2="0" y2="203"/>
+    <linearGradient id="petal-8" href="#outer-a" gradientUnits="userSpaceOnUse" x1="0" y1="169" x2="0" y2="271"/>
+    <linearGradient id="petal-9" href="#outer-a" gradientUnits="userSpaceOnUse" x1="0" y1="180" x2="0" y2="279"/>
+    <linearGradient id="petal-10" href="#inner-a" gradientUnits="userSpaceOnUse" x1="0" y1="206" x2="0" y2="258"/>
+    <linearGradient id="petal-11" href="#inner-b" gradientUnits="userSpaceOnUse" x1="0" y1="210" x2="0" y2="261"/>
+    <linearGradient id="petal-12" href="#outer-b" gradientUnits="userSpaceOnUse" x1="0" y1="275" x2="0" y2="332"/>
+    <linearGradient id="wordmark" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="333">
+      <stop offset=".28" stop-color="#9c681d"/>
+      <stop offset=".42" stop-color="#b35d2c"/>
+      <stop offset=".56" stop-color="#9b4057"/>
+      <stop offset=".70" stop-color="#75445f"/>
+    </linearGradient>
+  </defs>
+  <rect x="330" width="950" height="333" fill="url(#wordmark)"/>
+  <polygon points="93,52 94,46 95,42 96,39 98,34 101,28 105,22 111,15 117,10 120,8 125,5 132,2 136,1 141,0 156,0 161,1 165,2 168,3 174,6 180,10 189,19 193,25 196,31 198,37 199,41 200,50 200,54 199,57 93,57" fill="url(#petal-0)"/>
+  <polygon points="218,59 222,57 228,55 233,54 239,53 252,53 259,54 263,55 269,57 277,61 280,63 284,66 290,72 293,76 296,81 297,83 299,88 300,92 301,97 301,113 300,118 298,124 294,132 292,135 289,139 283,145 279,148 276,150 272,152 270,152 219,64 218,62" fill="url(#petal-1)"/>
+  <polygon points="0,104 1,99 2,95 4,90 6,86 10,80 19,71 22,69 27,66 32,64 38,62 44,61 57,61 63,62 67,63 70,64 80,69 81,70 81,71 29,163 27,163 23,160 13,150 10,146 8,143 4,135 2,129 1,125 0,120" fill="url(#petal-2)"/>
+  <polygon points="154,88 157,84 161,80 167,76 171,74 177,72 183,71 188,71 195,72 198,73 204,76 209,80 210,81 213,85 216,91 217,94 218,100 218,106 217,112 216,115 213,121 212,122 211,122 155,90 154,89" fill="url(#petal-3)"/>
+  <polygon points="82,106 83,99 85,93 88,87 96,79 104,75 108,74 121,74 125,75 128,76 130,77 136,81 139,84 142,88 144,92 144,93 90,125 88,126 86,126 85,124 83,118 82,111" fill="url(#petal-4)"/>
+  <polygon points="220,129 225,129 229,130 235,132 240,135 243,137 248,142 251,146 254,152 255,156 255,172 254,175 251,181 249,184 244,189 241,191 237,193 231,195 220,195" fill="url(#petal-5)"/>
+  <polygon points="49,168 50,160 51,157 54,151 56,148 61,143 64,141 68,139 74,137 85,137 85,203 80,203 76,202 70,200 68,199 62,195 56,189 54,186 51,180 50,177 49,170" fill="url(#petal-6)"/>
+  <polygon points="135,161 136,157 138,153 140,150 142,148 145,146 151,144 162,144 165,145 167,146 168,147 169,149 170,180 170,184 169,186 167,188 163,190 158,191 151,191 147,190 143,188 138,183 136,179 135,176" fill="#b35d2c"/>
+  <polygon points="224,261 276,169 277,169 279,170 282,172 292,182 295,186 297,189 300,195 302,200 303,203 304,207 305,213 305,228 304,233 301,242 299,246 297,249 294,253 286,261 283,263 278,266 273,268 267,270 261,271 247,271 242,270 238,269 235,268 225,263 224,262" fill="url(#petal-8)"/>
+  <polygon points="4,219 5,214 7,208 11,200 13,197 16,193 22,187 26,184 29,182 33,180 35,180 86,268 87,270 87,273 83,275 77,277 72,278 66,279 52,279 46,278 42,277 36,275 28,271 22,267 15,260 12,256 10,253 8,249 6,244 4,236" fill="url(#petal-9)"/>
+  <polygon points="161,239 217,206 219,206 220,208 221,211 222,215 223,222 223,225 222,233 220,239 218,243 216,246 209,253 201,257 197,258 183,258 177,256 173,254 169,251 165,247 161,241" fill="url(#petal-10)"/>
+  <polygon points="87,225 88,220 89,217 92,211 93,210 94,210 150,242 151,243 151,244 148,248 144,252 138,256 134,258 128,260 122,261 116,261 110,260 107,259 101,256 97,253 95,251 92,247 89,241 88,238 87,233" fill="url(#petal-11)"/>
+  <polygon points="105,276 106,275 212,275 212,279 211,286 210,290 209,293 207,298 204,304 200,310 194,317 188,322 185,324 180,327 173,330 169,331 164,332 148,332 143,331 137,329 131,326 125,322 116,313 113,309 109,301 107,295 106,291 105,283" fill="url(#petal-12)"/>
+</svg>

@@ -70,21 +70,22 @@ a:focus-visible, button:focus-visible, input:focus-visible {
 .docs-brand {
   flex: 0 0 $menu-width;
   display: flex;
-  img { display: block; width: 154px; height: auto; }
-  .docs-logo-dark {
+  img { display: block; width: 136px; height: auto; }
+  .docs-logo-themed {
     display: none;
-    width: 154px;
+    width: 136px;
     aspect-ratio: 1280 / 333;
     // Use the original alpha so every letter and crescent stays pixel-aligned.
     // URLs resolve beside Hugo's root-level stylesheet, including on Pages.
-    background: linear-gradient(135deg, #ffd18a 0%, #ffad66 50%, #f3954b 100%);
+    background: var(--docs-logo-gradient);
     -webkit-mask: url("img/comlrl-logo.png") center / contain no-repeat;
     mask: url("img/comlrl-logo.png") center / contain no-repeat;
   }
 }
-html[data-theme="dark"] .docs-brand {
+html[data-theme="dark"] .docs-brand,
+html[data-theme="reading"] .docs-brand {
   .docs-logo-light { display: none; }
-  .docs-logo-dark { display: block; }
+  .docs-logo-themed { display: block; }
 }
 .docs-theme-switcher {
   flex: 0 0 auto;
@@ -245,7 +246,7 @@ main.container {
 }
 .book-menu {
   flex: 0 0 $menu-width;
-  font-size: .875rem;
+  font-size: .8125rem;
   .book-menu-content {
     position: sticky;
     top: $docs-content-top;
@@ -264,35 +265,42 @@ main.container {
   position: sticky;
   top: $docs-content-top;
   a, label { color: $docs-muted; line-height: 1.55; }
-  nav > ul > li { margin: 1.5rem 0 0; }
+  nav > ul > li { margin: 2.25rem 0 0; }
   nav > ul > li > a, nav > ul > li > label, .docs-nav-group-title {
     display: block;
     color: $docs-ink;
-    font-size: .75rem;
-    font-weight: 650;
-    letter-spacing: .075em;
-    text-transform: uppercase;
-    padding: .4rem .75rem;
-    margin-bottom: .35rem;
+    font-size: inherit;
+    font-weight: 600;
+    line-height: 1.55;
+    letter-spacing: .01em;
+    text-transform: none;
+    padding: .25rem .75rem;
+    margin-bottom: .125rem;
   }
   .docs-nav-group-title {
     display: flex;
-    align-items: flex-start;
-    gap: .5rem;
+    align-items: center;
+    gap: .375rem;
     .docs-nav-icon {
-      flex: 0 0 .9375rem;
-      width: .9375rem;
-      height: .9375rem;
-      margin-top: .075rem;
+      flex: 0 0 1em;
+      width: 1em;
+      height: 1em;
+      color: $docs-muted;
     }
     .docs-nav-label { min-width: 0; }
   }
   nav > ul > li > ul { padding-inline-start: 0; }
   nav ul ul a, .docs-home-link {
     padding: .45rem .75rem;
-    margin: .08rem 0;
-    border-radius: .5rem;
+    margin: .0625rem 0;
+    border-radius: .375rem;
+    font-weight: 450;
   }
+  nav ul ul a {
+    padding-block: .375rem;
+    padding-inline: 2.3125rem .5rem;
+  }
+  .docs-home-link { font-weight: 500; }
   nav a[href]:hover { opacity: 1; background: var(--docs-surface-hover); color: $docs-ink; }
   nav a.active { background: var(--docs-accent-soft); color: var(--docs-accent-strong); font-weight: 550; box-shadow: inset 2px 0 var(--docs-accent-line); }
 }
@@ -304,17 +312,17 @@ main.container {
 }
 .docs-eyebrow { color: $docs-accent; font-size: .75rem; font-weight: 550; letter-spacing: .025em; margin-bottom: .875rem; }
 .docs-page-title {
-  font-size: 2.375rem;
+  font-size: 1.875rem;
   line-height: 1.2;
   letter-spacing: -.045em;
   font-weight: 600;
   color: var(--docs-ink);
-  margin: 0 0 1.75rem;
+  margin: 0 0 1.5rem;
   text-wrap: balance;
   overflow-wrap: break-word;
 }
 .book-article.markdown {
-  font-size: 1rem;
+  font-size: .96875rem;
   line-height: 1.8;
   letter-spacing: -.012em;
   color: var(--docs-body);
@@ -329,10 +337,10 @@ main.container {
     letter-spacing: -.03em;
     scroll-margin-top: 9.5rem;
   }
-  h1 { font-size: 2.375rem; line-height: 1.2; letter-spacing: -.045em; }
-  h2 { font-size: 1.5625rem; margin: 2.5rem 0 .875rem; }
-  h3 { font-size: 1.1875rem; margin: 1.875rem 0 .75rem; }
-  h4, h5, h6 { font-size: 1.0625rem; }
+  h1 { font-size: 1.875rem; line-height: 1.2; letter-spacing: -.045em; }
+  h2 { font-size: 1.375rem; margin: 2.25rem 0 .75rem; }
+  h3 { font-size: 1.125rem; margin: 1.75rem 0 .75rem; }
+  h4, h5, h6 { font-size: 1rem; }
   li { margin: .35rem 0; }
   li::marker { color: var(--docs-faint); }
   a, a[href]:visited { color: $docs-accent; }
@@ -827,7 +835,7 @@ body.docs-visual-open { overflow: hidden; }
 }
 #mobile-toc { margin-top: 1rem; padding: 1rem; background: var(--docs-surface-tint); border-radius: .65rem; }
 
-@media screen and (max-width: 72rem) {
+@media screen and (max-width: 76rem) {
   .docs-header-inner, main.container { gap: 2.5rem; padding-left: 1.5rem; padding-right: 1.5rem; }
   .docs-area-tabs-inner { padding: 0 1.5rem; }
   .docs-header-links { gap: 1rem; }
@@ -842,7 +850,7 @@ body.docs-visual-open { overflow: hidden; }
 @media screen and (max-width: $mobile-breakpoint) {
   .docs-header-inner { padding: 0 1.25rem; gap: 1.25rem; }
   .docs-area-tabs-inner { padding: 0 7.25rem 0 1.25rem; gap: 1.75rem; }
-  .docs-brand { flex: 0 0 auto; img, .docs-logo-dark { width: 124px; } }
+  .docs-brand { flex: 0 0 auto; img, .docs-logo-themed { width: 120px; } }
   .docs-header-search { max-width: none; }
   .docs-header-links {
     position: absolute;
@@ -869,7 +877,7 @@ body.docs-visual-open { overflow: hidden; }
       bottom: 0;
       max-height: none;
       width: $menu-width;
-      padding: 1.5rem 1rem;
+      padding: 1.5rem .75rem;
       background: var(--docs-surface);
     }
   }
@@ -880,14 +888,14 @@ body.docs-visual-open { overflow: hidden; }
     .book-page { opacity: 1; }
     .book-menu-overlay { top: $docs-header-height; z-index: 25; background: rgba(25, 20, 35, .25); }
   }
-  .docs-page-title { font-size: 1.875rem; letter-spacing: -.04em; margin-bottom: 1.5rem; }
+  .docs-page-title { font-size: 1.625rem; letter-spacing: -.04em; margin-bottom: 1.25rem; }
   .book-article.markdown {
-    font-size: 1rem;
+    font-size: .96875rem;
     line-height: 1.8;
     .docs-resource-grid { grid-template-columns: 1fr; }
-    h1 { font-size: 1.875rem; }
-    h2 { font-size: 1.375rem; margin-top: 2rem; }
-    h3 { font-size: 1.125rem; }
+    h1 { font-size: 1.625rem; }
+    h2 { font-size: 1.25rem; margin-top: 2rem; }
+    h3 { font-size: 1.0625rem; }
   }
   .book-search input { font-size: 1rem; padding-left: 2.3rem; }
   .docs-header-search kbd { display: none; }
@@ -916,8 +924,9 @@ body.docs-visual-open { overflow: hidden; }
   .book-menu-content, .book-toc-content, .book-article.markdown .docs-resource-card { transition: none; }
 }
 @media print {
-  html[data-theme="dark"] .docs-brand {
-    .docs-logo-dark { display: none; }
+  html[data-theme="dark"] .docs-brand,
+  html[data-theme="reading"] .docs-brand {
+    .docs-logo-themed { display: none; }
     .docs-logo-light { display: block; }
   }
   .docs-site-header, .docs-skip-link, .book-header, .book-menu, .book-toc, .copy-code-button { display: none !important; }
@@ -932,7 +941,7 @@ body.docs-visual-open { overflow: hidden; }
 
 .book-kind-home .book-article > p:first-child[style] {
   font-family: inherit !important;
-  font-size: 1.625rem !important;
+  font-size: 1.375rem !important;
   font-weight: 500 !important;
   line-height: 1.4 !important;
   letter-spacing: -.025em !important;

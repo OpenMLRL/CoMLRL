@@ -1,0 +1,108 @@
+% Source for docs/static/img/ac-training.svg. Rebuild from the repository root:
+%   pdflatex -output-directory=/tmp docs/scripts/ac-training.tex
+%   pdf2svg /tmp/ac-training.pdf docs/static/img/ac-training.svg
+%   python3 docs/scripts/prepare_rollout_svgs.py
+% Keep the stage boundaries in prepare_rollout_svgs.py in sync with the row positions.
+% Shared preamble for the CoMLRL training-flow diagrams. Paste it verbatim at the
+% top of every diagram so each .tex stays standalone.
+\documentclass[tikz,border=3pt]{standalone}
+\usepackage{amsmath,amssymb,bm}
+\usetikzlibrary{arrows.meta,positioning,calc,fit}
+
+% Only these paints have dark-theme mappings (assets/_diagram-theme.scss).
+\colorlet{agentA}{red!80!black}     % agent 1: policy, prompts, responses, loss
+\colorlet{agentB}{blue!80!black}    % agent 2
+\colorlet{learned}{orange!80!black} % learned evaluators: critic, reward model
+\colorlet{update}{green!50!black}   % gradients and parameter updates
+% Joint or shared quantities are black. Gray = black with fill opacity.
+
+\tikzset{
+  >={Stealth[length=3.2pt,width=3pt]},
+  box/.style={draw, line width=1pt, inner sep=2.5pt, minimum height=13pt},
+  policy/.style={box, rounded corners=3pt, minimum width=30pt},
+  flow/.style={->, line width=.8pt},
+  note/.style={font=\scriptsize, align=left},
+  label/.style={anchor=west, font=\footnotesize},
+}
+
+% One MAAC turn and update. Columns: agent 1 (left), shared critic (center), agent 2 (right).
+% Rows are animation stages; avoid \frac and \_ (their rules animate as edges).
+\begin{document}
+\begin{tikzpicture}[x=1pt, y=1pt, font=\footnotesize]
+  \def\xa{93}   % agent 1 column
+  \def\xc{188}  % shared column
+  \def\xb{282}  % agent 2 column
+
+  % Stage 0: joint history and policies.
+  \node[label] at (0,-11) {history};
+  \node[box] (o) at (\xc,0) {$\mathbf{o}_0\sim\mathcal{D}$};
+  \node[box] (h1) at (\xa,0) {$h_{1,t}$};
+  \node[box] (h2) at (\xb,0) {$h_{2,t}$};
+  \draw[flow] (o) -- node[above, font=\scriptsize] {formatter} (h1);
+  \draw[flow] (o) -- node[above, font=\scriptsize] {formatter} (h2);
+  \node[policy, agentA] (p1) at (\xa,-22) {$\pi_{\theta_1}$};
+  \node[policy, agentB] (p2) at (\xb,-22) {$\pi_{\theta_2}$};
+  \draw[flow] (h1) -- (p1);
+  \draw[flow] (h2) -- (p2);
+  \node at (\xc,-22) {$\mathbf{h}_t=(h_{1,t},h_{2,t})$};
+
+  % Stage 1: one response per agent and turn.
+  \node[label] at (0,-56) {sample};
+  \node[box, agentA] (a1) at (\xa,-56) {$a_{1,t}$};
+  \node[box, agentB] (a2) at (\xb,-56) {$a_{2,t}$};
+  \draw[flow, agentA] (p1) -- (a1);
+  \draw[flow, agentB] (p2) -- (a2);
+  \node[note, align=center] at (\xc,-56) {one response per agent and turn\\\texttt{num\char95generations}$\,=1$};
+
+  % Stage 2: reward and, if another turn follows, the next joint history.
+  \node[label] at (0,-96) {reward};
+  \node[box] (j) at (\xc,-92) {$\textcolor{agentA}{a_{1,t}}\,\textcolor{agentB}{a_{2,t}}$};
+  \draw[flow, agentA] (a1.south) -- (j.north west);
+  \draw[flow, agentB] (a2.south) -- (j.north east);
+  \node (r) at (\xa,-92) {$\tilde r_{i,t}$};
+  \node[box] (hn) at (\xb,-92) {$\mathbf{h}_{t+1}$};
+  \draw[flow] (j) -- (r);
+  \draw[flow] (j) -- (hn);
+  \node[note] at (\xa,-105) {\texttt{reward\char95func}};
+  \node[note] at (\xb,-105) {\texttt{external\char95transition}};
+
+  % Stage 3: the centralized critic, TD target and residual.
+  \node[label] at (0,-142) {critic};
+  \node[policy, learned] (c) at (\xc,-132) {$C_{\boldsymbol{\phi}}$};
+  \draw[flow] (j) -- (c);
+  \draw[flow] (\xb,-110) -- (c.north east);
+  \node[learned] (cv) at (\xc-50,-132) {$\bar C(x_t)$};
+  \node[learned] (cn) at (\xc+52,-132) {$\bar C(x_{t+1})$};
+  \draw[flow, learned] (c) -- (cv);
+  \draw[flow, learned] (c) -- (cn);
+  \node at (\xc,-151) {$y_{i,t}=\tilde r_{i,t}+\gamma m_t\bar C(x_{t+1}),\quad A_{i,t}=y_{i,t}-\bar C(x_t)$};
+  \node[note, anchor=west] at (46,-132) {$x_t=\mathbf{h}_t$ (V) or\\$(\mathbf{h}_t,\mathbf{a}_t)$ (Q)};
+  \node[note, anchor=west] at (264,-132) {IAC: a critic $C_{\phi_i}$\\per agent, on $x_{i,t}$};
+  \node[note] at (\xc,-163) {$m_t=1$ only if turn $t+1$ is collected; $\bar C$ is detached};
+
+  % Stage 4: per-agent actor losses and the critic's squared TD error.
+  \node[label] at (0,-196) {loss};
+  \node[box, agentA, align=center] (l1) at (\xa,-196)
+    {$\mathcal{L}_{\pi_1}=-\mathrm{mean}_{B_1}\operatorname{sg}(\widehat A_{1,t})$\\$\times\log\pi_{\theta_1}(a_{1,t}\mid h_{1,t})$};
+  \node[box, learned, align=center] (lc) at (\xc,-196)
+    {$\mathcal{L}_C=\mathrm{mean}_{B_i}$\\$(C_{\boldsymbol{\phi}}(x_t)-y_{i,t})^2$};
+  \node[box, agentB, align=center] (l2) at (\xb,-196)
+    {$\mathcal{L}_{\pi_2}=-\mathrm{mean}_{B_2}\operatorname{sg}(\widehat A_{2,t})$\\$\times\log\pi_{\theta_2}(a_{2,t}\mid h_{2,t})$};
+  \draw[flow] (\xc-40,-168) -- (l1.north east);
+  \draw[flow] (\xc,-168) -- (lc.north);
+  \draw[flow] (\xc+40,-168) -- (l2.north west);
+
+  % Stage 5: actor steps and sequential critic steps.
+  \node[label] at (0,-244) {update};
+  \draw[flow, update] (l1) -- (\xa,-230);
+  \draw[flow, update] (lc) -- (\xc,-230);
+  \draw[flow, update] (l2) -- (\xb,-230);
+  \node[update] at (\xa,-236) {$\theta_1\leftarrow\theta_1-\alpha\nabla_{\theta_1}\mathcal{L}_{\pi_1}$};
+  \node[update] at (\xc,-236) {$\boldsymbol{\phi}\leftarrow\boldsymbol{\phi}-\beta\nabla_{\boldsymbol{\phi}}\mathcal{L}_C$};
+  \node[update] at (\xb,-236) {$\theta_2\leftarrow\theta_2-\alpha\nabla_{\theta_2}\mathcal{L}_{\pi_2}$};
+  \node[note] at (\xc,-251) {for each agent $i$: actor step, then critic step on its batch $B_i$};
+  \node[policy, agentA] at (\xa,-266) {$\pi_{\theta_1}'$};
+  \node[policy, learned] at (\xc,-266) {$C_{\boldsymbol{\phi}}'$};
+  \node[policy, agentB] at (\xb,-266) {$\pi_{\theta_2}'$};
+\end{tikzpicture}
+\end{document}
