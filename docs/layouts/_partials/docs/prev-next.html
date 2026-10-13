@@ -1,0 +1,34 @@
+{{- $navigation := partial "docs/navigation" . -}}
+{{- $current := . -}}
+{{- $previous := false -}}
+{{- $next := false -}}
+{{- range $index, $page := $navigation.Pages -}}
+  {{- if $page.Eq $current -}}
+    {{- if gt $index 0 -}}
+      {{- $previous = index $navigation.Pages (sub $index 1) -}}
+    {{- end -}}
+    {{- if lt $index (sub (len $navigation.Pages) 1) -}}
+      {{- $next = index $navigation.Pages (add $index 1) -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- if or $previous $next }}
+<nav class="docs-page-navigation flex flex-wrap justify-between" aria-label="Adjacent pages">
+  <span>
+    {{ with $previous }}
+      <a href="{{ .RelPermalink }}" class="flex align-center" rel="prev">
+        <img src="{{ partial "docs/icon" "backward" }}" class="book-icon" alt="Previous page" />
+        <span>{{ partial "docs/title" . }}</span>
+      </a>
+    {{ end }}
+  </span>
+  <span>
+    {{ with $next }}
+      <a href="{{ .RelPermalink }}" class="flex align-center" rel="next">
+        <span>{{ partial "docs/title" . }}</span>
+        <img src="{{ partial "docs/icon" "forward" }}" class="book-icon" alt="Next page" />
+      </a>
+    {{ end }}
+  </span>
+</nav>
+{{- end }}

@@ -1,0 +1,97 @@
+// Chroma's friendly token colors, grouped from `hugo gen chromastyles --style=friendly`.
+// The surrounding pre owns its surface; unhighlighted text inherits the article color.
+// Decorator selectors use Chroma's fixed token class, not an English word.
+.book-article.markdown .chroma {
+  color: inherit;
+  code { color: inherit; }
+  .lnlinks { outline: none; text-decoration: none; color: inherit; }
+  .lntd { vertical-align: top; padding: 0; margin: 0; border: 0; }
+  .lntable { border-spacing: 0; padding: 0; margin: 0; border: 0; }
+  .hl { background-color: #d8d8d8; }
+  .lnt, .ln {
+    white-space: pre;
+    user-select: none;
+    margin-right: .4em;
+    padding: 0 .4em;
+    color: #7f7f7f;
+  }
+  .line { display: flex; }
+  .k, .kc, .kd, .kn, .kr, .ow { color: #007020; font-weight: bold; }
+  .kp, .ne, .nb, .bp, .cp, .cpf { color: #007020; }
+  .kt { color: #902000; }
+  .na { color: #4070a0; }
+  .nc, .nn { color: #0e84b5; font-weight: bold; }
+  .no { color: #60add5; }
+  .nd { color: #555; font-weight: bold; } // codespell:ignore nd
+  .ni { color: #d55537; font-weight: bold; }
+  .nl { color: #002070; font-weight: bold; }
+  .nt { color: #062873; font-weight: bold; }
+  .nv, .vc, .vg, .vi, .vm { color: #bb60d5; }
+  .nf, .fm { color: #06287e; }
+  .s, .sa, .sb, .sc, .dl, .s2, .sh, .s1 { color: #4070a0; }
+  .sd { color: #4070a0; font-style: italic; }
+  .se { color: #4070a0; font-weight: bold; }
+  .si { color: #70a0d0; }
+  .sx { color: #c65d09; }
+  .sr { color: #235388; }
+  .ss { color: #517918; }
+  .m, .mb, .mf, .mh, .mi, .il, .mo { color: #40a070; }
+  .o { color: #666; }
+  .c, .ch, .cm, .c1 { color: #60a0b0; font-style: italic; }
+  .cs { color: #60a0b0; background-color: #fff0f0; }
+  .gd { color: #a00000; }
+  .ge { font-style: italic; }
+  .gr { color: #f00; }
+  .gh { color: #000080; font-weight: bold; }
+  .gi { color: #00a000; }
+  .go { color: #888; }
+  .gp { color: #c65d09; font-weight: bold; }
+  .gs { font-weight: bold; }
+  .gu { color: #800080; font-weight: bold; }
+  .gt { color: #04d; }
+  .gl { text-decoration: underline; }
+  .w { color: #bbb; }
+}
+
+// A warm dark palette with separate colors for keywords, names, strings and numbers.
+// Every text color has at least 4.5:1 contrast on the code-card surface (#1f1f23).
+@media screen {
+html[data-theme="dark"] .book-article.markdown .chroma {
+  .hl { background-color: #38302a; }
+  .lnt, .ln, .w { color: #9ca1aa; }
+  .k, .kc, .kd, .kn, .kp, .kr, .kt, .ow { color: #ffad66; }
+  .na, .no, .nl, .nn, .py, .nv, .vc, .vg, .vi, .vm, .ld { color: #8dc7ff; }
+  .nc, .nd, .ne, .nf, .fm { color: #ffd09a; } // codespell:ignore nd
+  .ni { color: #ffad66; }
+  .nt, .nb, .bp { color: #92d7c1; }
+  .l, .s, .sa, .sb, .sc, .dl, .sd, .s2, .sh, .si, .sx, .sr, .s1, .ss { color: #a5d6ff; }
+  .se { color: #ffd09a; }
+  .m, .mb, .mf, .mh, .mi, .il, .mo { color: #92d7c1; }
+  .o { color: #ceccd1; }
+  .c, .ch, .cm, .c1, .cs, .cp, .cpf { color: #9ca1aa; }
+  .cs { background-color: transparent; }
+  .err, .gd, .gr, .gt { color: #ff9b94; }
+  .gi { color: #92d7c1; }
+  .gh, .gu, .gp { color: #ffad66; }
+  .go { color: #9ca1aa; }
+}
+}
+
+// Ink-like token colors remain legible on the reading mode's ivory surface.
+@media screen {
+  html[data-theme="reading"] .book-article.markdown .chroma {
+    .hl { background-color: #e2d6be; }
+    .lnt, .ln, .w, .go { color: #6f6659; }
+    .k, .kc, .kd, .kn, .kp, .kr, .kt, .ow, .nb, .bp { color: #376245; }
+    .na, .no, .nl, .nn, .py, .nv, .vc, .vg, .vi, .vm, .ld { color: #765532; }
+    .nc, .nd, .ne, .nf, .fm, .nt { color: #365f86; } // codespell:ignore nd
+    .ni, .se { color: #875224; }
+    .l, .s, .sa, .sb, .sc, .dl, .sd, .s2, .sh, .si, .sx, .sr, .s1, .ss { color: #365f86; }
+    .m, .mb, .mf, .mh, .mi, .il, .mo, .gi { color: #45684c; }
+    .o { color: #625a4f; }
+    .c, .ch, .cm, .c1, .cs, .cp, .cpf { color: #60685e; }
+    .cs { background-color: transparent; }
+    .err, .gd, .gr, .gt { color: #a04751; }
+    .gh, .gu, .gp { color: var(--docs-accent); }
+  }
+}

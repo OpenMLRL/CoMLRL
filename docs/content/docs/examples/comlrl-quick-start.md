@@ -3,9 +3,15 @@ title: CoMLRL Quick Start
 weight: 1
 ---
 
-This tutorial demonstrates how to train two LLM agents to collaborate to tell a story. The first agent generates a compact story setup, while the second agent produces a longer version. The reward function encourages the second agent's output to be 2–3× longer than the first agent's.
+This tutorial demonstrates a simple two-agent training task with a length-ratio reward. Both agents receive the same prompt and generate independently; the second agent does not see the first agent's response. The reward encourages the second output to contain 2–3× as many characters as the first. It does not evaluate story quality or semantic collaboration.
 
-To run this demo, please have at least 24 GB of GPU memory available. You can also visualize the training process by setting up your WandB dashboard.
+Run the example directly from an installed source checkout:
+
+```bash
+python examples/story-len-ratio.py
+```
+
+Memory requirements depend on the model, number of agents, batch size, and response length. W&B logging is disabled by default. To enable it, add `--wandb` (and optionally `--wandb-project` or `--wandb-entity`) to the command above.
 
 ## Import Libraries
 
@@ -101,15 +107,9 @@ config = MAGRPOConfig(
 
 ## Create the Trainer
 
-We instantiate the MAGRPO trainer with our agents, reward function, and configuration. The reward is scaled by 100× to provide a stronger learning signal.
+We instantiate the MAGRPO trainer with our agents, reward function, and configuration. `RewardProcessors.scale` multiplies task rewards by 100. With the default `advantage_normalization=True`, this positive scaling is largely canceled by normalization and should not be interpreted as a 100× stronger policy gradient.
 
 ```python
-wandb_config = {
-    "project": "your-project-name",
-    "entity": "your-entity-name",
-    "name": "length-ratio-demo",
-}
-
 configured_reward_func = partial(
     proper_length_ratio_reward, target_min=2, target_max=3
 )
@@ -121,7 +121,6 @@ trainer = MAGRPOTrainer(
     args=config,
     train_dataset=train_dataset,
     tokenizer=tokenizer,
-    wandb_config=wandb_config,
 )
 ```
 

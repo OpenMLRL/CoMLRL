@@ -62,7 +62,7 @@ def build_prompt_formatters(tokenizer):
                 raise KeyError("Expected 'prompt' field in dataset example.")
 
             apply_template = getattr(tokenizer, "apply_chat_template", None)
-            if callable(apply_template):
+            if callable(apply_template) and getattr(tokenizer, "chat_template", None):
                 messages = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
@@ -113,9 +113,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ratio-max", type=float, default=3.0)
     parser.add_argument("--short-target-chars", type=int, default=220)
     parser.add_argument("--short-target-scale", type=float, default=None)
-    parser.add_argument("--wandb-project", type=str, default="iac")
-    parser.add_argument("--wandb-entity", type=str, default="OpenMLRL")
-    parser.add_argument("--wandb-run-name", type=str, default="iac_tldr")
+    parser.add_argument("--wandb", action="store_true", help="Enable W&B logging.")
+    parser.add_argument("--wandb-project", help="Enable W&B with this project.")
+    parser.add_argument("--wandb-entity", help="W&B workspace (default: OpenMLRL).")
+    parser.add_argument("--wandb-run-name", help="Optional W&B run name.")
     return parser.parse_args()
 
 
@@ -158,11 +159,13 @@ def main() -> None:
         num_turns=1,
     )
 
-    wandb_config = {
-        "entity": args.wandb_entity,
-        "project": args.wandb_project,
-        "name": args.wandb_run_name,
-    }
+    wandb_config = None
+    if args.wandb or any((args.wandb_project, args.wandb_entity, args.wandb_run_name)):
+        wandb_config = {
+            "entity": args.wandb_entity or "OpenMLRL",
+            "project": args.wandb_project,
+            "name": args.wandb_run_name,
+        }
 
     reward_fn = partial(
         dual_length_reward,
@@ -173,7 +176,7 @@ def main() -> None:
     )
 
     trainer = IACTrainer(
-        model=args.model_name,
+        agent_model=args.model_name,
         tokenizer=tokenizer,
         reward_func=reward_fn,
         formatters=build_prompt_formatters(tokenizer),

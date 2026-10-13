@@ -21,39 +21,46 @@
 
 <img src="docs/assets/demo.gif" width="500px;" alt=""/>
 
-## Installation
+## Installation and first run
 
-CoMLRL can be installed via PyPI, conda-forge, or from source:
+Install a PyTorch build compatible with your machine, then run an example directly
+with Python. No job scheduler or W&B account is required.
 
 ```bash
-# Install from PyPI
-pip install comlrl
-
-# Install from conda-forge
-conda install -c conda-forge comlrl
-
-# Install from source
 git clone https://github.com/OpenMLRL/CoMLRL.git
-cd CoMLRL && pip install -e .
-
-# Install Compatible PyTorch
+cd CoMLRL
+pip install -e .
+python examples/story-len-ratio.py
 ```
 
-## Slurm runtime cache
+Memory requirements depend on the model, number of agents, batch size, and response
+length. The examples leave W&B logging disabled by default; enable it explicitly
+(add `--wandb-project` or `--wandb-entity` to choose where runs are logged):
 
-Domain launchers can isolate CUDA JIT caches per job on node-local storage,
-avoiding contention in a shared NFS home directory. See the
-[runtime cache guide](docs/runtime_cache.md); this does not change trainer algorithms.
+```bash
+python examples/story-len-ratio.py --wandb
+```
+
+For use in your own Python programs, CoMLRL is also available via PyPI or conda-forge:
+
+```bash
+pip install comlrl
+# Or:
+conda install -c conda-forge comlrl
+```
 
 ## Features
 
-- **Cooperative MARL trainers to optimize decentralized LLM collaboration:**
+- **Cooperative trainers for LLM collaboration:**
   - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFORCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/maremax.py).
     - Aligned individual response joint with `joint_mode='aligned'`.
-    - Memory-efficient cross joint with `joint_mode='cross'`.
+    - Cartesian-product joint responses with `joint_mode='cross'`.
   - **_Multi-Agent Actor-Critic:_** Actor-Critic methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/maac.py).
     - Independent actor-critic (separate critic or value-head over LLM backbone).
     - Centralized critic over joint prompts with separate actors.
+  - **_Multi-Agent Preference Learning:_** [MADPO](comlrl/trainers/preference/madpo.py), [MARLHF](comlrl/trainers/preference/marlhf.py), and their [iterative variants](comlrl/trainers/preference/iterative.py).
+    - Direct joint preference optimization or learned joint rewards followed by RL.
+    - Decentralized actors or a centralized actor generating a complete joint response.
 
 - **Environments that simulate real-world tasks for training and evaluating LLM collaboration:**
   - [**_Writing_**](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
@@ -70,7 +77,7 @@ avoiding contention in a shared NFS home directory. See the
 
 ## Usage
 
-Quick start by training 2 `Qwen-2.5` to summarize Reddit posts with MAGRPO:
+Quick start by training two `Qwen-2.5` agents on Reddit prompts with MAGRPO. This toy reward encourages a 3:1 output-length ratio; it does not measure summary quality:
 
 ```python
 from datasets import load_dataset
@@ -87,10 +94,12 @@ trainer = MAGRPOTrainer(
     num_agents=2,
     tokenizer=tokenizer,
     train_dataset=dataset,
-    reward_func=lambda a, b: [abs(max(len(b[0]), 1) / max(len(a[0]), 1) - 3.0)],
+    reward_func=lambda a, b: [
+        -abs(len(second) / max(len(first), 1) - 3.0)
+        for first, second in zip(a, b)
+    ],
     formatters=[lambda example: example["prompt"]] * 2,
-    args=MAGRPOConfig(
-    ),
+    args=MAGRPOConfig(num_turns=1),
 )
 trainer.train()
 ```

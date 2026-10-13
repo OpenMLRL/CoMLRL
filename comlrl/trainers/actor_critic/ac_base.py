@@ -1,15 +1,104 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import torch
+import torch.nn.functional as F
 import wandb
 from tqdm import tqdm  # type: ignore
 from torch.utils.data import DataLoader
 
+from comlrl.models.actor_critic import CausalLMWithValueHead
+from comlrl.utils.reference_kl import reference_kl_coef, reference_kl_enabled
+
 
 class ActorCriticTrainerBase:
     """Shared training utilities for actor-critic style trainers."""
+
+    def _kl_shaped_reward(
+        self, reward: float, data: Dict[str, Any], index: int
+    ) -> Tuple[float, Dict[str, float]]:
+        if not reference_kl_enabled(self.args):
+            return reward, {}
+        reference_kl = 0.0
+        raw_kls = data.get("reference_kls") or []
+        if index < len(raw_kls):
+            reference_kl = float(raw_kls[index])
+        penalty = reference_kl_coef(self.args) * reference_kl
+        return reward - penalty, {
+            "reference_kl": reference_kl,
+            "reference_kl_penalty": penalty,
+            "environment_reward": reward,
+        }
+
+    def _expand_rewards(self, rewards: List[float], num_ret: int) -> List[List[float]]:
+        num_agents = self.args.num_agents
+        if len(rewards) == 1:
+            return [[rewards[0]] * num_ret for _ in range(num_agents)]
+        if len(rewards) == num_ret:
+            return [list(rewards) for _ in range(num_agents)]
+        if len(rewards) == num_agents:
+            return [[rewards[a]] * num_ret for a in range(num_agents)]
+        raise ValueError(
+            "Reward function must return 1 value, num_generations values, or num_agents values."
+        )
+
+    def _value_on_prompt_only(
+        self,
+        model: CausalLMWithValueHead,
+        sequences: torch.Tensor,
+        attention_mask: torch.Tensor,
+        prompt_len: int,
+    ) -> torch.Tensor:
+        """Compute V(h) from prompt/history tokens, excluding actions."""
+        prompt_ids = sequences[:, :prompt_len]
+        prompt_mask = (
+            attention_mask[:, :prompt_len] if attention_mask is not None else None
+        )
+        outputs = model(
+            input_ids=prompt_ids,
+            attention_mask=prompt_mask,
+            output_values=True,
+        )
+        if outputs.values is None:
+            raise RuntimeError("Value head is missing for value computation.")
+        last_index = prompt_len - 1
+        return outputs.values[:, last_index]
+
+    def _compute_sequence_stats(
+        self,
+        sequences: torch.Tensor,
+        logits: torch.Tensor,
+        prompt_len: int,
+        response_len: int,
+        completion_loss_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        shifted_logits = logits[:, :-1, :]
+        shifted_targets = sequences[:, 1:]
+
+        log_probs = F.log_softmax(shifted_logits, dim=-1)
+        token_log_probs = log_probs.gather(
+            dim=-1, index=shifted_targets.unsqueeze(-1)
+        ).squeeze(-1)
+
+        start_index = max(prompt_len - 1, 0)
+        end_index = start_index + response_len
+        response_log_probs = token_log_probs[:, start_index:end_index]
+        if completion_loss_mask is not None:
+            if (
+                completion_loss_mask.ndim != 1
+                or completion_loss_mask.numel() != response_len
+                or response_log_probs.size(-1) != response_len
+            ):
+                raise ValueError(
+                    "completion_loss_mask must be one-dimensional and match response_len."
+                )
+            mask = completion_loss_mask.to(
+                device=response_log_probs.device, dtype=torch.bool
+            ).clone()
+            response_log_probs = response_log_probs.masked_fill(~mask, 0.0)
+
+        return response_log_probs.sum(dim=-1)
 
     def _parallel_agent_mode_enabled(self) -> bool:
         if str(getattr(self, "parallel_training", "")).lower() != "mp":
@@ -55,36 +144,6 @@ class ActorCriticTrainerBase:
                 agent_idx = futures[future]
                 results[agent_idx] = future.result()
         return [results[agent_idx] for agent_idx in indices]
-
-    def _filter_model_kwargs(self, cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        torch_dtype = None
-        attn_implementation = "sdpa"
-        cfg_has_attn = isinstance(cfg, dict) and "attn_implementation" in cfg
-        if isinstance(cfg, dict):
-            torch_dtype = cfg.get("torch_dtype") or cfg.get("dtype")
-            if cfg_has_attn:
-                attn_implementation = cfg.get("attn_implementation")
-        if torch_dtype is None:
-            model_cfg = getattr(self, "model_config", None)
-            if isinstance(model_cfg, dict):
-                torch_dtype = model_cfg.get("torch_dtype") or model_cfg.get("dtype")
-        if not cfg_has_attn:
-            model_cfg = getattr(self, "model_config", None)
-            if isinstance(model_cfg, dict):
-                nested_model_kwargs = model_cfg.get("model_kwargs")
-                if "attn_implementation" in model_cfg:
-                    attn_implementation = model_cfg.get("attn_implementation")
-                elif (
-                    isinstance(nested_model_kwargs, dict)
-                    and "attn_implementation" in nested_model_kwargs
-                ):
-                    attn_implementation = nested_model_kwargs.get("attn_implementation")
-        model_kwargs = {}
-        if torch_dtype is not None:
-            model_kwargs["torch_dtype"] = torch_dtype
-        if attn_implementation is not None:
-            model_kwargs["attn_implementation"] = attn_implementation
-        return model_kwargs
 
     def _format_prompt(
         self,
@@ -255,7 +314,7 @@ class ActorCriticTrainerBase:
     def _log_metrics(self, metrics: Dict[str, float]) -> None:
         if not metrics:
             return
-        if self.wandb_initialized and wandb is not None:
+        if self.wandb_initialized:
             wandb.log(metrics, step=self.env_step)
 
     def _domain_metrics_from_rollouts(self, rollouts: List[Any]) -> Dict[str, float]:

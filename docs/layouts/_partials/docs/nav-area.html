@@ -1,0 +1,15 @@
+{{- $area := "docs" -}}
+{{- $current := . -}}
+{{- range slice "/docs/examples" "/docs/env" -}}
+  {{- with $current.Site.GetPage . -}}
+    {{- if or (.Eq $current) (.IsAncestor $current) -}}
+      {{- $area = "example" -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- with .Site.GetPage "/docs/research" -}}
+  {{- if or (.Eq $current) (.IsAncestor $current) -}}
+    {{- $area = "research" -}}
+  {{- end -}}
+{{- end -}}
+{{- return $area -}}

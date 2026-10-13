@@ -43,6 +43,16 @@ def set_reward_range(
     return reward_func
 
 
+def _coerce_rewards(raw) -> List[float]:
+    if isinstance(raw, torch.Tensor):
+        rewards = raw.detach().cpu().tolist()
+    elif isinstance(raw, (list, tuple)):
+        rewards = list(raw)
+    else:
+        rewards = [float(raw)]
+    return [float(r) for r in rewards]
+
+
 def call_reward_function(
     reward_func,
     prompts: Sequence[str],
@@ -58,25 +68,17 @@ def call_reward_function(
         except (TypeError, ValueError):
             signature = None
     if signature is None:
-
-        def _coerce(raw):
-            if isinstance(raw, torch.Tensor):
-                rewards = raw.detach().cpu().tolist()
-            elif isinstance(raw, (list, tuple)):
-                rewards = list(raw)
-            else:
-                rewards = [float(raw)]
-            return [float(r) for r in rewards]
-
         if batch_items is not None:
             try:
-                return _coerce(reward_func(*agent_completions, batch_items=batch_items))
+                return _coerce_rewards(
+                    reward_func(*agent_completions, batch_items=batch_items)
+                )
             except TypeError:
                 pass
         try:
-            return _coerce(reward_func(*agent_completions))
+            return _coerce_rewards(reward_func(*agent_completions))
         except TypeError:
-            return _coerce(reward_func(agent_completions))
+            return _coerce_rewards(reward_func(agent_completions))
 
     params = signature.parameters
     param_list = list(params.values())
@@ -130,20 +132,11 @@ def call_reward_function(
 
         return reward_func(*args, **kwargs)  # type: ignore[arg-type]
 
-    def _coerce(raw):
-        if isinstance(raw, torch.Tensor):
-            rewards = raw.detach().cpu().tolist()
-        elif isinstance(raw, (list, tuple)):
-            rewards = list(raw)
-        else:
-            rewards = [float(raw)]
-        return [float(r) for r in rewards]
-
     try:
-        return _coerce(_call_with_args())
+        return _coerce_rewards(_call_with_args())
     except TypeError as exc:
         try:
-            return _coerce(reward_func(*agent_completions))  # type: ignore[arg-type]
+            return _coerce_rewards(reward_func(*agent_completions))  # type: ignore[arg-type]
         except TypeError:
             raise exc
 

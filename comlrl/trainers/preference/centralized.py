@@ -8,7 +8,7 @@ class CentralizedComparatorParseError(ValueError):
 
 
 class CentralizedComparatorAdapter(Protocol):
-    """Domain adapter for centralized comparator prompting and parsing."""
+    """Domain prompt/parser shared by centralized comparators and actors."""
 
     def build_prompt(
         self,

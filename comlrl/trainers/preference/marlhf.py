@@ -1,5 +1,6 @@
 import gc
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import torch
@@ -11,6 +12,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenize
 
 from comlrl.utils.tokenizer_utils import ensure_pad_token
 
+from .collaboration import joint_policy_gradient_loss
 from .madpo import MADPOConfig, MADPOTrainer, PreferencePair
 from ..actor_critic import IACConfig, IACTrainer, MAACConfig, MAACTrainer
 from ..reinforce.magrpo import MAGRPOTrainer
@@ -73,9 +75,12 @@ class JointRewardModel(nn.Module):
             use_cache=False,
         )
         hidden_states = outputs.hidden_states[-1]
-        lengths = attention_mask.long().sum(dim=1).clamp(min=1) - 1
+        positions = torch.arange(
+            attention_mask.size(1), device=hidden_states.device
+        ).expand_as(attention_mask)
+        last_token = positions.masked_fill(attention_mask == 0, 0).max(dim=1).values
         batch_indices = torch.arange(hidden_states.size(0), device=hidden_states.device)
-        pooled = hidden_states[batch_indices, lengths]
+        pooled = hidden_states[batch_indices, last_token]
         return self.reward_head(pooled).squeeze(-1)
 
 
@@ -173,6 +178,15 @@ class MARLHFTrainer(MADPOTrainer):
         self.critic_model_source = critic_model
         self.critic_sources = critics
         super().__init__(*args, **kwargs)
+        if (
+            self.centralized_collaboration is not None
+            and self.metrics_callback is not None
+        ):
+            self.metrics_callback = (
+                self.centralized_collaboration.wrap_metrics_callback(
+                    self.metrics_callback
+                )
+            )
         self.reward_model: Optional[JointRewardModel] = None
         self.reward_tokenizer: Optional[PreTrainedTokenizerBase] = None
         self.reward_optimizer: Optional[torch.optim.Optimizer] = None
@@ -193,24 +207,23 @@ class MARLHFTrainer(MADPOTrainer):
         self._init_reward_model()
         self._train_reward_model(preference_pairs)
         self._reward_model_active = True
+        self._train_online_rl(**kwargs)
 
+    def _train_online_rl(self, **kwargs) -> None:
         if self.args.rl_algorithm in _MAGRPO_ADVANTAGE_MODES:
             _apply_magrpo_family_args(self.args)
             self.advantage_mode = self.args.advantage_mode
             MAGRPOTrainer.train(self, **kwargs)
-            return
-
-        if self.args.rl_algorithm in _ACTOR_CRITIC_ALGORITHMS:
+        elif self.args.rl_algorithm in _ACTOR_CRITIC_ALGORITHMS:
             self._train_actor_critic_rl(**kwargs)
-            return
-
-        raise ValueError(f"Unsupported rl_algorithm: {self.args.rl_algorithm}")
+        else:
+            raise ValueError(f"Unsupported rl_algorithm: {self.args.rl_algorithm}")
 
     def evaluate(self, num_eval_samples: Optional[int] = None) -> Dict[str, float]:
         previous = self._evaluating_with_task_reward
         self._evaluating_with_task_reward = True
         try:
-            return MAGRPOTrainer.evaluate(self, num_eval_samples=num_eval_samples)
+            return super().evaluate(num_eval_samples=num_eval_samples)
         finally:
             self._evaluating_with_task_reward = previous
 
@@ -231,6 +244,19 @@ class MARLHFTrainer(MADPOTrainer):
             prompts,
             completions_list,
             batch_items=batch_items,
+        )
+
+    def _compute_loss_with_gradients(self, agent, completions_data, returns):
+        if self.centralized_collaboration is None:
+            return super()._compute_loss_with_gradients(
+                agent, completions_data, returns
+            )
+        return joint_policy_gradient_loss(
+            self,
+            agent,
+            completions_data,
+            returns,
+            sequence_log_prob=partial(self._sequence_log_prob, 0),
         )
 
     def _train_actor_critic_rl(self, **kwargs) -> None:
@@ -260,7 +286,7 @@ class MARLHFTrainer(MADPOTrainer):
             )
 
         if self.args.rl_algorithm == "maac":
-            ac_args = self._build_maac_config()
+            ac_args = MAACConfig(**self._build_actor_critic_common_config())
             ac_trainer = MAACTrainer(
                 agent_model=None,
                 agents=self.agents,
@@ -308,6 +334,8 @@ class MARLHFTrainer(MADPOTrainer):
         ac_trainer.wandb_config = self.wandb_config
         ac_trainer.wandb_initialized = self.wandb_initialized
         ac_trainer.verbose = self.verbose
+        if self.centralized_collaboration is not None:
+            ac_trainer.env_step = self.env_step
         ac_trainer.train()
         self.env_step = int(getattr(ac_trainer, "env_step", self.env_step))
         self.agents = [agent.model for agent in ac_trainer.agents]
@@ -363,9 +391,6 @@ class MARLHFTrainer(MADPOTrainer):
             "reference_kl_coef": self.args.reference_kl_coef,
             "reference_devices": self.args.reference_devices,
         }
-
-    def _build_maac_config(self) -> MAACConfig:
-        return MAACConfig(**self._build_actor_critic_common_config())
 
     def _build_iac_config(self) -> IACConfig:
         config = self._build_actor_critic_common_config()

@@ -1,10 +1,20 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Optional, Sequence, Tuple, Union
+from typing import List, Optional, Sequence, Tuple, Union
 
 import torch
 
 DeviceSpec = Union[str, Sequence[str]]
+
+
+def normalize_parallel_training(mode: object) -> str:
+    """Return the parallel_training mode as "none" or "mp" ("null" means "none")."""
+    mode = str(mode).strip().lower()
+    if mode == "null":
+        mode = "none"
+    if mode not in {"none", "mp"}:
+        raise ValueError("parallel_training only supports: none, mp.")
+    return mode
 
 
 class DeviceScheduler:
@@ -88,23 +98,6 @@ class DeviceScheduler:
                 return torch.device(first)
             raise ValueError(f"Unsupported device spec: {spec!r}.")
         return DeviceScheduler._auto_devices(1)[0]
-
-    @staticmethod
-    def devices_disjoint(device_groups: Iterable[Sequence[torch.device]]) -> bool:
-        seen = set()
-        for group in device_groups:
-            for device in group:
-                key = DeviceScheduler._device_key(device)
-                if key in seen:
-                    return False
-                seen.add(key)
-        return True
-
-    @staticmethod
-    def _device_key(device: torch.device) -> str:
-        if device.type == "cuda":
-            return f"cuda:{device.index}"
-        return device.type
 
     @staticmethod
     def _auto_devices(num_devices: int) -> List[torch.device]:

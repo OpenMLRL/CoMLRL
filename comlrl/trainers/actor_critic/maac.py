@@ -5,16 +5,17 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 from datasets import Dataset, IterableDataset
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 import wandb
 from comlrl.models.actor_critic import CausalLMWithValueHead
 from comlrl.schedulers import DeviceScheduler
+from comlrl.schedulers.device_scheduler import normalize_parallel_training
 from comlrl.utils.distributed import local_context, unwrap_model
 from comlrl.utils.formatters import build_formatters
-from comlrl.utils.model_loading import resolve_model_sources
+from comlrl.utils.model_loading import resolve_model_kwargs, resolve_model_sources
 from comlrl.utils.reference_kl import (
+    _sequence_kl_values,
     clone_reference_models,
     load_reference_models_from_sources,
     reference_kl_coef,
@@ -25,6 +26,7 @@ from comlrl.utils.reference_kl import (
 )
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizers
+from comlrl.utils.wandb_utils import verbose_from_wandb_config, wandb_init_kwargs
 from .ac_base import ActorCriticTrainerBase
 from .iac import RolloutSample
 
@@ -92,11 +94,7 @@ class MAACConfig:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
-        mode = str(self.parallel_training or "none").strip().lower()
-        if mode == "null":
-            mode = "none"
-        if mode not in {"none", "mp"}:
-            raise ValueError("parallel_training only supports: none, mp.")
+        mode = normalize_parallel_training(self.parallel_training or "none")
         if mode == "mp":
             if self.agent_devices is None:
                 raise ValueError(
@@ -166,13 +164,9 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.eval_dataset = eval_dataset
         self.metrics_callback = metrics_callback
         self.model_config = model_config or {}
-        self.parallel_training = (
-            str(getattr(self.args, "parallel_training", "none")).strip().lower()
+        self.parallel_training = normalize_parallel_training(
+            getattr(self.args, "parallel_training", "none")
         )
-        if self.parallel_training == "null":
-            self.parallel_training = "none"
-        if self.parallel_training not in {"none", "mp"}:
-            raise ValueError("parallel_training only supports: none, mp.")
         if self.parallel_training == "mp":
             self.agent_devices = DeviceScheduler.resolve_devices(
                 getattr(self.args, "agent_devices", None),
@@ -210,8 +204,8 @@ class MAACTrainer(ActorCriticTrainerBase):
             expected_count=self.args.num_agents,
             model_label="agent_model",
         )
-        actor_model_kwargs = self._filter_model_kwargs(
-            self.model_config.get("model_kwargs", {})
+        actor_model_kwargs = resolve_model_kwargs(
+            self.model_config, self.model_config.get("model_kwargs", {})
         )
         for idx, actor_source in enumerate(actor_sources):
             if actor_source is None:
@@ -263,8 +257,9 @@ class MAACTrainer(ActorCriticTrainerBase):
                 ),
             )
         else:
-            model_kwargs = self._filter_model_kwargs(
-                self.model_config.get("critic_model_kwargs", {})
+            model_kwargs = resolve_model_kwargs(
+                self.model_config,
+                self.model_config.get("critic_model_kwargs", {}),
             )
             try:
                 base = AutoModelForCausalLM.from_pretrained(
@@ -342,32 +337,13 @@ class MAACTrainer(ActorCriticTrainerBase):
         self._last_train_log_step = -1
         if wandb_config is not None and self.dist_env.is_main:
             self._init_wandb()
-        self.verbose = True
-        if isinstance(self.wandb_config, dict):
-            sections = self.wandb_config.get("config_sections", {})
-            if isinstance(sections, dict):
-                out = sections.get("output", {})
-                if isinstance(out, dict) and "verbose" in out:
-                    self.verbose = bool(out.get("verbose"))
-
-    def _agent_device(self, agent_idx: int) -> torch.device:
-        return self.agent_devices[agent_idx]
+        self.verbose = verbose_from_wandb_config(self.wandb_config)
 
     def _init_wandb(self) -> None:
         if not self.dist_env.is_main:
             return
         if self.wandb_config is None:
             self.wandb_config = {}
-        wandb_project = self.wandb_config.get("project", "comlrl")
-        wandb_entity = self.wandb_config.get("entity")
-        algo_tag = str(self.algorithm_name or "maac").lower()
-        wandb_run_name = (
-            self.wandb_config.get("name")
-            or self.wandb_config.get("run_name")
-            or f"test-{algo_tag}"
-        )
-        wandb_dir = self.wandb_config.get("dir")
-
         config_dict: Dict[str, Any] = {
             "algorithm": self.algorithm_name,
             "num_agents": self.args.num_agents,
@@ -382,70 +358,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             "reference_devices": getattr(self.args, "reference_devices", None),
         }
 
-        sections = (
-            self.wandb_config.get("config_sections")
-            if isinstance(self.wandb_config, dict)
-            else None
-        )
-        if isinstance(sections, dict):
-            dataset_section = sections.get("dataset") or {}
-            output_section = sections.get("output") or {}
-            external_section = sections.get("external") or {}
-            trainer_section = sections.get("trainer") or {}
-
-            config_dict.update(
-                {
-                    "dataset": dataset_section,
-                    "output": output_section,
-                    "external": external_section,
-                    "trainer": trainer_section,
-                }
-            )
-
-            dataset_name = (
-                dataset_section.get("name")
-                if isinstance(dataset_section, dict)
-                else None
-            )
-            dataset_type = (
-                dataset_section.get("type")
-                if isinstance(dataset_section, dict)
-                else None
-            )
-            if dataset_name:
-                config_dict["dataset_name"] = dataset_name
-            if dataset_type:
-                config_dict["dataset_type"] = dataset_type
-
-            ext_mode = (
-                external_section.get("mode")
-                if isinstance(external_section, dict)
-                else None
-            )
-            if ext_mode:
-                config_dict["external_mode"] = ext_mode
-                if "original_prompt" in external_section:
-                    config_dict["original_prompt"] = external_section.get(
-                        "original_prompt"
-                    )
-                if "previous_response" in external_section:
-                    config_dict["previous_response"] = external_section.get(
-                        "previous_response"
-                    )
-
-        init_kwargs = {
-            "project": wandb_project,
-            "name": wandb_run_name,
-            "entity": wandb_entity,
-            "config": config_dict,
-        }
-        if wandb_dir is not None:
-            os.makedirs(wandb_dir, exist_ok=True)
-            init_kwargs["dir"] = wandb_dir
-        tags = self.wandb_config.get("tags")
-        if isinstance(tags, list):
-            init_kwargs["tags"] = tags
-        wandb.init(**init_kwargs)
+        wandb.init(**wandb_init_kwargs(self.wandb_config, config_dict))
         self.wandb_initialized = True
 
     def _build_critic_input(
@@ -485,7 +398,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         }
 
     def _generate(self, agent_model, prompt: str, agent_idx: int) -> Dict[str, Any]:
-        agent_device = self._agent_device(agent_idx)
+        agent_device = self.agent_devices[agent_idx]
         encoded_prompt = self._encode_prompt(
             prompt, agent_idx=agent_idx, device=agent_device
         )
@@ -566,35 +479,15 @@ class MAACTrainer(ActorCriticTrainerBase):
                 "Reference KL is enabled but reference models are missing."
             )
         reference_model = self.reference_models[agent_idx]
-        values: List[float] = []
-        for seq, attn, response_len in zip(sequences, attention_mask, response_lens):
-            kl_value = reference_kl_for_sequence(
-                policy_model,
-                reference_model,
-                seq.unsqueeze(0),
-                attn.unsqueeze(0),
-                prompt_len,
-                int(response_len),
-            )
-            values.append(float(kl_value.view(-1)[0].item()))
-        return values
-
-    def _kl_shaped_reward(
-        self, reward: float, data: Dict[str, Any], index: int
-    ) -> Tuple[float, Dict[str, float]]:
-        if not reference_kl_enabled(self.args):
-            return reward, {}
-        reference_kl = 0.0
-        penalty = 0.0
-        raw_kls = data.get("reference_kls") or []
-        if index < len(raw_kls):
-            reference_kl = float(raw_kls[index])
-        penalty = reference_kl_coef(self.args) * reference_kl
-        return reward - penalty, {
-            "reference_kl": reference_kl,
-            "reference_kl_penalty": penalty,
-            "environment_reward": reward,
-        }
+        return _sequence_kl_values(
+            policy_model,
+            reference_model,
+            sequences,
+            attention_mask,
+            prompt_len,
+            response_lens,
+            sequence_kl=reference_kl_for_sequence,
+        )
 
     def _collect_rollouts(self, item: Dict[str, Any]) -> List[RolloutSample]:
         num_turns = max(1, int(getattr(self.args, "num_turns", 1)))
@@ -646,18 +539,10 @@ class MAACTrainer(ActorCriticTrainerBase):
             num_generations=num_ret,
             algorithm="MAAC",
         )
-        num_agents = self.args.num_agents
-        if len(rewards) == 1:
-            rewards_matrix = [[rewards[0]] * num_ret for _ in range(num_agents)]
-        elif len(rewards) == num_ret:
-            rewards_matrix = [list(rewards) for _ in range(num_agents)]
-        elif len(rewards) == num_agents:
-            rewards_matrix = [[rewards[a]] * num_ret for a in range(num_agents)]
-        else:
-            raise ValueError(
-                "Reward function must return 1 value, num_generations values, "
-                "or num_agents values."
-            )
+        # Single-turn broadcasting has never dispatched to subclass overrides.
+        rewards_matrix = ActorCriticTrainerBase._expand_rewards(
+            self, rewards, num_ret=num_ret
+        )
 
         rollouts: List[RolloutSample] = []
         critic_type = (self.args.critic_type or "v").lower()
@@ -921,21 +806,6 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         return rollouts
 
-    def _expand_rewards(self, rewards: List[float], num_ret: int) -> List[List[float]]:
-        """Map reward list to [num_agents x num_ret] matrix."""
-        num_agents = self.args.num_agents
-        if len(rewards) == 1:
-            return [[rewards[0]] * num_ret for _ in range(num_agents)]
-        if len(rewards) == num_ret:
-            return [list(rewards) for _ in range(num_agents)]
-        if len(rewards) == num_agents:
-            return [[rewards[a]] * num_ret for a in range(num_agents)]
-        raise ValueError(
-            "Reward function must return 1 value, num_generations values, or num_agents values."
-        )
-
-    # Advantage prep
-    # Losses
     def _policy_eval(
         self,
         agent_model: CausalLMWithValueHead,
@@ -944,6 +814,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         prompt_len: int,
         response_len: int,
         output_values: bool = False,
+        completion_loss_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         outputs = agent_model(
             input_ids=sequences,
@@ -951,8 +822,11 @@ class MAACTrainer(ActorCriticTrainerBase):
             output_values=output_values,
         )
 
+        stats_kwargs = {}
+        if completion_loss_mask is not None:
+            stats_kwargs["completion_loss_mask"] = completion_loss_mask
         logprob = self._compute_sequence_stats(
-            sequences, outputs.logits, prompt_len, response_len
+            sequences, outputs.logits, prompt_len, response_len, **stats_kwargs
         )
 
         value = None
@@ -963,61 +837,23 @@ class MAACTrainer(ActorCriticTrainerBase):
 
         return logprob, value
 
-    def _value_on_prompt_only(
-        self,
-        model: CausalLMWithValueHead,
-        sequences: torch.Tensor,
-        attention_mask: torch.Tensor,
-        prompt_len: int,
-    ) -> torch.Tensor:
-        prompt_ids = sequences[:, :prompt_len]
-        prompt_mask = (
-            attention_mask[:, :prompt_len] if attention_mask is not None else None
-        )
-        outputs = model(
-            input_ids=prompt_ids,
-            attention_mask=prompt_mask,
-            output_values=True,
-        )
-        if outputs.values is None:
-            raise RuntimeError("Value head is missing for value computation.")
-        last_index = prompt_len - 1
-        return outputs.values[:, last_index]
-
-    def _compute_sequence_stats(
-        self,
-        sequences: torch.Tensor,
-        logits: torch.Tensor,
-        prompt_len: int,
-        response_len: int,
-    ) -> torch.Tensor:
-        shifted_logits = logits[:, :-1, :]
-        shifted_targets = sequences[:, 1:]
-
-        log_probs = F.log_softmax(shifted_logits, dim=-1)
-        token_log_probs = log_probs.gather(
-            dim=-1, index=shifted_targets.unsqueeze(-1)
-        ).squeeze(-1)
-
-        start_index = max(prompt_len - 1, 0)
-        end_index = start_index + response_len
-        response_log_probs = token_log_probs[:, start_index:end_index]
-
-        return response_log_probs.sum(dim=-1)
-
     def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> None:
         agent_model = self.agents[agent_idx]
         agent_optimizer = self.agent_optimizers[agent_idx]
 
         actor_losses: List[torch.Tensor] = []
         value_losses: List[torch.Tensor] = []
-        agent_device = self._agent_device(agent_idx)
+        agent_device = self.agent_devices[agent_idx]
         critic_device = self.critic_device
 
         for sample in batch:
             sequences = sample.full_input_ids.to(agent_device).unsqueeze(0)
             attention_mask = sample.attention_mask.to(agent_device).unsqueeze(0)
 
+            policy_kwargs = {}
+            completion_loss_mask = sample.metadata.get("completion_loss_mask")
+            if completion_loss_mask is not None:
+                policy_kwargs["completion_loss_mask"] = completion_loss_mask
             logprob, _ = self._policy_eval(
                 agent_model,
                 sequences,
@@ -1025,6 +861,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 sample.prompt_len,
                 sample.response_len,
                 output_values=False,
+                **policy_kwargs,
             )
 
             joint_ids = sample.metadata["joint_input_ids"].to(critic_device)
@@ -1035,7 +872,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             )
 
             value_device = value.device
-            old_value = sample.old_value.to(value_device, dtype=value.dtype)
             policy_advantage = sample.normalized_advantage.to(
                 agent_device, dtype=logprob.dtype
             )
@@ -1087,16 +923,6 @@ class MAACTrainer(ActorCriticTrainerBase):
             batch = rollouts[start : start + self.args.train_batch_size]
             self._ac_step(agent_idx, batch)
         return metrics
-
-    def _on_epoch_end(
-        self,
-        epoch: int,
-        total_epochs: int,
-        epoch_metrics: Dict[str, List[float]],
-    ) -> None:
-        summary = self._summarize_epoch_metrics(epoch_metrics)
-        if summary and getattr(self, "verbose", True) and self.dist_env.is_main:
-            print(f"Epoch {epoch + 1}/{total_epochs} metrics: {summary}")
 
     def save_model(self, output_dir: str) -> None:
         if not self.dist_env.is_main:

@@ -1,0 +1,9 @@
+{{- $href := .Get "url" -}}
+{{- with .Get "page" -}}
+  {{- $href = ($.Site.GetPage .).RelPermalink -}}
+{{- end -}}
+<a class="docs-resource-card" href="{{ $href }}">
+  <span class="docs-resource-kicker">{{ .Get "label" }}</span>
+  <h3>{{ .Get "title" }}<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 15 15 5M5 5h10v10" stroke-linecap="round" stroke-linejoin="round"/></svg></h3>
+  <p>{{ .Inner | strings.TrimSpace }}</p>
+</a>

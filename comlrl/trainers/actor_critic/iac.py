@@ -6,15 +6,16 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 from datasets import Dataset, IterableDataset
 from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokenizerBase
 from comlrl.models.actor_critic import CausalLMWithValueHead
 from comlrl.schedulers import DeviceScheduler
+from comlrl.schedulers.device_scheduler import normalize_parallel_training
 from comlrl.utils.distributed import local_context, unwrap_model
 from comlrl.utils.formatters import build_formatters
-from comlrl.utils.model_loading import resolve_model_sources
+from comlrl.utils.model_loading import resolve_model_kwargs, resolve_model_sources
 from comlrl.utils.reference_kl import (
+    _sequence_kl_values,
     clone_reference_models,
     load_reference_models_from_sources,
     reference_kl_coef,
@@ -25,6 +26,7 @@ from comlrl.utils.reference_kl import (
 )
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizers
+from comlrl.utils.wandb_utils import verbose_from_wandb_config, wandb_init_kwargs
 from .ac_base import ActorCriticTrainerBase
 import wandb
 
@@ -99,11 +101,7 @@ class IACConfig:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
-        mode = str(self.parallel_training or "none").strip().lower()
-        if mode == "null":
-            mode = "none"
-        if mode not in {"none", "mp"}:
-            raise ValueError("parallel_training only supports: none, mp.")
+        mode = normalize_parallel_training(self.parallel_training or "none")
         if mode == "mp":
             if self.agent_devices is None:
                 raise ValueError(
@@ -195,13 +193,9 @@ class IACTrainer(ActorCriticTrainerBase):
         self.metrics_callback = metrics_callback
         self.model_config = model_config or {}
         self.critic_type = (self.args.critic_type or "v").lower()
-        self.parallel_training = (
-            str(getattr(self.args, "parallel_training", "none")).strip().lower()
+        self.parallel_training = normalize_parallel_training(
+            getattr(self.args, "parallel_training", "none")
         )
-        if self.parallel_training == "null":
-            self.parallel_training = "none"
-        if self.parallel_training not in {"none", "mp"}:
-            raise ValueError("parallel_training only supports: none, mp.")
         if self.parallel_training == "mp":
             self.agent_devices, self.critic_devices = DeviceScheduler.assign_devices(
                 self.args.num_agents,
@@ -243,8 +237,8 @@ class IACTrainer(ActorCriticTrainerBase):
             expected_count=self.args.num_agents,
             model_label="agent_model",
         )
-        actor_model_kwargs = self._filter_model_kwargs(
-            self.model_config.get("model_kwargs", {})
+        actor_model_kwargs = resolve_model_kwargs(
+            self.model_config, self.model_config.get("model_kwargs", {})
         )
         for idx, actor_source in enumerate(actor_sources):
             if actor_source is None:
@@ -300,8 +294,9 @@ class IACTrainer(ActorCriticTrainerBase):
                         attach_value_head=True,
                     )
                 else:
-                    model_kwargs = self._filter_model_kwargs(
-                        self.model_config.get("critic_model_kwargs", {})
+                    model_kwargs = resolve_model_kwargs(
+                        self.model_config,
+                        self.model_config.get("critic_model_kwargs", {}),
                     )
                     try:
                         base_model = AutoModelForCausalLM.from_pretrained(
@@ -379,16 +374,7 @@ class IACTrainer(ActorCriticTrainerBase):
         self._last_train_log_step = -1
         if wandb_config is not None and self.dist_env.is_main:
             self._init_wandb()
-        self.verbose = True
-        if isinstance(self.wandb_config, dict):
-            sections = self.wandb_config.get("config_sections", {})
-            if isinstance(sections, dict):
-                out = sections.get("output", {})
-                if isinstance(out, dict) and "verbose" in out:
-                    self.verbose = bool(out.get("verbose"))
-
-    def _agent_device(self, agent_idx: int) -> torch.device:
-        return self.agent_devices[agent_idx]
+        self.verbose = verbose_from_wandb_config(self.wandb_config)
 
     def _critic_device(self, agent_idx: int) -> torch.device:
         if self.args.use_separate_critic:
@@ -400,20 +386,8 @@ class IACTrainer(ActorCriticTrainerBase):
             return
         if self.wandb_initialized:
             return
-        if wandb is None:
-            raise RuntimeError("wandb is not installed but wandb_config was provided.")
         if self.wandb_config is None:
             self.wandb_config = {}
-
-        wandb_project = self.wandb_config.get("project", "comlrl")
-        wandb_entity = self.wandb_config.get("entity")
-        algo_tag = str(self.algorithm_name or "iac").lower()
-        wandb_name = (
-            self.wandb_config.get("name")
-            or self.wandb_config.get("run_name")
-            or f"test-{algo_tag}"
-        )
-        wandb_dir = self.wandb_config.get("dir")
 
         config_dict: Dict[str, Any] = {
             "algorithm": self.algorithm_name,
@@ -432,76 +406,9 @@ class IACTrainer(ActorCriticTrainerBase):
             "reference_devices": getattr(self.args, "reference_devices", None),
         }
 
-        sections = (
-            self.wandb_config.get("config_sections")
-            if isinstance(self.wandb_config, dict)
-            else None
-        )
-        if isinstance(sections, dict):
-            dataset_section = sections.get("dataset") or {}
-            output_section = sections.get("output") or {}
-            external_section = sections.get("external") or {}
-            trainer_section = sections.get("trainer") or {}
-
-            config_dict.update(
-                {
-                    "dataset": dataset_section,
-                    "output": output_section,
-                    "external": external_section,
-                    "trainer": trainer_section,
-                }
-            )
-
-            dataset_name = (
-                dataset_section.get("name")
-                if isinstance(dataset_section, dict)
-                else None
-            )
-            dataset_type = (
-                dataset_section.get("type")
-                if isinstance(dataset_section, dict)
-                else None
-            )
-            if dataset_name:
-                config_dict["dataset_name"] = dataset_name
-            if dataset_type:
-                config_dict["dataset_type"] = dataset_type
-
-            ext_mode = (
-                external_section.get("mode")
-                if isinstance(external_section, dict)
-                else None
-            )
-            if ext_mode:
-                config_dict["external_mode"] = ext_mode
-                if "original_prompt" in external_section:
-                    config_dict["original_prompt"] = external_section.get(
-                        "original_prompt"
-                    )
-                if "previous_response" in external_section:
-                    config_dict["previous_response"] = external_section.get(
-                        "previous_response"
-                    )
-
-        init_kwargs: Dict[str, Any] = {
-            "project": wandb_project,
-            "entity": wandb_entity,
-            "name": wandb_name,
-            "config": config_dict,
-        }
-
-        if wandb_dir is not None:
-            os.makedirs(wandb_dir, exist_ok=True)
-            init_kwargs["dir"] = wandb_dir
-
-        tags = self.wandb_config.get("tags")
-        if isinstance(tags, list):
-            init_kwargs["tags"] = tags
-
-        wandb.init(**init_kwargs)
+        wandb.init(**wandb_init_kwargs(self.wandb_config, config_dict))
         self.wandb_initialized = True
 
-    # Rollout collection
     def _generate_rollout(
         self,
         agent_model: CausalLMWithValueHead,
@@ -509,7 +416,7 @@ class IACTrainer(ActorCriticTrainerBase):
         agent_idx: int,
         num_ret: int,
     ) -> Dict[str, Any]:
-        agent_device = self._agent_device(agent_idx)
+        agent_device = self.agent_devices[agent_idx]
         encoded_prompt = self._encode_prompt(
             prompt, agent_idx=agent_idx, device=agent_device
         )
@@ -608,7 +515,6 @@ class IACTrainer(ActorCriticTrainerBase):
             "reference_kls": reference_kls,
             "values": value,
             "completions": completion_texts,
-            "char_lengths": [len(txt) for txt in completion_texts],
         }
 
     def _reference_kl_values(
@@ -627,46 +533,14 @@ class IACTrainer(ActorCriticTrainerBase):
                 "Reference KL is enabled but reference models are missing."
             )
         reference_model = self.reference_models[agent_idx]
-        values: List[float] = []
-        for seq, attn, response_len in zip(sequences, attention_mask, response_lens):
-            kl_value = reference_kl_for_sequence(
-                policy_model,
-                reference_model,
-                seq.unsqueeze(0),
-                attn.unsqueeze(0),
-                prompt_len,
-                int(response_len),
-            )
-            values.append(float(kl_value.view(-1)[0].item()))
-        return values
-
-    def _kl_shaped_reward(
-        self, reward: float, data: Dict[str, Any], index: int
-    ) -> Tuple[float, Dict[str, float]]:
-        if not reference_kl_enabled(self.args):
-            return reward, {}
-        reference_kl = 0.0
-        penalty = 0.0
-        raw_kls = data.get("reference_kls") or []
-        if index < len(raw_kls):
-            reference_kl = float(raw_kls[index])
-        penalty = reference_kl_coef(self.args) * reference_kl
-        return reward - penalty, {
-            "reference_kl": reference_kl,
-            "reference_kl_penalty": penalty,
-            "environment_reward": reward,
-        }
-
-    def _expand_rewards(self, rewards: List[float], num_ret: int) -> List[List[float]]:
-        num_agents = self.args.num_agents
-        if len(rewards) == 1:
-            return [[rewards[0]] * num_ret for _ in range(num_agents)]
-        if len(rewards) == num_ret:
-            return [list(rewards) for _ in range(num_agents)]
-        if len(rewards) == num_agents:
-            return [[rewards[a]] * num_ret for a in range(num_agents)]
-        raise ValueError(
-            "Reward function must return 1 value, num_generations values, or num_agents values."
+        return _sequence_kl_values(
+            policy_model,
+            reference_model,
+            sequences,
+            attention_mask,
+            prompt_len,
+            response_lens,
+            sequence_kl=reference_kl_for_sequence,
         )
 
     def _collect_rollouts(self, item: Dict[str, Any]) -> List[RolloutSample]:
@@ -748,7 +622,6 @@ class IACTrainer(ActorCriticTrainerBase):
                         returns=returns_cpu,
                         advantage=advantage_cpu,
                         metadata={
-                            "char_length": data["char_lengths"][i],
                             "turn_idx": 0,
                             "generation_idx": i,
                             "batch_item": item,
@@ -865,7 +738,6 @@ class IACTrainer(ActorCriticTrainerBase):
                     advantage=torch.zeros_like(reward_cpu),
                     normalized_advantage=None,
                     metadata={
-                        "char_length": data["char_lengths"][0],
                         "turn_idx": turn_idx,
                         "generation_idx": 0,
                         "batch_item": item,
@@ -915,6 +787,7 @@ class IACTrainer(ActorCriticTrainerBase):
         prompt_len: int,
         response_len: int,
         output_values: bool = True,
+        completion_loss_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Evaluate the actor to retrieve log-probabilities and (optional) value prediction.
@@ -926,8 +799,11 @@ class IACTrainer(ActorCriticTrainerBase):
             output_values=output_values,
         )
 
+        stats_kwargs = {}
+        if completion_loss_mask is not None:
+            stats_kwargs["completion_loss_mask"] = completion_loss_mask
         logprob = self._compute_sequence_stats(
-            sequences, outputs.logits, prompt_len, response_len
+            sequences, outputs.logits, prompt_len, response_len, **stats_kwargs
         )
 
         value = None
@@ -942,30 +818,6 @@ class IACTrainer(ActorCriticTrainerBase):
             )
 
         return logprob, value
-
-    def _value_on_prompt_only(
-        self,
-        model: CausalLMWithValueHead,
-        sequences: torch.Tensor,
-        attention_mask: torch.Tensor,
-        prompt_len: int,
-    ) -> torch.Tensor:
-        """
-        Compute V(h) using only the prompt/history tokens, excluding actions.
-        """
-        prompt_ids = sequences[:, :prompt_len]
-        prompt_mask = (
-            attention_mask[:, :prompt_len] if attention_mask is not None else None
-        )
-        outputs = model(
-            input_ids=prompt_ids,
-            attention_mask=prompt_mask,
-            output_values=True,
-        )
-        if outputs.values is None:
-            raise RuntimeError("Value head is missing for value computation.")
-        last_index = prompt_len - 1
-        return outputs.values[:, last_index]
 
     def _value_on_full_sequence(
         self,
@@ -1008,46 +860,6 @@ class IACTrainer(ActorCriticTrainerBase):
             )
         return self._value_on_prompt_only(model, sequences, attention_mask, prompt_len)
 
-    def _critic_eval(
-        self,
-        critic_model: CausalLMWithValueHead,
-        sequences: torch.Tensor,
-        attention_mask: torch.Tensor,
-        prompt_len: int,
-        response_len: int,
-    ) -> torch.Tensor:
-        return self._value_for_critic_type(
-            critic_model,
-            sequences,
-            attention_mask,
-            prompt_len,
-            [response_len],
-        )
-
-    def _compute_sequence_stats(
-        self,
-        sequences: torch.Tensor,
-        logits: torch.Tensor,
-        prompt_len: int,
-        response_len: int,
-    ) -> torch.Tensor:
-        shifted_logits = logits[:, :-1, :]
-        shifted_targets = sequences[:, 1:]
-
-        log_probs = F.log_softmax(shifted_logits, dim=-1)
-        token_log_probs = log_probs.gather(
-            dim=-1, index=shifted_targets.unsqueeze(-1)
-        ).squeeze(-1)
-
-        start_index = max(prompt_len - 1, 0)
-        end_index = start_index + response_len
-        response_log_probs = token_log_probs[:, start_index:end_index]
-
-        logprob_sum = response_log_probs.sum(dim=-1)
-
-        return logprob_sum
-
-    # Actor-Critic update logic
     def _ac_step(self, agent_idx: int, batch: List[RolloutSample]) -> None:
         agent_model = self.agents[agent_idx]
         critic_model = (
@@ -1060,14 +872,18 @@ class IACTrainer(ActorCriticTrainerBase):
 
         actor_losses: List[torch.Tensor] = []
         value_losses: List[torch.Tensor] = []
-        agent_device = self._agent_device(agent_idx)
+        agent_device = self.agent_devices[agent_idx]
         critic_device = self._critic_device(agent_idx)
 
         for sample in batch:
             sequences = sample.full_input_ids.to(agent_device).unsqueeze(0)
             attention_mask = sample.attention_mask.to(agent_device).unsqueeze(0)
 
-            # Policy log-prob uses full sequence; value uses prompt-only baseline.
+            # Policy uses the full sequence; value follows the configured critic type.
+            policy_kwargs = {}
+            completion_loss_mask = sample.metadata.get("completion_loss_mask")
+            if completion_loss_mask is not None:
+                policy_kwargs["completion_loss_mask"] = completion_loss_mask
             logprob, _ = self._policy_eval(
                 agent_model,
                 sequences,
@@ -1075,18 +891,19 @@ class IACTrainer(ActorCriticTrainerBase):
                 sample.prompt_len,
                 sample.response_len,
                 output_values=False,
+                **policy_kwargs,
             )
             if self.args.use_separate_critic:
                 if critic_model is None:
                     raise RuntimeError("Critic model not initialised.")
                 critic_sequences = sequences.to(critic_device)
                 critic_attention_mask = attention_mask.to(critic_device)
-                value = self._critic_eval(
+                value = self._value_for_critic_type(
                     critic_model,
                     critic_sequences,
                     critic_attention_mask,
                     sample.prompt_len,
-                    sample.response_len,
+                    [sample.response_len],
                 )
             else:
                 value = self._value_for_critic_type(

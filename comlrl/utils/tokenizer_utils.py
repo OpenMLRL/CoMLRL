@@ -60,17 +60,6 @@ def resolve_tokenizers(
     return ensure_pad_token(tokenizer)  # shared tokenizer for all agents
 
 
-def resolve_tokenizer(
-    model: Optional[Union[str, PreTrainedModel]],
-    tokenizer: Optional[PreTrainedTokenizerBase],
-    agents: Optional[Sequence[object]],
-) -> PreTrainedTokenizerBase:
-    tokenizers = resolve_tokenizers(model, tokenizer, agents)
-    if isinstance(tokenizers, list):
-        return ensure_pad_token(tokenizers[0])
-    return tokenizers
-
-
 def apply_tokenizer_specials(
     tokenizer: PreTrainedTokenizerBase,
     models: Sequence[object],

@@ -1,0 +1,49 @@
+{{- $current := . -}}
+{{- $area := partial "docs/nav-area" . -}}
+{{- $home := .Site.Home -}}
+{{- $homeTitle := "Overview" -}}
+{{- $groups := slice -}}
+{{- $pages := slice -}}
+
+{{- if eq $area "example" -}}
+  {{- with .Site.GetPage "/docs/examples" -}}
+    {{- $home = . -}}
+    {{- $homeTitle = "Example Overview" -}}
+    {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
+    {{- $groups = $groups | append (dict "Title" "Examples" "Page" . "Linked" false "Children" $children) -}}
+  {{- end -}}
+  {{- with .Site.GetPage "/docs/env" -}}
+    {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
+    {{- $groups = $groups | append (dict "Title" "Environments" "Page" . "Linked" true "Children" $children) -}}
+  {{- end -}}
+{{- else if eq $area "research" -}}
+  {{- with .Site.GetPage "/docs/research" -}}
+    {{- $home = . -}}
+    {{- $homeTitle = "Research Overview" -}}
+    {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
+    {{- if $children -}}
+      {{- $groups = $groups | append (dict "Title" "Papers" "Page" . "Linked" false "Children" $children) -}}
+    {{- end -}}
+  {{- end -}}
+{{- else -}}
+  {{- range slice "/docs/user-guide" "/docs/marl" "/docs/mapl" -}}
+    {{- with $current.Site.GetPage . -}}
+      {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
+      {{- $groups = $groups | append (dict "Title" .Title "Page" . "Linked" false "Children" $children) -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+
+{{/* Sidebar and page-to-page links share one ordered list within each area. */}}
+{{- $pages = $pages | append $home -}}
+{{- range $groups -}}
+  {{- if .Linked -}}
+    {{- $pages = $pages | append .Page -}}
+  {{- end -}}
+  {{- range .Children -}}
+    {{- if not .Params.BookHref -}}
+      {{- $pages = $pages | append . -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- return (dict "Area" $area "Home" $home "HomeTitle" $homeTitle "Groups" $groups "Pages" $pages) -}}

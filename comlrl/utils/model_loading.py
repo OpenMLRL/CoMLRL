@@ -1,4 +1,42 @@
-from typing import Any, Optional, Sequence, Tuple, List
+from typing import Any, Dict, Optional, Sequence, Tuple, List
+
+
+def resolve_model_kwargs(
+    model_config: Any, overrides: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Return ``from_pretrained`` dtype/attention kwargs, defaulting to SDPA.
+
+    ``overrides`` (e.g. a nested ``model_kwargs`` section) takes precedence over
+    ``model_config``; an explicit ``attn_implementation=None`` keeps the backend default.
+    """
+    config = model_config if isinstance(model_config, dict) else {}
+    overrides = overrides if isinstance(overrides, dict) else {}
+    torch_dtype = overrides.get("torch_dtype") or overrides.get("dtype")
+    if torch_dtype is None:
+        torch_dtype = config.get("torch_dtype") or config.get("dtype")
+    nested = config.get("model_kwargs")
+    if "attn_implementation" in overrides:
+        attn_implementation = overrides["attn_implementation"]
+    elif "attn_implementation" in config:
+        attn_implementation = config["attn_implementation"]
+    elif isinstance(nested, dict) and "attn_implementation" in nested:
+        attn_implementation = nested["attn_implementation"]
+    else:
+        attn_implementation = "sdpa"
+    model_kwargs: Dict[str, Any] = {}
+    if torch_dtype is not None:
+        model_kwargs["torch_dtype"] = torch_dtype
+    if attn_implementation is not None:
+        model_kwargs["attn_implementation"] = attn_implementation
+    return model_kwargs
+
+
+def freeze_model(model: Any) -> Any:
+    """Put a model in eval mode with gradients disabled, and return it."""
+    model.eval()
+    for param in model.parameters():
+        param.requires_grad = False
+    return model
 
 
 def infer_model_name(source: Any) -> Optional[str]:

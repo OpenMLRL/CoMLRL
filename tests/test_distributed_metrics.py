@@ -3,40 +3,17 @@ from types import SimpleNamespace
 import torch
 
 from comlrl.trainers.actor_critic.ac_base import ActorCriticTrainerBase
-from comlrl.utils.distributed import (
-    DistributedContext,
-    all_gather_objects,
-    barrier,
-    local_context,
-    reduce_metrics_dict,
-)
+from comlrl.utils.distributed import DistributedContext, local_context
 
 
 def _ctx() -> DistributedContext:
-    return DistributedContext(
-        enabled=False,
-        is_main=True,
-        device=torch.device("cpu"),
-    )
+    return DistributedContext(is_main=True, device=torch.device("cpu"))
 
 
 def test_local_context_defaults_to_single_process():
     ctx = local_context(torch.device("cpu"))
-    assert ctx.enabled is False
     assert ctx.is_main is True
-
-
-def test_reduce_metrics_dict_passthrough():
-    metrics = {"loss": 1.5, "reward": 2.5}
-    reduced = reduce_metrics_dict(metrics, _ctx())
-    assert reduced == metrics
-    assert reduced is not metrics
-
-
-def test_barrier_and_all_gather_are_noop_in_single_process():
-    ctx = _ctx()
-    barrier(ctx)
-    assert all_gather_objects({"a": 1}, ctx) == [{"a": 1}]
+    assert ctx.device == torch.device("cpu")
 
 
 def test_ac_base_log_metrics_logs_directly(monkeypatch):

@@ -1,0 +1,36 @@
+{{ $navigation := partial "docs/navigation" . }}
+<nav aria-label="{{ if eq $navigation.Area "example" }}Examples{{ else if eq $navigation.Area "research" }}Research{{ else }}Documentation{{ end }} pages">
+{{ partial "docs/nav-link" (dict "Page" $navigation.Home "CurrentPage" . "Title" $navigation.HomeTitle "Class" "docs-home-link") }}
+{{ if hugo.IsMultilingual }}
+  {{ partial "docs/languages" . }}
+{{ end }}
+
+{{ partial "docs/inject/menu-before" . }}
+{{ partial "docs/menu-hugo" (dict "Page" .Page "Menu" .Site.Menus.before) }}
+
+<ul class="docs-navigation">
+  {{ range $navigation.Groups }}
+    <li class="docs-nav-group">
+      {{ if .Linked }}
+        {{ partial "docs/nav-link" (dict "Page" .Page "CurrentPage" $ "Title" .Title "Class" "docs-nav-group-title" "Icon" true) }}
+      {{ else }}
+        <span class="docs-nav-group-title">{{ partial "docs/nav-icon" .Page }}<span class="docs-nav-label">{{ .Title }}</span></span>
+      {{ end }}
+      <ul>
+        {{ range .Children }}
+          <li>{{ partial "docs/nav-link" (dict "Page" . "CurrentPage" $) }}</li>
+        {{ end }}
+      </ul>
+    </li>
+  {{ end }}
+</ul>
+
+{{ partial "docs/menu-hugo" (dict "Page" .Page "Menu" .Site.Menus.after) }}
+{{ partial "docs/inject/menu-after" . }}
+</nav>
+
+<!-- Restore menu position as soon as possible to avoid flickering -->
+{{ $script := resources.Get "menu-reset.js" | resources.Minify }}
+{{ with $script.Content }}
+  <script>{{ . | safeJS }}</script>
+{{ end }}

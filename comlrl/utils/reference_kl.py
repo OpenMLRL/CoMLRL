@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping, List, Sequence
+from typing import Any, Callable, Mapping, List, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -9,6 +9,7 @@ from transformers import AutoModelForCausalLM
 
 from comlrl.schedulers import DeviceScheduler
 from comlrl.utils.distributed import unwrap_model
+from comlrl.utils.model_loading import freeze_model
 
 
 def reference_kl_enabled(args: Any) -> bool:
@@ -56,7 +57,7 @@ def clone_reference_models(
     for idx, policy_model in enumerate(policy_models):
         reference_model = copy.deepcopy(policy_model)
         reference_model.to(devices[idx])
-        references.append(_freeze_reference_model(reference_model))
+        references.append(freeze_model(reference_model))
     return references
 
 
@@ -71,15 +72,8 @@ def load_reference_models_from_sources(
     for idx, model_source in enumerate(model_sources):
         reference_model = AutoModelForCausalLM.from_pretrained(model_source, **kwargs)
         reference_model.to(devices[idx])
-        references.append(_freeze_reference_model(reference_model))
+        references.append(freeze_model(reference_model))
     return references
-
-
-def _freeze_reference_model(model: Any) -> Any:
-    model.eval()
-    for param in model.parameters():
-        param.requires_grad = False
-    return model
 
 
 def response_token_logprobs(
@@ -112,6 +106,30 @@ def response_token_logprobs(
     start_index = max(int(prompt_len) - 1, 0)
     end_index = start_index + int(response_len)
     return token_log_probs[:, start_index:end_index]
+
+
+def _sequence_kl_values(
+    policy_model: Any,
+    reference_model: Any,
+    sequences: torch.Tensor,
+    attention_mask: torch.Tensor,
+    prompt_len: int,
+    response_lens: Sequence[int],
+    *,
+    sequence_kl: Callable[..., torch.Tensor],
+) -> List[float]:
+    values: List[float] = []
+    for seq, attn, response_len in zip(sequences, attention_mask, response_lens):
+        kl_value = sequence_kl(
+            policy_model,
+            reference_model,
+            seq.unsqueeze(0),
+            attn.unsqueeze(0),
+            prompt_len,
+            int(response_len),
+        )
+        values.append(float(kl_value.view(-1)[0].item()))
+    return values
 
 
 def reference_kl_for_sequence(

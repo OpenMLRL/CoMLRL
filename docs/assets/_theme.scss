@@ -1,0 +1,125 @@
+// Shared color roles keep the three documentation themes in step.
+@mixin docs-light-palette {
+  color-scheme: light;
+  --docs-bg: #fff;
+  --docs-surface: #fff;
+  --docs-surface-soft: #fcfbfd;
+  --docs-surface-tint: #faf9fc;
+  --docs-surface-hover: #f7f7f9;
+  --docs-header-bg: rgba(255, 255, 255, .96);
+  --docs-ink: #25222c;
+  --docs-body: #514c59;
+  --docs-muted: #6c6875;
+  --docs-faint: #83778e;
+  --docs-heading: #44324f;
+  --docs-border: #eeecf1;
+  --docs-border-strong: #e7e1ed;
+  --docs-accent: #79539c;
+  --docs-accent-strong: #704591;
+  --docs-accent-soft: #f4eef8;
+  --docs-accent-line: #b492cd;
+  --docs-selection: #e9dff2;
+  --docs-selection-ink: #342443;
+  --docs-scrollbar: #d9d3df;
+  --docs-info-bg: #f3f7fc;
+  --docs-info-line: #8eafd7;
+  --docs-warning-bg: #fffbef;
+  --docs-warning-line: #e6c677;
+  --docs-danger-bg: #fff4f5;
+  --docs-danger-line: #e8a1ab;
+  --docs-success-bg: #f2f9f5;
+  --docs-success-line: #91c6a8;
+  --docs-success: #408365;
+  --docs-danger: #ac495c;
+}
+
+:root { @include docs-light-palette; }
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --docs-bg: #12161d;
+  --docs-surface: #191e27;
+  --docs-surface-soft: #1d232d;
+  --docs-surface-tint: #1a2029;
+  --docs-surface-hover: #252d39;
+  --docs-header-bg: rgba(18, 22, 29, .96);
+  --docs-ink: #edf0f6;
+  --docs-body: #cbd0d9;
+  --docs-muted: #a6aeba;
+  --docs-faint: #929eae;
+  --docs-heading: #efe6dd;
+  --docs-border: #2b3340;
+  --docs-border-strong: #384254;
+  --docs-accent: #ffad66;
+  --docs-accent-strong: #ffc18a;
+  --docs-accent-soft: #302219;
+  --docs-accent-line: #e49550;
+  --docs-selection: #684025;
+  --docs-selection-ink: #fff4e8;
+  --docs-scrollbar: #495466;
+  --docs-info-bg: #19212b;
+  --docs-info-line: #779bc2;
+  --docs-warning-bg: #292316;
+  --docs-warning-line: #c9a764;
+  --docs-danger-bg: #2b1c21;
+  --docs-danger-line: #cf8392;
+  --docs-success-bg: #192720;
+  --docs-success-line: #76b794;
+  --docs-success: #92d3af;
+  --docs-danger: #f3a1b2;
+  --icon-filter: brightness(0) invert(1);
+}
+
+html[data-theme="reading"] {
+  color-scheme: light;
+  --docs-bg: #f5eedc;
+  --docs-surface: #f9f3e5;
+  --docs-surface-soft: #f1e8d7;
+  --docs-surface-tint: #eee5d4;
+  --docs-surface-hover: #eae1cf;
+  --docs-header-bg: rgba(245, 238, 220, .96);
+  --docs-ink: #302c26;
+  --docs-body: #504b43;
+  --docs-muted: #71685b;
+  --docs-faint: #6f6659;
+  --docs-heading: #493e30;
+  --docs-border: #e2d8c4;
+  --docs-border-strong: #d6cab5;
+  --docs-accent: #775a36;
+  --docs-accent-strong: #634929;
+  --docs-accent-soft: #e8ddc4;
+  --docs-accent-line: #b5a07d;
+  --docs-selection: #e1d2b4;
+  --docs-selection-ink: #342c22;
+  --docs-scrollbar: #c6baa5;
+  --docs-info-bg: #e9edf0;
+  --docs-info-line: #879eaf;
+  --docs-warning-bg: #f0e5c8;
+  --docs-warning-line: #bb9b4f;
+  --docs-danger-bg: #f2e4df;
+  --docs-danger-line: #c28b83;
+  --docs-success-bg: #e6ecde;
+  --docs-success-line: #8ba383;
+  --docs-success: #396a4e;
+  --docs-danger: #a04751;
+  --icon-filter: none;
+}
+
+// Override Hugo Book's base palette without coupling to its theme toggle.
+html:root {
+  --body-background: var(--docs-bg);
+  --body-font-color: var(--docs-body);
+  --color-link: var(--docs-accent);
+  --color-visited-link: var(--docs-accent);
+  --gray-100: var(--docs-surface-tint);
+  --gray-200: var(--docs-border);
+  --gray-500: var(--docs-faint);
+}
+
+@media print {
+  html[data-theme] {
+    @include docs-light-palette;
+    color-scheme: light !important;
+    --icon-filter: none;
+  }
+}
