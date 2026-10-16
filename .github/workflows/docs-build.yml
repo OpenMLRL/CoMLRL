@@ -12,7 +12,7 @@ on:
       - 'docs/**'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -42,27 +42,22 @@ jobs:
     - name: Check rendered documentation
       run: python3 docs/scripts/check_html.py docs/public
 
-    - name: Deploy to OpenMLRL.github.io
+    - name: Request multilingual website deployment
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       env:
-        GITHUB_TOKEN: ${{ secrets.OPENMLRL_TOKEN }}
+        GH_TOKEN: ${{ secrets.OPENMLRL_TOKEN }}
       run: |
-        # Clone the OpenMLRL.github.io repository
-        git clone --depth 1 https://x-access-token:${GITHUB_TOKEN}@github.com/OpenMLRL/OpenMLRL.github.io.git /tmp/openmlrl-site
+        python3 - <<'PYTHON'
+        import json
+        import os
+        from pathlib import Path
 
-        # Deploy to static/CoMLRL so Hugo will copy it to public/CoMLRL
-        rm -rf /tmp/openmlrl-site/static/CoMLRL
-        mkdir -p /tmp/openmlrl-site/static/CoMLRL
-        cp -r docs/public/* /tmp/openmlrl-site/static/CoMLRL/
-
-        # Commit and push changes
-        cd /tmp/openmlrl-site
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add static/CoMLRL/
-        if git diff --staged --quiet; then
-          echo "No changes to deploy"
-        else
-          git commit -m "Deploy CoMLRL docs from commit ${{ github.sha }}"
-          git push origin main
-        fi
+        payload = {
+            "event_type": "comlrl-docs-updated",
+            "client_payload": {"docs_sha": os.environ["GITHUB_SHA"]},
+        }
+        destination = Path(os.environ["RUNNER_TEMP"]) / "comlrl-docs-dispatch.json"
+        destination.write_text(json.dumps(payload), encoding="utf-8")
+        PYTHON
+        gh api --method POST repos/OpenMLRL/OpenMLRL.github.io/dispatches \
+          --input "$RUNNER_TEMP/comlrl-docs-dispatch.json"

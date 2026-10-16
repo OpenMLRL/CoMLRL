@@ -45,7 +45,7 @@ python3 docs/scripts/build.py --multilingual \
   --base-url https://openmlrl.github.io/CoMLRL/
 ```
 
-The build checks protected Markdown, preserves English heading and API-card anchors, and validates rendered code, formulas, links, assets, language switches, and redirects before writing the output. A failed translation or validation stops the build. The output can be uploaded as a Pages artifact; it should not be copied into the OpenMLRL repository and committed. This local trial does not enable multilingual production deployment. Hosted CI does not have access to the Ollama service on a developer's computer; it needs its own translation runtime or a restored, current translation cache before a multilingual build can succeed.
+The build checks protected Markdown, preserves English heading and API-card anchors, and validates rendered code, formulas, links, assets, language switches, and redirects before writing the output. A failed translation or validation stops the build. The output is a deployment artifact and should not be copied into the OpenMLRL repository and committed. The production website workflow restores translation caches and runs its own Ollama service on CPU for missing or changed pages. It does not depend on the Ollama service or caches on a developer's computer. The first build can take substantially longer than later builds because it generates translations for all six target languages.
 
 The translation guards and cache behavior can be checked without a model or network access:
 
@@ -93,16 +93,16 @@ python3 docs/scripts/prepare_rollout_svgs.py
 
 The script only inserts animation attributes and verifies that removing them reproduces each source file byte for byte. If the diagram layout changes, update its stage boundaries in the script. The `rollout-diagram` shortcode namespaces SVG glyph IDs; `assets/rollout-diagrams.js` controls playback. Without JavaScript, or with reduced motion enabled, the complete diagrams remain visible.
 
-## Deploy (GitHub Pages – native actions)
+## Deploy (GitHub Pages)
 
-The native Pages workflow is manual. Run `.github/workflows/docs.yml` with the workflow-dispatch input `publish=true`. The workflow:
+The `Pages` workflow in `OpenMLRL/OpenMLRL.github.io` is the single publisher for the website and CoMLRL documentation. It builds the documentation in English, Simplified Chinese, Japanese, Korean, Spanish, French, and German, then bundles the output under `/CoMLRL/` in the website's Pages artifact. Generated translated Markdown, translation caches, and HTML are not committed to either repository by this pipeline.
 
-- Configures Pages and computes the correct base URL for a project site.
-- Builds the Hugo site from `docs/`.
-- Uploads the static site as a Pages artifact and deploys it.
+On documentation changes pushed to CoMLRL's `main` branch, `.github/workflows/docs-build.yml` builds and validates the English documentation and checks translation protection. It then sends a `comlrl-docs-updated` event, including the source commit, to the website repository. Pull requests run validation only. This replaces the previous workflow that committed English HTML to `OpenMLRL.github.io/static/CoMLRL`.
 
-The separate legacy `docs-build.yml` workflow still builds English on pushes and copies that English output into `OpenMLRL.github.io/static/CoMLRL`. It is not used by the multilingual preview. A future multilingual deployment should upload build artifacts directly instead of extending that Git-copy step to generated translations.
+The notification uses the existing `OPENMLRL_TOKEN` secret in CoMLRL. It must allow repository dispatches to `OpenMLRL/OpenMLRL.github.io` (Contents write permission for a fine-grained token). The website's Pages source must be set to **GitHub Actions**. The website workflow must include the `comlrl-docs-updated` trigger before CoMLRL can request deployments through it.
 
-One-time repo setting: in GitHub → Settings → Pages → Build and deployment, set Source to “GitHub Actions”.
+For a manual deployment, users can run `.github/workflows/docs.yml` with `publish=true`. This validates the documentation and requests a deployment from the same website publisher. With `publish=false`, it only runs validation. This workflow no longer publishes a separate English-only Pages site.
+
+The website workflow restores a separate cache for each translation language and uses Ollama on its GitHub-hosted CPU runner to translate missing or changed pages. This requires no translation API key. The first build is slower; subsequent builds reuse unchanged translations. English remains the only maintained content. After all six translation builds succeed, the website is built with the validated caches and uploaded directly as a Pages artifact. A failed translation or validation prevents publication, leaving the previous site available.
 
 > Note: GitHub Pages sites are publicly accessible even if the repository is private. For private/internal docs, preview locally or host behind authentication (e.g., GitHub Enterprise Pages with SSO or another internal host).
