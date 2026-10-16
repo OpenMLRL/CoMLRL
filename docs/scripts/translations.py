@@ -42,14 +42,14 @@ COUNT = r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?x(?![A-Za-z0-9])"
 # Terms every language keeps in English: masked before translation, then validated.
 # RL jargon, product names, and words with two or more capitals (algorithm names,
 # acronyms, class and dataset names). Inside compounds such as "generated-token",
-# only the term is kept. Boundaries are ASCII so CJK particles, as in "actors를",
-# do not hide a term.
+# only the term is kept. Boundaries are ASCII letters and digits, so CJK particles
+# ("actors를") and Markdown emphasis ("_Minecraft_") do not hide a term.
 KEEP_ENGLISH = re.compile(
-    r"(?<![A-Za-z0-9_])(?:[Aa]ctor-[Cc]ritic|[Aa]ctors?|[Cc]ritics?|[Rr]ollouts?"
+    r"(?<![A-Za-z0-9])(?:[Aa]ctor-[Cc]ritic|[Aa]ctors?|[Cc]ritics?|[Rr]ollouts?"
     r"|[Ee]pisodes?|[Ee]pochs?|[Tt]okens?|[Tt]okenizers?|Top-[kp]|Weights & Biases"
     r"|Hugging Face|Minecraft|LLaMA-Factory|Dec-POMDP"
     r"|(?!ZXQ\d{5}QXZ)(?=[A-Za-z0-9]*[A-Z][A-Za-z0-9]*[A-Z])[A-Za-z][A-Za-z0-9]*)"
-    r"(?![A-Za-z0-9_])"
+    r"(?![A-Za-z0-9])"
 )
 _PROTECTED = re.compile(
     "|".join(
@@ -308,9 +308,12 @@ def validate_translation(source, translated):
 
     if not _same_structure(source[src_front.end() :], translated[dst_front.end() :]):
         raise ValueError("Translation changed protected code, math, links, or markup")
-    missing = Counter(KEEP_ENGLISH.findall(source)) - Counter(
-        KEEP_ENGLISH.findall(translated)
-    )
+    # Count substrings: a model may attach text, such as a plural "s", to a term.
+    missing = [
+        term
+        for term, count in Counter(KEEP_ENGLISH.findall(source)).items()
+        if translated.count(term) < count
+    ]
     if missing:
         raise ValueError(
             "Translation changed terms that stay in English: "

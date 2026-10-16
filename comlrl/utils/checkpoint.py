@@ -314,7 +314,7 @@ def _fingerprint(value):
     ).hexdigest()
 
 
-def _model_metadata(model):
+def _model_metadata(model, config_override=None):
     model = unwrap_model(model)
     config_model = getattr(model, "model", model)
     metadata = (
@@ -331,6 +331,12 @@ def _model_metadata(model):
         config = getattr(model, name, getattr(config_model, name, None))
         if callable(getattr(config, "to_dict", None)):
             values = config.to_dict()
+            if (
+                name == "config"
+                and config_override is not None
+                and config is config_override[0]
+            ):
+                values = {**values, **config_override[1]}
             for transient in (
                 "_name_or_path",
                 "transformers_version",
@@ -567,6 +573,7 @@ def _validate_component_states(
     models=False,
     allow_reward=False,
     allow_absent_reward_optimizer=False,
+    model_config_updates=None,
 ):
     if not isinstance(saved, dict):
         raise ValueError("Invalid checkpoint component schema.")
@@ -583,6 +590,7 @@ def _validate_component_states(
         raise ValueError(
             f"Checkpoint components do not match: {sorted(expected)} vs {sorted(current)}"
         )
+    pending_config_updates = {}
     for name, record in expected.items():
         many, items = current[name]
         if not isinstance(record, dict) or not {
@@ -650,13 +658,20 @@ def _validate_component_states(
                                     f"Checkpoint {name} optimizer tensor {key} has incompatible shape."
                                 )
         if models:
-            for obj, flags, metadata in zip(
-                items, record["training"], record["metadata"]
+            for index, (obj, flags, metadata) in enumerate(
+                zip(items, record["training"], record["metadata"])
             ):
                 if metadata != _model_metadata(obj):
-                    raise ValueError(
-                        f"Checkpoint {name} model or generation configuration does not match."
-                    )
+                    # Some trainers apply tokenizer IDs lazily during generation.
+                    # Accept only that exact transition, without changing live
+                    # models until every checkpoint preflight has succeeded.
+                    hook = getattr(trainer, "_checkpoint_model_config_override", None)
+                    override = hook(name, index) if callable(hook) else None
+                    if override is None or metadata != _model_metadata(obj, override):
+                        raise ValueError(
+                            f"Checkpoint {name} model or generation configuration does not match."
+                        )
+                    pending_config_updates[id(override[0])] = override
                 modules = dict(unwrap_model(obj).named_modules())
                 if (
                     not isinstance(flags, dict)
@@ -664,6 +679,25 @@ def _validate_component_states(
                     or any(type(flag) is not bool for flag in flags.values())
                 ):
                     raise ValueError(f"Invalid checkpoint {name} training modes.")
+
+    if pending_config_updates:
+        # Caller-provided actors may share a config object. A valid update for
+        # one actor must not invalidate another actor or a frozen reference.
+        for name, record in expected.items():
+            for obj, metadata in zip(current[name][1], record["metadata"]):
+                model = unwrap_model(obj)
+                config = getattr(
+                    model,
+                    "config",
+                    getattr(getattr(model, "model", model), "config", None),
+                )
+                override = pending_config_updates.get(id(config))
+                if override is not None and metadata != _model_metadata(obj, override):
+                    raise ValueError(
+                        f"Checkpoint {name} has incompatible shared model configuration."
+                    )
+        if model_config_updates is not None:
+            model_config_updates.update(pending_config_updates)
 
 
 def _validate_rng(state):
@@ -686,7 +720,7 @@ def _validate_rng(state):
             raise ValueError("Invalid checkpoint device RNG state.")
 
 
-def _validate_state(trainer, state):
+def _validate_state(trainer, state, *, model_config_updates=None):
     required = {
         "version",
         "trainer_class",
@@ -797,7 +831,12 @@ def _validate_state(trainer, state):
             "Checkpoint requires a reward model that cannot be initialized."
         )
     _validate_component_states(
-        trainer, state["models"], _MODEL_FIELDS, models=True, allow_reward=reward_init
+        trainer,
+        state["models"],
+        _MODEL_FIELDS,
+        models=True,
+        allow_reward=reward_init,
+        model_config_updates=model_config_updates,
     )
     _validate_component_states(
         trainer,
@@ -823,7 +862,10 @@ def _validate_state(trainer, state):
 
 def restore_trainer_state(trainer, state, checkpoint_dir=None, restore_rng=True):
     """Validate compatibility, then restore an in-memory snapshot."""
-    reward_init = _validate_state(trainer, state)
+    model_config_updates = {}
+    reward_init = _validate_state(
+        trainer, state, model_config_updates=model_config_updates
+    )
     extra_validator = getattr(trainer, "_checkpoint_validate_extra_state", None)
     extra_validation = None
     if callable(extra_validator):
@@ -845,7 +887,11 @@ def restore_trainer_state(trainer, state, checkpoint_dir=None, restore_rng=True)
             if "reward_optimizer" not in state["optimizers"]:
                 trainer.reward_optimizer = None
             _validate_component_states(
-                trainer, state["models"], _MODEL_FIELDS, models=True
+                trainer,
+                state["models"],
+                _MODEL_FIELDS,
+                models=True,
+                model_config_updates=model_config_updates,
             )
             _validate_component_states(trainer, state["optimizers"], _OPTIMIZER_FIELDS)
             # A custom lazy factory may choose a different device than its
@@ -857,6 +903,9 @@ def restore_trainer_state(trainer, state, checkpoint_dir=None, restore_rng=True)
             raise
         finally:
             restore_rng_state(rng)
+    for config, values in model_config_updates.values():
+        for name, value in values.items():
+            setattr(config, name, value)
     if (
         "reward_model" in state["models"]
         and "reward_optimizer" not in state["optimizers"]

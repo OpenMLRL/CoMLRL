@@ -777,6 +777,24 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
             }
             self._checkpoint_save_blocked = False
 
+    def _checkpoint_model_config_override(self, name, index):
+        """Match actor configs after the existing lazy tokenizer setup."""
+        if name != "agents" or not getattr(self, "tokenizers", None):
+            return None
+        agent = unwrap_model(self.agents[index])
+        # Keep the same config target and EOS fallback as apply_tokenizer_specials.
+        if hasattr(agent, "model") and hasattr(agent.model, "config"):
+            config = agent.model.config
+        else:
+            config = getattr(agent, "config", None)
+        if config is None:
+            return None
+        tokenizer = self.tokenizers[index]
+        return config, {
+            "pad_token_id": tokenizer.pad_token_id,
+            "eos_token_id": tokenizer.eos_token_id or tokenizer.pad_token_id,
+        }
+
     def _checkpoint_validate_progress(self, state):
         """Reject incompatible saved RL cursors before restoring trainer state."""
         progress = state["progress"]
