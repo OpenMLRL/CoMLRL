@@ -40,8 +40,14 @@ MODEL_ID = (
 )
 COUNT = r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?x(?![A-Za-z0-9])"
 # Terms every language keeps in English: masked before translation, then validated.
+# RL jargon, product names, and words with two or more capitals (algorithm names,
+# acronyms, class and dataset names). Inside compounds such as "generated-token",
+# only the term is kept.
 KEEP_ENGLISH = re.compile(
-    r"(?<![\w-])(?:[Aa]ctor-[Cc]ritic|[Aa]ctors?|[Cc]ritics?|[Rr]ollouts?)(?![\w-])"
+    r"(?<!\w)(?:[Aa]ctor-[Cc]ritic|[Aa]ctors?|[Cc]ritics?|[Rr]ollouts?|[Ee]pisodes?"
+    r"|[Ee]pochs?|[Tt]okens?|[Tt]okenizers?|Top-[kp]|Weights & Biases|Hugging Face"
+    r"|Minecraft|LLaMA-Factory|Dec-POMDP"
+    r"|(?!ZXQ\d{5}QXZ)(?=[A-Za-z0-9]*[A-Z][A-Za-z0-9]*[A-Z])[A-Za-z][A-Za-z0-9]*)(?!\w)"
 )
 _PROTECTED = re.compile(
     "|".join(
@@ -300,10 +306,14 @@ def validate_translation(source, translated):
 
     if not _same_structure(source[src_front.end() :], translated[dst_front.end() :]):
         raise ValueError("Translation changed protected code, math, links, or markup")
-    if Counter(KEEP_ENGLISH.findall(source)) != Counter(
+    missing = Counter(KEEP_ENGLISH.findall(source)) - Counter(
         KEEP_ENGLISH.findall(translated)
-    ):
-        raise ValueError("Translation changed terms that stay in English")
+    )
+    if missing:
+        raise ValueError(
+            "Translation changed terms that stay in English: "
+            + ", ".join(sorted(missing))
+        )
 
 
 def language_info(language):
@@ -355,8 +365,10 @@ def translate(source, *, endpoint, model, language="zh-cn"):
     terms = set()
 
     def field(value):
+        # NULs keep a term beside a placeholder, such as an <a> tag, its own word.
+        value = TOKEN.sub(lambda m: f"\0{m[0]}\0", value)
         key = f"s{len(fields)}"
-        fields[key] = KEEP_ENGLISH.sub(keep_english, value)
+        fields[key] = KEEP_ENGLISH.sub(keep_english, value).replace("\0", "")
         return key
 
     def protect(match):
@@ -389,9 +401,7 @@ def translate(source, *, endpoint, model, language="zh-cn"):
         lambda m: m[1] + ": @YAML:" + field(m[2].strip("\"'")) + "@",
         front[0],
     )
-    masked = KEEP_ENGLISH.sub(
-        keep_english, PROTECTED.sub(protect, source[front.end() :])
-    )
+    masked = PROTECTED.sub(protect, source[front.end() :])
     lines = []
     for line in masked.splitlines(keepends=True):
         match = re.match(r"^(\s*(?:(?:#{1,6}|[-*+]|\d+\.|>)\s+)?)(.*?)(\n?)$", line)
