@@ -40,14 +40,18 @@ MODEL_ID = (
 )
 COUNT = r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?x(?![A-Za-z0-9])"
 # Terms every language keeps in English: masked before translation, then validated.
-# RL jargon, product names, and words with two or more capitals (algorithm names,
-# acronyms, class and dataset names). Inside compounds such as "generated-token",
-# only the term is kept. Boundaries are ASCII letters and digits, so CJK particles
-# ("actors를") and Markdown emphasis ("_Minecraft_") do not hide a term.
+# The project's full name (also with bold initials), RL jargon, product names, and
+# words with two or more capitals (algorithm names, acronyms, class and dataset
+# names). Inside compounds such as "generated-token", only the term is kept.
+# Boundaries are ASCII letters and digits, so CJK particles ("actors를") and
+# Markdown emphasis ("_Minecraft_") do not hide a term.
 KEEP_ENGLISH = re.compile(
-    r"(?<![A-Za-z0-9])(?:[Aa]ctor-[Cc]ritic|[Aa]ctors?|[Cc]ritics?|[Rr]ollouts?"
-    r"|[Ee]pisodes?|[Ee]pochs?|[Tt]okens?|[Tt]okenizers?|Top-[kp]|Weights & Biases"
-    r"|Hugging Face|Minecraft|LLaMA-Factory|Dec-POMDP"
+    r"(?<![A-Za-z0-9])(?:(?:\*\*)?Co(?:\*\*)?operative (?:\*\*)?M(?:\*\*)?ulti-"
+    r"(?:\*\*)?L(?:\*\*)?LM (?:\*\*)?R(?:\*\*)?einforcement (?:\*\*)?L(?:\*\*)?earning"
+    r"|[Aa]ctor-[Cc]ritic|[Aa]ctors?|[Cc]ritics?|[Rr]ollouts?"
+    r"|[Ee]pisodes?|[Ee]pochs?|[Tt]okens?|[Tt]okenizers?|[Tt]rainers?|Top-[kp]"
+    r"|(?i:value[ -]heads?)|[Bb]ackbones?|[Mm]argins?"
+    r"|Weights & Biases|Hugging Face|Minecraft|LLaMA-Factory|Dec-POMDP"
     r"|(?!ZXQ\d{5}QXZ)(?=[A-Za-z0-9]*[A-Z][A-Za-z0-9]*[A-Z])[A-Za-z][A-Za-z0-9]*)"
     r"(?![A-Za-z0-9])"
 )
@@ -305,6 +309,8 @@ def validate_translation(source, translated):
         h[1] for h in heading_lines(translated)
     ]:
         raise ValueError("Translation changed the heading hierarchy")
+    if any(re.search(r"\{#[^}]*\}(?!$)", h[2]) for h in heading_lines(translated)):
+        raise ValueError("Translation moved a heading anchor")
 
     if not _same_structure(source[src_front.end() :], translated[dst_front.end() :]):
         raise ValueError("Translation changed protected code, math, links, or markup")
@@ -411,6 +417,10 @@ def translate(source, *, endpoint, model, language="zh-cn"):
     for line in masked.splitlines(keepends=True):
         match = re.match(r"^(\s*(?:(?:#{1,6}|[-*+]|\d+\.|>)\s+)?)(.*?)(\n?)$", line)
         prefix, text, newline = match.groups()
+        # Keep a heading's explicit {#anchor} last; Hugo ignores one anywhere else.
+        anchor = re.search(rf"\s+({TOKEN.pattern})$", text)
+        if anchor and restorations[anchor[1]].startswith("{#"):
+            text, newline = text[: anchor.start()], anchor[0] + newline
         if re.search(r"[A-Za-z]", TOKEN.sub("", text)):
             lines.append(prefix + "@FIELD:" + field(text) + "@" + newline)
         else:

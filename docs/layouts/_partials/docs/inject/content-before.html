@@ -9,8 +9,13 @@
   <h1 class="docs-page-title">{{ partial "docs/title" . | default .Site.Title }}</h1>
 {{ end }}
 {{ if and (ne .Site.Language.Lang "en") .Params.translationSource }}
+  {{ $model := .Params.translationModel }}
+  {{/* An Ollama tag such as "translategemma:4b" names its model family first. */}}
+  {{ $family := index (split $model ":") 0 }}
+  {{ $url := index site.Params.translationModelLinks $family | default (printf "https://ollama.com/library/%s" $family) }}
+  {{ $link := printf `<a href="%s">%s</a>` $url $model }}
   <p class="docs-translation-note">
-    <span>{{ i18n "docsAutomaticTranslation" (dict "Model" .Params.translationModel) }}</span>
+    <span>{{ i18n "docsAutomaticTranslation" (dict "Model" $link) | safeHTML }}</span>
     {{ range where .AllTranslations "Language.Lang" "en" }}
       <span aria-hidden="true">·</span>
       <a href="{{ .RelPermalink }}" hreflang="en" data-language-link>{{ i18n "docsEnglishOriginal" }}</a>

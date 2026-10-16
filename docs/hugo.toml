@@ -23,6 +23,9 @@ disableKinds = ["taxonomy"]
   BookEditPath = "edit/main/docs"
   BookDateFormat = "Jan 2, 2006"
   BookMath = true
+  # Translation notice links by model family; others link to Ollama's library page.
+  [params.translationModelLinks]
+    translategemma = "https://arxiv.org/pdf/2601.09012"
 
 [markup]
   [markup.tableOfContents]
