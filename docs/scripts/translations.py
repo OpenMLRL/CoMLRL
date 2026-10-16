@@ -39,6 +39,10 @@ MODEL_ID = (
     r"(?=[A-Za-z0-9_.-]*\d)[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?"
 )
 COUNT = r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?x(?![A-Za-z0-9])"
+# Prose terms every language keeps in English; masked before translation only.
+KEEP_ENGLISH = re.compile(
+    r"(?<![\w-])(?:[Aa]ctor-[Cc]ritic|[Aa]ctors?|[Cc]ritics?|[Rr]ollouts?)(?![\w-])"
+)
 _PROTECTED = re.compile(
     "|".join(
         (
@@ -375,7 +379,7 @@ def translate(source, *, endpoint, model, language="zh-cn"):
         lambda m: m[1] + ": @YAML:" + field(m[2].strip("\"'")) + "@",
         front[0],
     )
-    masked = PROTECTED.sub(protect, source[front.end() :])
+    masked = KEEP_ENGLISH.sub(protect, PROTECTED.sub(protect, source[front.end() :]))
     lines = []
     for line in masked.splitlines(keepends=True):
         match = re.match(r"^(\s*(?:(?:#{1,6}|[-*+]|\d+\.|>)\s+)?)(.*?)(\n?)$", line)

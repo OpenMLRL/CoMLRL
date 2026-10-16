@@ -1,22 +1,22 @@
-"""Comparator RNG portability preserves the original per-device stream groups."""
+"""Checkpoints restore global, CUDA-routed and comparator generator streams."""
 
-import copy
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import copy
+import random
 import threading
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
 from comlrl.trainers.preference.iterative import MADPOIterTrainer
-from test_checkpoint_preference import (
-    Interrupted,
-    assert_same_training,
-    iterative_trainer,
-    seed,
-    stop_after,
-)
+import comlrl.utils.checkpoint as checkpoint
+from comlrl.utils.checkpoint import capture_trainer_state, restore_trainer_state
+
+from checkpoint_helpers import TinyTrainer
+from helpers import assert_nested_equal
 
 
 class _Agent:
@@ -42,15 +42,6 @@ def _trainer(devices):
     ]
     trainer._initialize_comparator_rng()
     return trainer
-
-
-@pytest.fixture(autouse=True)
-def preserve_cpu_rng():
-    state = torch.get_rng_state().clone()
-    try:
-        yield
-    finally:
-        torch.set_rng_state(state)
 
 
 @pytest.fixture
@@ -92,6 +83,187 @@ def _restore_streams(target, source):
     }
     target._comparator_rng_streams = copy.deepcopy(source._comparator_rng_streams)
     target._checkpoint_prepare_training()
+
+
+def test_capture_preserves_rng_and_restore_replays_all_cpu_generators(tmp_path):
+    trainer = TinyTrainer()
+    random.seed(31)
+    np.random.seed(32)
+    torch.manual_seed(33)
+    before = (random.getstate(), np.random.get_state(), torch.get_rng_state())
+    state = capture_trainer_state(trainer)
+    after = (random.getstate(), np.random.get_state(), torch.get_rng_state())
+    assert_nested_equal(after, before)
+    expected = (random.random(), np.random.rand(4), torch.rand(4))
+    random.seed(91)
+    np.random.seed(92)
+    torch.manual_seed(93)
+
+    restore_trainer_state(trainer, state, tmp_path)
+
+    actual = (random.random(), np.random.rand(4), torch.rand(4))
+    assert_nested_equal(actual, expected)
+
+
+def test_restore_rng_false_preserves_current_generators(tmp_path):
+    trainer = TinyTrainer()
+    state = capture_trainer_state(trainer)
+    random.seed(13)
+    np.random.seed(14)
+    torch.manual_seed(15)
+    before = (random.getstate(), np.random.get_state(), torch.get_rng_state())
+
+    restore_trainer_state(trainer, state, tmp_path, restore_rng=False)
+
+    after = (random.getstate(), np.random.get_state(), torch.get_rng_state())
+    assert_nested_equal(after, before)
+
+
+def test_cuda_rng_remap_supports_unused_device_count_change(monkeypatch):
+    trainer = object()
+    state = {
+        "rng": {"cuda": [torch.tensor([1]), torch.tensor([2]), torch.tensor([3])]},
+        "rng_devices": {"agents.0": "cuda:2", "critics.0": "cuda:0"},
+    }
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    monkeypatch.setattr(
+        checkpoint,
+        "_rng_model_devices",
+        lambda trainer: {"agents.0": "cuda:1", "critics.0": "cuda:0"},
+    )
+    assert checkpoint._cuda_rng_routes(trainer, state) == {1: 2, 0: 0}
+
+
+@pytest.mark.parametrize(
+    "saved,current",
+    [
+        (
+            {"agents.0": "cuda:0", "agents.1": "cuda:1"},
+            {"agents.0": "cuda:0", "agents.1": "cuda:0"},
+        ),
+        (
+            {"agents.0": "cuda:0", "agents.1": "cuda:0"},
+            {"agents.0": "cuda:0", "agents.1": "cuda:1"},
+        ),
+    ],
+)
+def test_ambiguous_actor_rng_merge_or_split_is_rejected(monkeypatch, saved, current):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    monkeypatch.setattr(checkpoint, "_rng_model_devices", lambda trainer: current)
+    with pytest.raises(ValueError, match="merge or split"):
+        checkpoint._cuda_rng_routes(
+            object(),
+            {
+                "rng": {"cuda": [torch.tensor([1]), torch.tensor([2])]},
+                "rng_devices": saved,
+            },
+        )
+
+
+@pytest.mark.parametrize("source,target", [("cpu", "cuda:0"), ("cuda:0", "cpu")])
+def test_model_rng_backend_changes_rejected_without_cuda_runtime(
+    monkeypatch, source, target
+):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(
+        checkpoint, "_rng_model_devices", lambda trainer: {"agents.0": target}
+    )
+    with pytest.raises(ValueError, match="device backends"):
+        checkpoint._cuda_rng_routes(
+            object(), {"rng": {}, "rng_devices": {"agents.0": source}}
+        )
+
+
+def test_lazy_reward_rng_device_is_resolved_before_model_load(monkeypatch):
+    trainer = SimpleNamespace(reward_device=torch.device("cuda:1"))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    monkeypatch.setattr(
+        checkpoint, "_rng_model_devices", lambda trainer: {"agents.0": "cuda:0"}
+    )
+    state = {
+        "rng": {"cuda": [torch.tensor([1]), torch.tensor([2]), torch.tensor([3])]},
+        "rng_devices": {"agents.0": "cuda:0", "reward_model.0": "cuda:2"},
+    }
+    assert checkpoint._cuda_rng_routes(trainer, state) == {0: 0, 1: 2}
+
+
+def test_lazy_reward_implicit_cuda_device_uses_current_index(monkeypatch):
+    trainer = SimpleNamespace(reward_device=torch.device("cuda"))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 1)
+    monkeypatch.setattr(
+        checkpoint, "_rng_model_devices", lambda trainer: {"agents.0": "cuda:0"}
+    )
+    state = {
+        "rng": {"cuda": [torch.tensor([1]), torch.tensor([2])]},
+        "rng_devices": {"agents.0": "cuda:0", "reward_model.0": "cuda:1"},
+    }
+    assert checkpoint._cuda_rng_routes(trainer, state) == {0: 0, 1: 1}
+
+
+@pytest.mark.parametrize("probe_device", ["cpu", "meta"])
+def test_rng_probe_override_uses_planned_placement(probe_device, monkeypatch):
+    trainer = SimpleNamespace(
+        agents=[torch.nn.Linear(1, 1, device=probe_device)],
+        _checkpoint_rng_devices_override={"agents.0": "cuda:2"},
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 3)
+    state = {
+        "rng": {"cuda": [torch.tensor([1]), torch.tensor([2]), torch.tensor([3])]},
+        "rng_devices": {"agents.0": "cuda:1"},
+    }
+    assert checkpoint._rng_model_devices(trainer) == {"agents.0": "cuda:2"}
+    assert checkpoint._cuda_rng_routes(trainer, state)[2] == 1
+
+
+def test_nested_rng_routes_restore_latest_parent_rng_values(monkeypatch):
+    trainer = SimpleNamespace(_checkpoint_rng_devices_override={"agents.0": "cuda:0"})
+    state = {
+        "rng": {"cuda": [torch.tensor([11]), torch.tensor([22]), torch.tensor([33])]},
+        "rng_devices": {"agents.0": "cuda:0"},
+    }
+    nested = [
+        {
+            "saved": {"agents.0": "cuda:0", "critics.0": "cuda:1"},
+            "current": {"agents.0": "cuda:0", "critics.0": "cuda:2"},
+        }
+    ]
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 3)
+    monkeypatch.setattr(
+        torch.cuda, "get_rng_state_all", lambda: [torch.tensor([99])] * 3
+    )
+    restored = []
+    monkeypatch.setattr(checkpoint, "restore_rng_state", restored.append)
+    checkpoint._restore_trainer_rng(trainer, state, nested)
+    assert [value.item() for value in restored[0]["cuda"]] == [11, 22, 22]
+
+
+def test_nested_rng_routes_cannot_conflict_with_parent_streams(monkeypatch):
+    trainer = SimpleNamespace(_checkpoint_rng_devices_override={"agents.0": "cuda:0"})
+    state = {
+        "rng": {"cuda": [torch.tensor([11]), torch.tensor([22])]},
+        "rng_devices": {"agents.0": "cuda:0"},
+    }
+    nested = [{"saved": {"critics.0": "cuda:1"}, "current": {"critics.0": "cuda:0"}}]
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    with pytest.raises(ValueError, match="merge or split"):
+        checkpoint._cuda_rng_routes(trainer, state, nested)
+
+
+@pytest.mark.parametrize(
+    "seed, target, comparator", [(7, 7, -7), (0, 0, 1), (2**64 - 5, -5, 5)]
+)
+def test_comparator_seed_mirrors_signed_torch_seed(seed, target, comparator):
+    torch.manual_seed(seed)
+    trainer = _trainer(["cpu"])
+    assert (trainer.target_seed, trainer.comparator_seed) == (target, comparator)
 
 
 def test_default_same_device_comparators_keep_one_legacy_stream():
@@ -243,26 +415,3 @@ def test_default_generation_preserves_one_argument_rng_override():
         trainer.agents, {}, num_candidates=1, use_comparator_rng=True
     )
     assert calls == trainer.agents
-
-
-def test_checkpoint_streams_resume_matches_default_training(tmp_path):
-    seed(25)
-    baseline = iterative_trainer(tmp_path / "baseline")
-    baseline.train()
-    expected = torch.get_rng_state().clone()
-
-    seed(25)
-    interrupted = iterative_trainer(tmp_path / "interrupted")
-    stop_after(interrupted, lambda progress: progress.get("iteration") == 2)
-    with pytest.raises(Interrupted):
-        interrupted.train(checkpoint_dir=tmp_path / "checkpoints")
-    seed(777)
-    resumed = iterative_trainer(tmp_path / "resumed")
-    resumed.train(resume_from_checkpoint=tmp_path / "checkpoints" / "checkpoint-2")
-    assert_same_training(baseline, resumed)
-    assert baseline.events == interrupted.events + resumed.events
-    assert torch.equal(torch.get_rng_state(), expected)
-    stream = resumed._comparator_rng_streams["0"]["id"]
-    assert torch.equal(
-        baseline._comparator_rng_states["cpu"], resumed._comparator_rng_states[stream]
-    )

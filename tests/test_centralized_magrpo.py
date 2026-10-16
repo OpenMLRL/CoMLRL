@@ -1,71 +1,15 @@
-from types import SimpleNamespace
+"""Centralized MAGRPO trains one joint actor on all roles' text."""
 
 import pytest
 import torch
-from datasets import Dataset
 
 from comlrl.trainers.reinforce import (
     CentralizedMAGRPOConfig,
     CentralizedMAGRPOTrainer,
     MAGRPOConfig,
 )
-from test_centralized_collaboration import (
-    Adapter,
-    BAD,
-    GOOD,
-    model_for,
-    task_reward,
-    tokenizer,
-)
 
-
-def make_trainer(tokenizer, **overrides):
-    options = dict(
-        agent_devices="cpu",
-        num_agents=2,
-        num_train_epochs=1,
-        num_generations=2,
-        eval_interval=0,
-        rollout_buffer_size=1,
-        train_batch_size=1,
-        max_new_tokens=8,
-        agent_learning_rate=1e-3,
-    )
-    options.update(overrides)
-    model = model_for(tokenizer)
-    prompts = []
-
-    def generate(*, input_ids, num_return_sequences, **kwargs):
-        prompts.append(tokenizer.decode(input_ids[0]))
-        sequences = [
-            torch.cat(
-                [
-                    input_ids[0],
-                    torch.tensor(
-                        tokenizer.encode(GOOD if index % 2 == 0 else BAD),
-                        device=input_ids.device,
-                    ),
-                ]
-            )
-            for index in range(num_return_sequences)
-        ]
-        return SimpleNamespace(sequences=torch.stack(sequences))
-
-    model.generate = generate
-    dataset = Dataset.from_list([{"id": "task", "prompt": "task prompt"}])
-    trainer = CentralizedMAGRPOTrainer(
-        agents=[model],
-        num_agents=2,
-        tokenizer=tokenizer,
-        args=CentralizedMAGRPOConfig(**options),
-        train_dataset=dataset,
-        eval_dataset=dataset,
-        reward_func=task_reward,
-        formatters=[lambda _: "left", lambda _: "right"],
-        centralized_adapter=Adapter(),
-    )
-    trainer.verbose = False
-    return trainer, prompts
+from helpers import BAD, GOOD, JointAdapter, make_centralized_magrpo_trainer, model_for
 
 
 def test_config_rejects_wrong_mode_and_multiple_turns():
@@ -78,7 +22,7 @@ def test_config_rejects_wrong_mode_and_multiple_turns():
 
 
 def test_one_actor_training_uses_joint_prompt_and_task_rewards(tokenizer):
-    trainer, prompts = make_trainer(tokenizer)
+    trainer, prompts = make_centralized_magrpo_trainer(tokenizer)
     assert len(trainer.agents) == len(trainer.optimizers) == trainer.num_agents == 1
     assert trainer.args.num_agents == 2
     before = trainer.agents[0].transformer.wte.weight.detach().clone()
@@ -91,8 +35,8 @@ def test_one_actor_training_uses_joint_prompt_and_task_rewards(tokenizer):
     assert not hasattr(trainer, "comparator_policy")
 
 
-def test_eval_passes_separate_roles_to_existing_logger(tokenizer):
-    trainer, _ = make_trainer(tokenizer)
+def test_eval_passes_separate_roles_to_eval_logger(tokenizer):
+    trainer, _ = make_centralized_magrpo_trainer(tokenizer)
     observed = []
     trainer.eval_logger = lambda **kwargs: observed.append(kwargs) or []
     trainer.eval_aggregator = lambda *a, **k: {"turn_1/domain_metric": 3.0}
@@ -107,7 +51,7 @@ def test_eval_passes_separate_roles_to_existing_logger(tokenizer):
 
 
 def test_loss_matches_full_joint_sequence_policy_gradient(tokenizer):
-    trainer, _ = make_trainer(tokenizer)
+    trainer, _ = make_centralized_magrpo_trainer(tokenizer)
     model = trainer.agents[0]
     prompt = torch.tensor(tokenizer.encode("joint left right"))
     sequences = [torch.tensor(tokenizer.encode(text)) for text in (GOOD, BAD)]
@@ -132,8 +76,8 @@ def test_loss_matches_full_joint_sequence_policy_gradient(tokenizer):
         assert expected_grad[tokenizer.convert_tokens_to_ids(token)].abs().sum() > 0
 
 
-def test_one_reference_model_for_joint_actor(tokenizer):
-    trainer, _ = make_trainer(
+def test_joint_actor_gets_one_reference_model(tokenizer):
+    trainer, _ = make_centralized_magrpo_trainer(
         tokenizer, reference_kl_enabled=True, reference_devices=["cpu"]
     )
     assert len(trainer.reference_models) == 1
@@ -145,7 +89,7 @@ def test_rejects_multiple_actors(tokenizer):
     with pytest.raises(ValueError, match="exactly one actor"):
         CentralizedMAGRPOTrainer(
             agents=[model_for(tokenizer), model_for(tokenizer)],
-            centralized_adapter=Adapter(),
+            centralized_adapter=JointAdapter(),
             args=CentralizedMAGRPOConfig(agent_devices="cpu"),
         )
 
@@ -153,7 +97,7 @@ def test_rejects_multiple_actors(tokenizer):
 def test_wandb_does_not_claim_a_comparator(tokenizer, monkeypatch):
     import comlrl.trainers.reinforce.magrpo as module
 
-    trainer, _ = make_trainer(tokenizer)
+    trainer, _ = make_centralized_magrpo_trainer(tokenizer)
     captured = {}
     monkeypatch.setattr(module.wandb, "init", lambda **kwargs: captured.update(kwargs))
     monkeypatch.setattr(module.wandb, "define_metric", lambda *args, **kwargs: None)

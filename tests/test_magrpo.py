@@ -1,4 +1,4 @@
-"""Fixed CPU rollouts preserve MAGRPO's existing rewards and update semantics."""
+"""MAGRPO rewards, returns and updates on fixed CPU rollouts."""
 
 from types import SimpleNamespace
 
@@ -115,7 +115,7 @@ def _run_scenario(num_agents, joint_mode):
 
 
 @pytest.mark.parametrize("joint_mode", ["align", "aligned", "cross", "crossed"])
-def test_two_turn_rewards_returns_and_update_order(joint_mode):
+def test_two_turn_rollout_rewards_returns_and_update_order(joint_mode):
     trainer = _run_scenario(2, joint_mode)
     crossed = joint_mode in {"cross", "crossed"}
     combinations = [(0, 0), (0, 1), (1, 0), (1, 1)] if crossed else [(0, 0), (1, 1)]
@@ -165,7 +165,7 @@ def _assert_loss_and_gradient_regression(trainer):
         weights = record["before"].clone().requires_grad_()
         returns = torch.tensor(record["returns"])
         advantages = returns - returns.mean()
-        # Freeze the pre-cleanup token boundary; changing it changes the objective.
+        # Freeze the scored token boundary; moving it changes the objective.
         log_probs = weights[1:3].log_softmax(-1)
         losses = [
             -(log_probs[0, sample + 2] + log_probs[1, record["agent"] + 4]) * advantage
@@ -191,7 +191,7 @@ def _assert_loss_and_gradient_regression(trainer):
 
 
 @pytest.mark.parametrize("joint_mode", ["aligned", "cross", "crossed", "unknown"])
-def test_single_agent_retains_joint_mode_fallback(joint_mode):
+def test_single_agent_accepts_any_joint_mode(joint_mode):
     trainer = _run_scenario(1, joint_mode)
     assert trainer.env_step == 6
     assert [record["returns"] for record in trainer.records] == [
@@ -207,7 +207,7 @@ def test_single_agent_retains_joint_mode_fallback(joint_mode):
     _assert_loss_and_gradient_regression(trainer)
 
 
-def test_multiple_agents_still_reject_unknown_joint_mode():
+def test_multiple_agents_reject_unknown_joint_mode():
     trainer = _ScriptedTrainer(2, "unknown")
     with pytest.raises(ValueError, match="Unsupported joint_mode: unknown"):
         trainer._train_step_returns({"prompt": "fixture"})
@@ -215,7 +215,7 @@ def test_multiple_agents_still_reject_unknown_joint_mode():
     assert trainer.rewards == trainer.records == []
 
 
-def test_reward_normalization_preserves_mutation_and_list_identity():
+def test_compute_rewards_wraps_completions_in_place():
     trainer = _ScriptedTrainer(2, "aligned")
     second = ["0:1:1"]
     completions = ["0:0:0", second]

@@ -6,10 +6,7 @@ from comlrl.trainers.preference.centralized import (
     CentralizedComparatorParseError,
     TaggedCentralizedComparatorAdapter,
 )
-from comlrl.trainers.preference.iterative import (
-    MADPOIterConfig,
-    MADPOIterTrainer,
-)
+from comlrl.trainers.preference.iterative import MADPOIterConfig, MADPOIterTrainer
 
 
 class _StubAdapter:

@@ -1,9 +1,11 @@
+"""Reference-model KL penalties for MAGRPO, IAC and MAAC."""
+
 import importlib
 from types import SimpleNamespace
 
 import pytest
 import torch
-from transformers import GPT2Config, GPT2LMHeadModel
+from transformers import GPT2LMHeadModel
 
 from comlrl.trainers.actor_critic import IACTrainer
 from comlrl.trainers.actor_critic.iac import IACConfig
@@ -15,52 +17,44 @@ from comlrl.utils.reference_kl import (
     resolve_reference_devices,
 )
 
+from helpers import tiny_gpt2, zero_reward
 
-def _tiny_model(vocab_size: int = 32) -> GPT2LMHeadModel:
-    cfg = GPT2Config(
-        vocab_size=vocab_size,
-        n_positions=32,
-        n_ctx=32,
-        n_embd=16,
-        n_layer=1,
-        n_head=1,
+CONFIGS = [MAGRPOConfig, IACConfig, MAACConfig]
+TRAINERS = [IACTrainer, MAACTrainer, MAGRPOTrainer]
+
+
+def _actor_critic_trainer(trainer_cls, tokenizer, **options):
+    options.update(num_agents=1, num_turns=1, agent_devices="cpu", critic_devices="cpu")
+    if trainer_cls is IACTrainer:
+        return IACTrainer(
+            agents=[tiny_gpt2()],
+            tokenizer=tokenizer,
+            reward_func=zero_reward,
+            args=IACConfig(use_separate_critic=False, **options),
+        )
+    return MAACTrainer(
+        agents=[tiny_gpt2()],
+        critics=[tiny_gpt2()],
+        tokenizer=tokenizer,
+        reward_func=zero_reward,
+        args=MAACConfig(**options),
     )
-    return GPT2LMHeadModel(cfg)
 
 
-def _dummy_tokenizer():
-    return SimpleNamespace(
-        pad_token="<pad>",
-        eos_token="</s>",
-        pad_token_id=0,
-        eos_token_id=1,
-    )
+@pytest.mark.parametrize("config_cls", CONFIGS)
+def test_reference_kl_config_defaults_off(config_cls):
+    config = config_cls()
+    assert config.reference_kl_enabled is False
+    assert config.reference_devices is None
 
 
-def _reward_func(*_args, **_kwargs):
-    return [0.0]
-
-
-def test_reference_kl_config_defaults_off():
-    magrpo = MAGRPOConfig()
-    iac = IACConfig()
-    maac = MAACConfig()
-
-    assert magrpo.reference_kl_enabled is False
-    assert iac.reference_kl_enabled is False
-    assert maac.reference_kl_enabled is False
-    assert magrpo.reference_devices is None
-    assert iac.reference_devices is None
-    assert maac.reference_devices is None
-
-
-@pytest.mark.parametrize("config_cls", [MAGRPOConfig, IACConfig, MAACConfig])
+@pytest.mark.parametrize("config_cls", CONFIGS)
 def test_reference_kl_rejects_negative_coef(config_cls):
     with pytest.raises(ValueError, match="reference_kl_coef"):
         config_cls(reference_kl_coef=-0.1)
 
 
-@pytest.mark.parametrize("config_cls", [MAGRPOConfig, IACConfig, MAACConfig])
+@pytest.mark.parametrize("config_cls", CONFIGS)
 def test_reference_kl_rejects_mismatched_reference_devices(config_cls):
     kwargs = {
         "num_agents": 2,
@@ -73,7 +67,7 @@ def test_reference_kl_rejects_mismatched_reference_devices(config_cls):
         config_cls(**kwargs)
 
 
-def test_reference_devices_can_be_resolved_separately_from_agents():
+def test_reference_devices_resolve_separately_from_agents():
     args = SimpleNamespace(reference_devices=["cuda:1"])
     fallback = [torch.device("cuda:0")]
 
@@ -82,19 +76,18 @@ def test_reference_devices_can_be_resolved_separately_from_agents():
     assert devices == [torch.device("cuda:1")]
 
 
-def test_reference_kl_enabled_uses_self_reference_by_default():
-    cfg = MAGRPOConfig(
-        num_agents=1,
-        num_turns=1,
-        num_generations=2,
-        agent_devices="cpu",
-        reference_kl_enabled=True,
-    )
+def test_magrpo_reference_kl_defaults_to_frozen_actor_copy(stub_tokenizer):
     trainer = MAGRPOTrainer(
-        agents=[_tiny_model()],
-        tokenizer=_dummy_tokenizer(),
-        reward_func=_reward_func,
-        args=cfg,
+        agents=[tiny_gpt2()],
+        tokenizer=stub_tokenizer,
+        reward_func=zero_reward,
+        args=MAGRPOConfig(
+            num_agents=1,
+            num_turns=1,
+            num_generations=2,
+            agent_devices="cpu",
+            reference_kl_enabled=True,
+        ),
     )
 
     assert len(trainer.reference_models) == 1
@@ -102,14 +95,14 @@ def test_reference_kl_enabled_uses_self_reference_by_default():
     assert all(not p.requires_grad for p in trainer.reference_models[0].parameters())
 
 
-def test_reference_model_loads_from_actor_source(tmp_path):
+def test_iac_reference_model_loads_from_actor_source(stub_tokenizer, tmp_path):
     model_dir = tmp_path / "tiny-model"
-    _tiny_model().save_pretrained(model_dir)
+    tiny_gpt2().save_pretrained(model_dir)
 
     trainer = IACTrainer(
         agent_model=str(model_dir),
-        tokenizer=_dummy_tokenizer(),
-        reward_func=_reward_func,
+        tokenizer=stub_tokenizer,
+        reward_func=zero_reward,
         args=IACConfig(
             num_agents=1,
             num_turns=1,
@@ -127,7 +120,7 @@ def test_reference_model_loads_from_actor_source(tmp_path):
 
 
 def test_reference_kl_for_identical_model_is_zero():
-    model = _tiny_model()
+    model = tiny_gpt2()
     sequences = torch.tensor([[2, 3, 4, 5]], dtype=torch.long)
     attention_mask = torch.ones_like(sequences)
 
@@ -143,54 +136,47 @@ def test_reference_kl_for_identical_model_is_zero():
     assert torch.allclose(kl, torch.zeros_like(kl), atol=1e-6)
 
 
-def test_reference_kl_disabled_actor_critic_shaping_is_noop():
-    iac = IACTrainer(
-        agents=[_tiny_model()],
-        tokenizer=_dummy_tokenizer(),
-        reward_func=_reward_func,
-        args=IACConfig(
-            num_agents=1,
-            num_turns=1,
-            use_separate_critic=False,
-            agent_devices="cpu",
-            critic_devices="cpu",
-        ),
+@pytest.mark.parametrize("trainer_cls", [IACTrainer, MAACTrainer])
+def test_actor_critic_kl_shaping_is_noop_when_disabled(trainer_cls, stub_tokenizer):
+    trainer = _actor_critic_trainer(trainer_cls, stub_tokenizer)
+    shaped_reward, metadata = trainer._kl_shaped_reward(
+        1.0, {"reference_kls": [0.4]}, 0
     )
-    shaped_reward, metadata = iac._kl_shaped_reward(1.0, {"reference_kls": [0.4]}, 0)
-    assert shaped_reward == pytest.approx(1.0)
-    assert metadata == {}
-
-    maac = MAACTrainer(
-        agents=[_tiny_model()],
-        critics=[_tiny_model()],
-        tokenizer=_dummy_tokenizer(),
-        reward_func=_reward_func,
-        args=MAACConfig(
-            num_agents=1,
-            num_turns=1,
-            agent_devices="cpu",
-            critic_devices="cpu",
-        ),
-    )
-    shaped_reward, metadata = maac._kl_shaped_reward(1.0, {"reference_kls": [0.4]}, 0)
     assert shaped_reward == pytest.approx(1.0)
     assert metadata == {}
 
 
-def test_magrpo_applies_reference_kl_to_returns():
-    args = MAGRPOConfig(
-        num_agents=1,
-        num_turns=1,
-        num_generations=2,
-        agent_devices="cpu",
+@pytest.mark.parametrize("trainer_cls", [IACTrainer, MAACTrainer])
+def test_actor_critic_kl_shaping_penalizes_reward(trainer_cls, stub_tokenizer):
+    trainer = _actor_critic_trainer(
+        trainer_cls,
+        stub_tokenizer,
         reference_kl_enabled=True,
-        reference_kl_coef=0.5,
+        reference_kl_coef=0.25,
     )
+
+    shaped_reward, metadata = trainer._kl_shaped_reward(
+        1.0, {"reference_kls": [0.4]}, 0
+    )
+
+    assert shaped_reward == pytest.approx(0.9)
+    assert metadata["reference_kl"] == pytest.approx(0.4)
+    assert metadata["reference_kl_penalty"] == pytest.approx(0.1)
+
+
+def test_magrpo_applies_reference_kl_to_returns(stub_tokenizer):
     trainer = MAGRPOTrainer(
-        agents=[_tiny_model()],
-        tokenizer=_dummy_tokenizer(),
-        reward_func=_reward_func,
-        args=args,
+        agents=[tiny_gpt2()],
+        tokenizer=stub_tokenizer,
+        reward_func=zero_reward,
+        args=MAGRPOConfig(
+            num_agents=1,
+            num_turns=1,
+            num_generations=2,
+            agent_devices="cpu",
+            reference_kl_enabled=True,
+            reference_kl_coef=0.5,
+        ),
     )
 
     returns = torch.tensor([1.0, 2.0])
@@ -201,60 +187,8 @@ def test_magrpo_applies_reference_kl_to_returns():
     assert torch.allclose(adjusted, torch.tensor([0.9, 1.8]))
 
 
-def test_iac_uses_reference_kl_shaped_reward():
-    args = IACConfig(
-        num_agents=1,
-        num_turns=1,
-        use_separate_critic=False,
-        agent_devices="cpu",
-        critic_devices="cpu",
-        reference_kl_enabled=True,
-        reference_kl_coef=0.25,
-    )
-    trainer = IACTrainer(
-        agents=[_tiny_model()],
-        tokenizer=_dummy_tokenizer(),
-        reward_func=_reward_func,
-        args=args,
-    )
-
-    shaped_reward, metadata = trainer._kl_shaped_reward(
-        1.0, {"reference_kls": [0.4]}, 0
-    )
-
-    assert shaped_reward == pytest.approx(0.9)
-    assert metadata["reference_kl"] == pytest.approx(0.4)
-    assert metadata["reference_kl_penalty"] == pytest.approx(0.1)
-
-
-def test_maac_uses_reference_kl_shaped_reward():
-    args = MAACConfig(
-        num_agents=1,
-        num_turns=1,
-        agent_devices="cpu",
-        critic_devices="cpu",
-        reference_kl_enabled=True,
-        reference_kl_coef=0.25,
-    )
-    trainer = MAACTrainer(
-        agents=[_tiny_model()],
-        critics=[_tiny_model()],
-        tokenizer=_dummy_tokenizer(),
-        reward_func=_reward_func,
-        args=args,
-    )
-
-    shaped_reward, metadata = trainer._kl_shaped_reward(
-        1.0, {"reference_kls": [0.4]}, 0
-    )
-
-    assert shaped_reward == pytest.approx(0.9)
-    assert metadata["reference_kl"] == pytest.approx(0.4)
-    assert metadata["reference_kl_penalty"] == pytest.approx(0.1)
-
-
-@pytest.mark.parametrize("trainer_cls", [IACTrainer, MAACTrainer, MAGRPOTrainer])
-def test_sequence_kl_keeps_disabled_and_missing_model_behavior(trainer_cls):
+@pytest.mark.parametrize("trainer_cls", TRAINERS)
+def test_reference_kl_values_disabled_or_missing_models(trainer_cls):
     trainer = trainer_cls.__new__(trainer_cls)
     trainer.args = SimpleNamespace(reference_kl_enabled=False)
     assert trainer._reference_kl_values(0, None, None, None, 2, []) == []
@@ -263,9 +197,9 @@ def test_sequence_kl_keeps_disabled_and_missing_model_behavior(trainer_cls):
         trainer._reference_kl_values(0, None, None, None, 2, [])
 
 
-@pytest.mark.parametrize("trainer_cls", [IACTrainer, MAACTrainer, MAGRPOTrainer])
+@pytest.mark.parametrize("trainer_cls", TRAINERS)
 @pytest.mark.parametrize("response_lens", [[], [2], [2, 1, 3]])
-def test_sequence_kl_keeps_order_shortest_input_and_module_hook(
+def test_reference_kl_values_keep_order_and_module_hook(
     trainer_cls, response_lens, monkeypatch
 ):
     trainer = trainer_cls.__new__(trainer_cls)
@@ -295,11 +229,11 @@ def test_sequence_kl_keeps_order_shortest_input_and_module_hook(
     assert calls == [(2, length) for length in response_lens[:count]]
 
 
-@pytest.mark.parametrize("trainer_cls", [IACTrainer, MAACTrainer, MAGRPOTrainer])
-def test_sequence_kl_restores_training_modes_and_rng(trainer_cls):
+@pytest.mark.parametrize("trainer_cls", TRAINERS)
+def test_reference_kl_values_restore_training_modes_and_rng(trainer_cls):
     trainer = trainer_cls.__new__(trainer_cls)
     trainer.args = SimpleNamespace(reference_kl_enabled=True)
-    policy, reference = _tiny_model(), _tiny_model()
+    policy, reference = tiny_gpt2(), tiny_gpt2()
     policy.train()
     reference.eval()
     trainer.reference_models = [reference]

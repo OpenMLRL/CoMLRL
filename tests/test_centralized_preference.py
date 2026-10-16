@@ -1,147 +1,67 @@
+"""Centralized MADPO/MARLHF train one joint actor on all roles' text."""
+
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
-from datasets import Dataset
-from tokenizers import Tokenizer
-from tokenizers.models import WordLevel
-from tokenizers.pre_tokenizers import WhitespaceSplit
-from transformers import GPT2Config, GPT2LMHeadModel, PreTrainedTokenizerFast
 
 from comlrl.trainers.preference import (
     MADPOConfig,
-    MADPOTrainer,
     MADPOIterConfig,
     MADPOIterTrainer,
+    MADPOTrainer,
     MARLHFConfig,
-    MARLHFTrainer,
     MARLHFIterConfig,
     MARLHFIterTrainer,
-    TaggedCentralizedComparatorAdapter,
+    MARLHFTrainer,
 )
 from comlrl.trainers.preference.collaboration import CentralizedCollaboration
 from comlrl.trainers.preference.marlhf import JointRewardModel
-from comlrl.utils.reward_utils import set_reward_range
 
-GOOD = "<agent_0> good </agent_0> <agent_1> good </agent_1>"
-BAD = "<agent_0> bad </agent_0> <agent_1> bad </agent_1>"
+from helpers import (
+    BAD,
+    GOOD,
+    JointAdapter,
+    make_preference_trainer,
+    model_for,
+    task_reward,
+)
 
-
-class Adapter(TaggedCentralizedComparatorAdapter):
-    def build_prompt(self, item, agent_prompts):
-        assert agent_prompts == ["left", "right"]
-        return "joint left right"
-
-
-@pytest.fixture
-def tokenizer():
-    tokens = [
-        "<pad>",
-        "<eos>",
-        "<unk>",
-        "joint",
-        "left",
-        "right",
-        "good",
-        "bad",
-        "<agent_0>",
-        "</agent_0>",
-        "<agent_1>",
-        "</agent_1>",
-    ]
-    backend = Tokenizer(
-        WordLevel({token: i for i, token in enumerate(tokens)}, unk_token="<unk>")
-    )
-    backend.pre_tokenizer = WhitespaceSplit()
-    return PreTrainedTokenizerFast(
-        tokenizer_object=backend,
-        pad_token="<pad>",
-        eos_token="<eos>",
-        unk_token="<unk>",
-    )
+MARLHF_TRAINERS = [(MARLHFTrainer, MARLHFConfig), (MARLHFIterTrainer, MARLHFIterConfig)]
 
 
-def model_for(tokenizer):
-    return GPT2LMHeadModel(
-        GPT2Config(
-            vocab_size=len(tokenizer),
-            n_positions=256,
-            n_embd=16,
-            n_layer=1,
-            n_head=2,
-            resid_pdrop=0.0,
-            embd_pdrop=0.0,
-            attn_pdrop=0.0,
-            pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
+def _record_reward_models(trainer, tokenizer):
+    """Swap in tiny local joint reward models and record each one created."""
+    reward_models = []
+
+    def init_reward_model():
+        trainer.reward_model = JointRewardModel(model_for(tokenizer))
+        trainer.reward_tokenizer = tokenizer
+        trainer.reward_optimizer = torch.optim.AdamW(
+            trainer.reward_model.parameters(), lr=1e-3
         )
-    )
-
-
-def task_reward(left, right, *, batch_items, prompts):
-    assert prompts == ["left"]
-    assert batch_items[0]["id"] == "task"
-    return [float(a == "good") + float(b == "good") for a, b in zip(left, right)]
-
-
-set_reward_range(task_reward, 0, 2)
-
-
-def make_trainer(cls, config_cls, tokenizer, tmp_path, **overrides):
-    config = dict(
-        collaboration_mode="centralized",
-        agent_devices="cpu",
-        num_agents=2,
-        num_train_epochs=1,
-        preference_num_candidates=2,
-        preference_pairs_per_sample=1,
-        eval_interval=0,
-        rollout_buffer_size=1,
-        train_batch_size=1,
-        max_new_tokens=8,
-        agent_learning_rate=1e-3,
-    )
-    if issubclass(config_cls, MARLHFConfig):
-        config.update(
-            reward_model_device="cpu", reward_num_train_epochs=1, num_generations=2
+        reward_models.append(
+            (
+                trainer.reward_model,
+                trainer.reward_model.reward_head.weight.detach().clone(),
+            )
         )
-    if issubclass(config_cls, (MADPOIterConfig, MARLHFIterConfig)):
-        config.update(
-            num_iterations=2,
-            preference_replay_dir=str(tmp_path / "replay"),
-            policy_checkpoint_dir=str(tmp_path / "checkpoints"),
-            log_reward_distribution=False,
-        )
-    config.update(overrides)
-    dataset = Dataset.from_list([{"id": "task", "prompt": "task prompt"}])
-    model = model_for(tokenizer)
-    calls = []
 
-    def generate(*, input_ids, num_return_sequences, **kwargs):
-        calls.append(input_ids.clone())
-        sequences = []
-        for idx in range(num_return_sequences):
-            # Target/comparator calls get different pairs without any network/model download.
-            text = GOOD if (idx + len(calls)) % 2 else BAD
-            ids = torch.tensor(tokenizer.encode(text), device=input_ids.device)
-            sequences.append(torch.cat([input_ids[0], ids]))
-        return SimpleNamespace(sequences=torch.stack(sequences))
+    trainer._init_reward_model = init_reward_model
+    return reward_models
 
-    model.generate = generate
-    trainer = cls(
-        agents=[model],
-        num_agents=2,
-        tokenizer=tokenizer,
-        args=config_cls(**config),
-        train_dataset=dataset,
-        eval_dataset=dataset,
-        reward_func=task_reward,
-        formatters=[lambda item: "left", lambda item: "right"],
-        centralized_comparator_adapter=Adapter(),
-    )
-    trainer.verbose = False
-    return trainer, calls
+
+class _TokenValueBackbone(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.config = SimpleNamespace(hidden_size=1)
+        self.embedding = torch.nn.Embedding(10, 1)
+        with torch.no_grad():
+            self.embedding.weight.copy_(torch.arange(10, dtype=torch.float)[:, None])
+
+    def forward(self, input_ids, **kwargs):
+        return SimpleNamespace(hidden_states=[self.embedding(input_ids)])
 
 
 @pytest.mark.parametrize(
@@ -157,7 +77,7 @@ def test_config_defaults_and_centralized_comparator(config_cls):
         config_cls(collaboration_mode="misspelled")
 
 
-def test_single_actor_constraint(tokenizer, tmp_path):
+def test_centralized_mode_requires_one_actor(tokenizer):
     with pytest.raises(ValueError, match="exactly one actor"):
         MADPOTrainer(
             agents=[model_for(tokenizer), model_for(tokenizer)],
@@ -170,7 +90,7 @@ def test_single_actor_constraint(tokenizer, tmp_path):
 
 
 def test_centralized_reference_uses_one_device(tokenizer, tmp_path):
-    trainer, _ = make_trainer(
+    trainer, _ = make_preference_trainer(
         MADPOTrainer,
         MADPOConfig,
         tokenizer,
@@ -185,7 +105,7 @@ def test_centralized_reference_uses_one_device(tokenizer, tmp_path):
     "cls,config_cls", [(MADPOTrainer, MADPOConfig), (MADPOIterTrainer, MADPOIterConfig)]
 )
 def test_madpo_trains_one_joint_actor(cls, config_cls, tokenizer, tmp_path):
-    trainer, calls = make_trainer(cls, config_cls, tokenizer, tmp_path)
+    trainer, calls = make_preference_trainer(cls, config_cls, tokenizer, tmp_path)
     assert len(trainer.agents) == len(trainer.optimizers) == trainer.num_agents == 1
     before = trainer.agents[0].transformer.wte.weight.detach().clone()
     trainer.train()
@@ -196,7 +116,7 @@ def test_madpo_trains_one_joint_actor(cls, config_cls, tokenizer, tmp_path):
 
 
 def test_joint_logprob_covers_both_roles_and_last_token(tokenizer, tmp_path):
-    trainer, _ = make_trainer(MADPOTrainer, MADPOConfig, tokenizer, tmp_path)
+    trainer, _ = make_preference_trainer(MADPOTrainer, MADPOConfig, tokenizer, tmp_path)
     prompt = torch.tensor(tokenizer.encode("joint left right"))
     completion = torch.tensor(tokenizer.encode(GOOD))
     full = torch.cat([prompt, completion]).unsqueeze(0)
@@ -217,7 +137,9 @@ def test_joint_logprob_covers_both_roles_and_last_token(tokenizer, tmp_path):
 
 
 def test_marlhf_joint_loss_uses_actor_device(tokenizer, tmp_path):
-    trainer, _ = make_trainer(MARLHFTrainer, MARLHFConfig, tokenizer, tmp_path)
+    trainer, _ = make_preference_trainer(
+        MARLHFTrainer, MARLHFConfig, tokenizer, tmp_path
+    )
     trainer.device = torch.device("meta")
     data = {
         "prompt_input_ids": torch.tensor([tokenizer.encode("joint left right")]),
@@ -233,7 +155,7 @@ def test_marlhf_joint_loss_uses_actor_device(tokenizer, tmp_path):
 def test_replay_stores_raw_joint_text_and_current_comparator_uses_same_prompt(
     tokenizer, tmp_path
 ):
-    trainer, calls = make_trainer(
+    trainer, calls = make_preference_trainer(
         MADPOIterTrainer, MADPOIterConfig, tokenizer, tmp_path
     )
     pairs = trainer._build_preference_dataset(iteration_idx=0)
@@ -267,7 +189,7 @@ def test_replay_stores_raw_joint_text_and_current_comparator_uses_same_prompt(
     ],
 )
 def test_eval_splits_roles_and_uses_task_reward(cls, config_cls, tokenizer, tmp_path):
-    trainer, _ = make_trainer(cls, config_cls, tokenizer, tmp_path)
+    trainer, _ = make_preference_trainer(cls, config_cls, tokenizer, tmp_path)
     observed = []
     trainer.eval_logger = lambda **kwargs: observed.append(kwargs) or {"metric": 1.0}
     trainer.eval_aggregator = lambda result, **kwargs: {
@@ -282,30 +204,12 @@ def test_eval_splits_roles_and_uses_task_reward(cls, config_cls, tokenizer, tmp_
     assert not trainer._centralized_eval_items
 
 
-@pytest.mark.parametrize(
-    "cls,config_cls",
-    [(MARLHFTrainer, MARLHFConfig), (MARLHFIterTrainer, MARLHFIterConfig)],
-)
+@pytest.mark.parametrize("cls,config_cls", MARLHF_TRAINERS)
 def test_marlhf_reward_model_and_policy_train_on_joint_text(
     cls, config_cls, tokenizer, tmp_path
 ):
-    trainer, calls = make_trainer(cls, config_cls, tokenizer, tmp_path)
-    reward_models = []
-
-    def init_reward_model():
-        trainer.reward_model = JointRewardModel(model_for(tokenizer))
-        trainer.reward_tokenizer = tokenizer
-        trainer.reward_optimizer = torch.optim.AdamW(
-            trainer.reward_model.parameters(), lr=1e-3
-        )
-        reward_models.append(
-            (
-                trainer.reward_model,
-                trainer.reward_model.reward_head.weight.detach().clone(),
-            )
-        )
-
-    trainer._init_reward_model = init_reward_model
+    trainer, calls = make_preference_trainer(cls, config_cls, tokenizer, tmp_path)
+    reward_models = _record_reward_models(trainer, tokenizer)
     before = trainer.agents[0].transformer.wte.weight.detach().clone()
     trainer.train()
     assert len(reward_models) == (2 if cls is MARLHFIterTrainer else 1)
@@ -318,9 +222,75 @@ def test_marlhf_reward_model_and_policy_train_on_joint_text(
     assert len(trainer.optimizers) == 1
 
 
+@pytest.mark.parametrize("algorithm", ["iac", "maac"])
+@pytest.mark.parametrize("trainer_cls,config_cls", MARLHF_TRAINERS)
+def test_marlhf_actor_critic_backends_train_local_models(
+    algorithm, trainer_cls, config_cls, tokenizer, tmp_path
+):
+    trainer, prompts = make_preference_trainer(
+        trainer_cls,
+        config_cls,
+        tokenizer,
+        tmp_path,
+        rl_algorithm=algorithm,
+        num_generations=1,
+        reference_kl_enabled=True,
+        reference_devices=["cpu"],
+    )
+    critic = model_for(tokenizer)
+    trainer.critic_sources = [critic]
+    original_generate = trainer.agents[0].generate
+
+    def generate(**kwargs):
+        result = original_generate(**kwargs)
+        return result if kwargs.get("return_dict_in_generate") else result.sequences
+
+    trainer.agents[0].generate = generate
+    reward_models = _record_reward_models(trainer, tokenizer)
+    actor_before = trainer.agents[0].transformer.wte.weight.detach().clone()
+    critic_before = critic.transformer.wte.weight.detach().clone()
+
+    trainer.train()
+
+    assert len(trainer.agents) == trainer.num_agents == 1
+    assert trainer.args.num_agents == 2
+    assert prompts and all(
+        tokenizer.decode(ids[0]) == "joint left right" for ids in prompts
+    )
+    assert not torch.equal(actor_before, trainer.agents[0].transformer.wte.weight)
+    assert not torch.equal(critic_before, critic.transformer.wte.weight)
+    assert len(reward_models) == (2 if trainer_cls is MARLHFIterTrainer else 1)
+    assert trainer.env_step == len(reward_models)
+    assert all(
+        not torch.equal(model.reward_head.weight, initial)
+        for model, initial in reward_models
+    )
+    assert all(
+        torch.isfinite(parameter).all() for parameter in trainer.agents[0].parameters()
+    )
+    assert trainer.evaluate(num_eval_samples=1)["eval/turn_1/reward_mean"] == 2.0
+
+
+def test_joint_reward_pools_last_valid_position_for_either_padding_side():
+    model = JointRewardModel(_TokenValueBackbone())
+    with torch.no_grad():
+        model.reward_head.weight.fill_(1)
+        model.reward_head.bias.zero_()
+    ids = torch.tensor([[7, 8, 0], [0, 7, 8], [7, 0, 8], [7, 8, 9]])
+    mask = torch.tensor([[1, 1, 0], [0, 1, 1], [1, 0, 1], [1, 1, 1]])
+
+    scores = model(ids, mask)
+
+    torch.testing.assert_close(scores, torch.tensor([8.0, 8.0, 8.0, 9.0]))
+    scores.sum().backward()
+    grad = model.backbone.embedding.weight.grad[:, 0]
+    torch.testing.assert_close(grad[[8, 9]], torch.tensor([3.0, 1.0]))
+    assert grad[:8].count_nonzero() == 0
+
+
 def test_parse_failures_and_ac_metrics_stay_at_environment_boundary():
     collaboration = CentralizedCollaboration(
-        Adapter(), [lambda _: "left", lambda _: "right"], task_reward, 2
+        JointAdapter(), [lambda _: "left", lambda _: "right"], task_reward, 2
     )
     item = {"id": "task"}
     assert collaboration(["invalid"], batch_items=[item]) == [0.0]
@@ -345,7 +315,7 @@ def test_parse_failures_and_ac_metrics_stay_at_environment_boundary():
     ],
 )
 def test_centralized_replay_modes_train_one_actor(mode, options, tokenizer, tmp_path):
-    trainer, _ = make_trainer(
+    trainer, _ = make_preference_trainer(
         MADPOIterTrainer,
         MADPOIterConfig,
         tokenizer,
@@ -368,7 +338,7 @@ def test_comparator_sources_keep_joint_text(policy, tokenizer, tmp_path, monkeyp
         options["comparator_model_name"] = str(tmp_path / "external")
     if policy == "api":
         options["comparator_api_url"] = "https://example.invalid/completions"
-    trainer, _ = make_trainer(
+    trainer, _ = make_preference_trainer(
         MADPOIterTrainer, MADPOIterConfig, tokenizer, tmp_path, **options
     )
     if policy == "history":

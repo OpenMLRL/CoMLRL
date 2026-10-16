@@ -442,6 +442,25 @@ class LanguageTests(unittest.TestCase):
         self.assertEqual(batch.call_args.kwargs["language"], "fr")
         translations.validate_translation(source, result)
 
+    def test_translate_keeps_rl_terms_in_english(self):
+        source = (
+            FRONT + "# Loading Critics\n\n"
+            "Each Actor-Critic actor and its critic share rollouts; "
+            "`critic_model` stays code.\n"
+        )
+        with patch.object(
+            translations, "translate_batch", side_effect=lambda fields, **kwargs: fields
+        ) as batch:
+            result = translations.translate(
+                source, endpoint="unused", model="test", language="zh-cn"
+            )
+        sent = [
+            value for call in batch.call_args_list for value in call.args[0].values()
+        ]
+        for value in sent:
+            self.assertNotRegex(value, r"(?i)actor|critic|rollout")
+        self.assertTrue(result.endswith(source[len(FRONT) :]))
+
 
 class CacheTests(unittest.TestCase):
     def setUp(self):

@@ -1,11 +1,15 @@
+"""Per-agent task execution keeps agent order across sequential and mp modes."""
+
 import threading
 import time
 from types import SimpleNamespace
 
 from comlrl.trainers.actor_critic.ac_base import ActorCriticTrainerBase
 from comlrl.trainers.actor_critic.iac import IACTrainer
-from comlrl.trainers.actor_critic.maac import MAACTrainer
+from comlrl.trainers.actor_critic.maac import MAACConfig, MAACTrainer
 from comlrl.trainers.reinforce.magrpo import MAGRPOTrainer
+
+from helpers import tiny_gpt2, zero_reward
 
 
 class _DummyACTrainer(ActorCriticTrainerBase):
@@ -94,17 +98,26 @@ def test_magrpo_reuses_one_worker_thread_per_agent():
         trainer._shutdown_agent_task_executors()
 
 
-def test_maac_parallel_updates_are_always_serialized():
-    trainer = MAACTrainer.__new__(MAACTrainer)
-    trainer._parallel_update_enabled = False
-    trainer.parallel_training = "mp"
-    trainer.args = SimpleNamespace(num_agents=2)
-    trainer.agent_devices = ["cuda:0", "cuda:1"]
-    run_parallel = bool(
-        getattr(
-            trainer,
-            "_parallel_update_enabled",
-            trainer._parallel_agent_mode_enabled(),
-        )
+def test_maac_drains_agent_buffers_serially_in_mp_mode(stub_tokenizer):
+    trainer = MAACTrainer(
+        agents=[tiny_gpt2(), tiny_gpt2()],
+        critics=[tiny_gpt2()],
+        tokenizer=stub_tokenizer,
+        reward_func=zero_reward,
+        args=MAACConfig(
+            num_agents=2,
+            num_turns=1,
+            parallel_training="mp",
+            agent_devices="cpu",
+            critic_devices="cpu",
+        ),
     )
-    assert run_parallel is False
+    # Relabel the agents so that mp mode alone would run them in parallel.
+    trainer.agent_devices = ["cuda:0", "cuda:1"]
+    assert trainer._parallel_agent_mode_enabled() is True
+    calls = []
+    trainer._run_agent_tasks = lambda task, **kwargs: calls.append(kwargs) or []
+
+    trainer._drain_ready_agent_buffers([1, 0], {})
+
+    assert calls == [{"agent_indices": [0, 1], "parallel": False}]

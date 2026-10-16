@@ -2,12 +2,10 @@
 
 import copy
 import os
-import random
 
-import numpy as np
+from datasets import Dataset
 import pytest
 import torch
-from datasets import Dataset
 
 from comlrl.trainers.actor_critic import IACConfig, IACTrainer, MAACConfig, MAACTrainer
 from comlrl.trainers.reinforce import (
@@ -20,11 +18,15 @@ from comlrl.trainers.reinforce import (
 )
 from comlrl.utils.checkpoint import _decode
 from comlrl.utils.reward_utils import set_reward_range
-from test_centralized_collaboration import model_for, tokenizer
 
-
-class EpochInterrupted(Exception):
-    pass
+from checkpoint_helpers import Interrupted
+from helpers import (
+    assert_nested_equal,
+    model_for,
+    restore_rng_state,
+    rng_state,
+    seed_all,
+)
 
 
 class SplitRoles:
@@ -51,23 +53,6 @@ set_reward_range(text_reward, 0, 100)
 
 def format_prompt(item):
     return item["prompt"]
-
-
-def seed_all(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-
-def rng_state():
-    state = {
-        "python": random.getstate(),
-        "numpy": np.random.get_state(),
-        "torch": torch.get_rng_state().clone(),
-    }
-    if torch.cuda.is_available() and torch.cuda.is_initialized():
-        state["cuda"] = [value.clone() for value in torch.cuda.get_rng_state_all()]
-    return state
 
 
 @pytest.fixture
@@ -115,30 +100,7 @@ def preserve_rng(test_device):
     try:
         yield
     finally:
-        random.setstate(previous["python"])
-        np.random.set_state(previous["numpy"])
-        torch.set_rng_state(previous["torch"])
-        if "cuda" in previous:
-            torch.cuda.set_rng_state_all(previous["cuda"])
-
-
-def assert_equal(actual, expected):
-    if isinstance(expected, torch.Tensor):
-        assert actual.dtype == expected.dtype
-        assert actual.device == expected.device
-        assert torch.equal(actual, expected)
-    elif isinstance(expected, np.ndarray):
-        np.testing.assert_array_equal(actual, expected)
-    elif isinstance(expected, dict):
-        assert actual.keys() == expected.keys()
-        for key in expected:
-            assert_equal(actual[key], expected[key])
-    elif isinstance(expected, (list, tuple)):
-        assert len(actual) == len(expected)
-        for value, target in zip(actual, expected):
-            assert_equal(value, target)
-    else:
-        assert actual == expected
+        restore_rng_state(previous)
 
 
 def make_trainer(variant, tokenizer, seed, device):
@@ -277,7 +239,7 @@ def test_real_model_resume_matches_two_uninterrupted_epochs(
             "value_head" in name and not torch.equal(after[name], tensor)
             for name, tensor in before.items()
         )
-    assert_equal(expected["reference_models"], initial["reference_models"])
+    assert_nested_equal(expected["reference_models"], initial["reference_models"])
     assert all(
         any(
             torch.count_nonzero(state["exp_avg"]).item() > 0
@@ -293,11 +255,11 @@ def test_real_model_resume_matches_two_uninterrupted_epochs(
     def stop_after_first_epoch(progress, force=False):
         commit(progress, force=force)
         if progress["epoch"] == 1:
-            raise EpochInterrupted()
+            raise Interrupted()
 
     interrupted._checkpoint_commit = stop_after_first_epoch
     seed_all(83)
-    with pytest.raises(EpochInterrupted):
+    with pytest.raises(Interrupted):
         interrupted.train(checkpoint_dir=tmp_path / "interrupted")
     checkpoint = tmp_path / "interrupted" / "checkpoint-1"
     assert (checkpoint / "training_state.pt").is_file()
@@ -308,7 +270,7 @@ def test_real_model_resume_matches_two_uninterrupted_epochs(
             )
         )
         assert len(saved["rng"]["cuda"]) == torch.cuda.device_count()
-        assert_equal(saved["rng"]["cuda"], rng_state()["cuda"])
+        assert_nested_equal(saved["rng"]["cuda"], rng_state()["cuda"])
 
     resumed = make_trainer(variant, tokenizer, seed=991, device=test_device)
     assert any(
@@ -320,8 +282,8 @@ def test_real_model_resume_matches_two_uninterrupted_epochs(
     seed_all(1021)
     resumed.train(resume_from_checkpoint=checkpoint)
 
-    assert_equal(model_states(resumed), expected)
-    assert_equal(optimizer_states(resumed), expected_optimizers)
+    assert_nested_equal(model_states(resumed), expected)
+    assert_nested_equal(optimizer_states(resumed), expected_optimizers)
     assert resumed.env_step == baseline.env_step > interrupted.env_step > 0
     assert resumed._last_train_log_step == baseline._last_train_log_step
     assert (
@@ -330,4 +292,4 @@ def test_real_model_resume_matches_two_uninterrupted_epochs(
         == [[]] * len(resumed.agents)
     )
     assert resumed._checkpoint_progress["epoch"] == 2
-    assert_equal(rng_state(), expected_rng)
+    assert_nested_equal(rng_state(), expected_rng)

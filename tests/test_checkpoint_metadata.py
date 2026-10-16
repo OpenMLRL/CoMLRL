@@ -1,4 +1,4 @@
-"""Resume metadata is available before eager W&B initialization (review C)."""
+"""Run identity and W&B resume metadata, readable before building a trainer."""
 
 import copy
 from functools import wraps
@@ -8,19 +8,71 @@ import pytest
 import torch
 import wandb
 
+from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
 from comlrl.utils import read_checkpoint_metadata
 import comlrl.utils.checkpoint as checkpoint
-from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
-from test_centralized_collaboration import model_for, tokenizer
-from test_checkpoint_core_review import FakeRun
-from test_checkpoint_preference import pair
-from test_checkpoint_state import TinyTrainer, assert_nested_equal
+from comlrl.utils.checkpoint import capture_trainer_state, restore_trainer_state
+from comlrl.utils.wandb_utils import wandb_init_kwargs
+
+from checkpoint_helpers import FakeRun, TinyTrainer, pair
+from helpers import assert_nested_equal, model_for
 
 
 def write_state(path, state):
     path.mkdir()
     torch.save(checkpoint._encode(state), path / checkpoint.STATE_FILENAME)
     return path
+
+
+@pytest.mark.parametrize("eager", [False, True])
+def test_wandb_restores_owned_run_identity_and_init_arguments(tmp_path, eager):
+    source = TinyTrainer()
+    source._checkpoint_record_wandb_run(FakeRun("saved-id"))
+    state = capture_trainer_state(source)
+    target = TinyTrainer()
+    target.wandb_config = {"name": "experiment"}
+    target.wandb_initialized = eager
+    fresh = FakeRun("fresh-id")
+    if eager:
+        target._checkpoint_record_wandb_run(fresh)
+    restore_trainer_state(target, state, tmp_path)
+    assert not target.wandb_initialized
+    assert fresh.finished == eager
+    kwargs = wandb_init_kwargs(target.wandb_config, {})
+    assert kwargs["id"] == "saved-id"
+    assert kwargs["resume"] == "allow"
+    assert kwargs["project"] == "research"
+    assert kwargs["entity"] == "team"
+
+
+@pytest.mark.parametrize("override", [{"id": "caller-id"}, {"resume": "never"}])
+def test_wandb_explicit_caller_choice_wins(tmp_path, override):
+    source = TinyTrainer()
+    source._checkpoint_record_wandb_run(FakeRun("saved-id"))
+    target = TinyTrainer()
+    target.wandb_config = dict(override)
+    target.wandb_initialized = True
+    run = FakeRun("caller-id")
+    target._checkpoint_record_wandb_run(run)
+    restore_trainer_state(target, capture_trainer_state(source), tmp_path)
+    assert target.wandb_config == override
+    assert target.wandb_initialized
+    assert not run.finished
+
+
+def test_external_wandb_run_is_not_finished_or_partially_restored(tmp_path):
+    source = TinyTrainer()
+    source._checkpoint_record_wandb_run(FakeRun("saved"))
+    target = TinyTrainer()
+    target.wandb_config = {}
+    target.wandb_initialized = True
+    external = FakeRun("external")
+    target._checkpoint_record_wandb_run(external, previous_run=external)
+    before = capture_trainer_state(target)
+    with pytest.raises(ValueError, match="external W&B"):
+        restore_trainer_state(target, capture_trainer_state(source), tmp_path)
+    assert not external.finished
+    assert_nested_equal(capture_trainer_state(target), before)
 
 
 @pytest.mark.parametrize("file_path", [False, True])
@@ -57,7 +109,7 @@ def test_metadata_reads_only_public_fields_without_restoring(
     metadata = read_checkpoint_metadata(state_path if file_path else path)
     assert metadata == {
         "version": checkpoint.CHECKPOINT_VERSION,
-        "trainer_class": "test_checkpoint_state.TinyTrainer",
+        "trainer_class": "checkpoint_helpers.TinyTrainer",
         "sequence": 3,
         "run_id": "a" * 32,
         "wandb": {"id": "saved-id", "project": "research", "entity": "team"},
@@ -68,7 +120,7 @@ def test_metadata_reads_only_public_fields_without_restoring(
 
 
 def test_legacy_metadata_without_logging_or_run_identity(tmp_path):
-    state = checkpoint.capture_trainer_state(TinyTrainer())
+    state = capture_trainer_state(TinyTrainer())
     state.pop("wandb")
     state.pop("run_id")
     metadata = read_checkpoint_metadata(write_state(tmp_path / "legacy", state))
@@ -104,14 +156,14 @@ def test_metadata_supports_torch_without_mmap(tmp_path, monkeypatch):
     ],
 )
 def test_invalid_metadata_rejected(tmp_path, field, value, match):
-    state = checkpoint.capture_trainer_state(TinyTrainer())
+    state = capture_trainer_state(TinyTrainer())
     state[field] = value
     with pytest.raises(ValueError, match=match):
         read_checkpoint_metadata(write_state(tmp_path / "bad", state))
 
 
 def test_metadata_rejects_missing_required_field(tmp_path):
-    state = checkpoint.capture_trainer_state(TinyTrainer())
+    state = capture_trainer_state(TinyTrainer())
     state.pop("sequence")
     with pytest.raises(ValueError, match="Incomplete"):
         read_checkpoint_metadata(write_state(tmp_path / "incomplete", state))

@@ -1,21 +1,23 @@
+"""Joint-sequence log-probabilities and policy gradients for one joint actor."""
+
 from types import SimpleNamespace
 
+from datasets import Dataset
 import pytest
 import torch
-from datasets import Dataset
 
 from comlrl.trainers.preference import MARLHFConfig, MARLHFTrainer
-from comlrl.trainers.preference.collaboration import joint_sequence_log_prob
 from comlrl.trainers.preference.centralized import TaggedCentralizedComparatorAdapter
+from comlrl.trainers.preference.collaboration import joint_sequence_log_prob
 from comlrl.trainers.reinforce import CentralizedMAGRPOConfig, CentralizedMAGRPOTrainer
-from test_centralized_collaboration import (
+
+from helpers import (
     BAD,
     GOOD,
-    make_trainer as make_preference_trainer,
+    make_centralized_magrpo_trainer,
+    make_preference_trainer,
     model_for,
-    tokenizer,
 )
-from test_centralized_magrpo import make_trainer
 
 
 @pytest.mark.parametrize("shared_eos", [False, True])
@@ -62,7 +64,9 @@ def test_empty_joint_response_allows_backward_with_frozen_embeddings(tokenizer):
         joint_sequence_log_prob(model, tokenizer, prompt[:0], prompt[:1])
 
 
-def test_marlhf_retains_custom_sequence_loss_hook(tokenizer, tmp_path, monkeypatch):
+def test_marlhf_joint_loss_calls_sequence_log_prob_hook(
+    tokenizer, tmp_path, monkeypatch
+):
     trainer, _ = make_preference_trainer(
         MARLHFTrainer, MARLHFConfig, tokenizer, tmp_path
     )
@@ -97,7 +101,7 @@ def test_joint_policy_gradient_matches_manual_objective(
             MARLHFTrainer, MARLHFConfig, tokenizer, tmp_path, **options
         )
     else:
-        trainer, _ = make_trainer(tokenizer, **options)
+        trainer, _ = make_centralized_magrpo_trainer(tokenizer, **options)
     trainer.advantage_mode = mode
     model = trainer.agents[0]
     prompt = torch.tensor(tokenizer.encode("joint left right"))
@@ -154,7 +158,7 @@ def test_joint_loss_validates_alignment_and_handles_empty_batch(
             MARLHFTrainer, MARLHFConfig, tokenizer, tmp_path
         )
     else:
-        trainer, _ = make_trainer(tokenizer)
+        trainer, _ = make_centralized_magrpo_trainer(tokenizer)
     model = trainer.agents[0]
     next(model.parameters()).requires_grad_(False)
     data = {"prompt_input_ids": torch.tensor([[3]]), "completion_input_ids": [[]]}
@@ -233,7 +237,7 @@ def test_joint_actor_trains_and_evaluates_with_variable_role_counts(
 
 def test_generation_with_eos_in_prompt_preserves_joint_boundaries_and_kl(tokenizer):
     tokenizer.pad_token = tokenizer.eos_token
-    trainer, _ = make_trainer(
+    trainer, _ = make_centralized_magrpo_trainer(
         tokenizer, reference_kl_enabled=True, reference_devices=["cpu"]
     )
     model = trainer.agents[0]
@@ -273,7 +277,7 @@ def test_generation_with_eos_in_prompt_preserves_joint_boundaries_and_kl(tokeniz
 
 def test_real_generation_can_feed_joint_backward(tokenizer):
     torch.manual_seed(19)
-    trainer, _ = make_trainer(tokenizer)
+    trainer, _ = make_centralized_magrpo_trainer(tokenizer)
     model = trainer.agents[0]
     del model.generate
     trainer.advantage_mode = "raw"
