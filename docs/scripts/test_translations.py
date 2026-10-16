@@ -185,6 +185,7 @@ class BatchTranslationTests(unittest.TestCase):
                     self.response(first),
                     self.response(second),
                     self.response({}),
+                    self.response({}),
                 ],
             ) as api:
                 with self.assertRaisesRegex(ValueError, "invalid fragment fields"):
@@ -196,7 +197,7 @@ class BatchTranslationTests(unittest.TestCase):
                         endpoint="http://unused",
                         model="test",
                     )
-            self.assertEqual(api.call_count, 3)
+            self.assertEqual(api.call_count, 4)
             self.assertEqual(
                 self.requested_fields(api.call_args_list[1]),
                 {"s1": "Use ZXQ00000QXZ agents."},
@@ -505,7 +506,7 @@ class CacheTests(unittest.TestCase):
         self.cache.write_text(json.dumps(record), encoding="utf-8")
         with patch.object(translations, "translate") as model:
             with self.assertRaisesRegex(ValueError, "heading hierarchy"):
-                self.load(self.source, cache_only=False)
+                self.load(self.source, cache_only=True)
         model.assert_not_called()
 
     def test_cache_record_for_another_language_is_not_reused(self):

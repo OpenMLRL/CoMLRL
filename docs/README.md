@@ -33,7 +33,7 @@ The header's language menu switches to the same page and retains the current sec
 
 Translations are cached independently in the Git-ignored `.cache/docs-translations/<language>/` directories at the repository root. A source hash determines whether each page needs translation. Unchanged pages reuse their cache; changed or missing pages are translated by a local Ollama service at `http://127.0.0.1:11434`. The default model is `qwen2.5-coder:3b`; `--model` selects another installed model. Local translation requires Ollama to be running and the chosen model to be installed. It does not require Crowdin or a paid translation API, but uses the local device's compute resources. Translation quality still benefits from review.
 
-The first build generates any missing translations and can take longer; subsequent builds reuse them. `--cache-only` builds without contacting Ollama and fails if any selected language has a missing or stale translation. Caches are local: a fresh checkout needs to generate them, or restore them from a build cache. Generated translated Markdown exists only in a temporary build directory; generated HTML is never added to Git by these scripts.
+The first build generates any missing translations and can take longer; subsequent builds reuse them. Cached pages are validated before reuse; invalid entries are regenerated when Ollama is available. `--cache-only` builds without contacting Ollama and fails if any selected language has a missing, stale, or invalid translation. Caches are local: a fresh checkout needs to generate them, or restore them from a build cache. Generated translated Markdown exists only in a temporary build directory; generated HTML is never added to Git by these scripts.
 
 To build a subset, use `--languages zh-cn ja es` (English is always included). The existing `--bilingual` option still builds only English and Simplified Chinese. Language codes, names, and terminology are configured in `data/languages.json`.
 
@@ -50,7 +50,7 @@ The build checks protected Markdown, preserves English heading and API-card anch
 The translation guards and cache behavior can be checked without a model or network access:
 
 ```bash
-python3 -B -m unittest discover -s docs/scripts -p test_translations.py
+python3 -B -m unittest discover -s docs/scripts -p 'test_translation*.py'
 ```
 
 ## Research publications

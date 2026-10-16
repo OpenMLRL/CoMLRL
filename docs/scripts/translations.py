@@ -2,10 +2,11 @@
 
 from collections import Counter
 import hashlib
+from http.client import HTTPException
 import json
 from pathlib import Path
 import re
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -47,7 +48,8 @@ _PROTECTED = re.compile(
             INLINE_CODE,
             r"\$\$[\s\S]*?\$\$|(?<!\$)\$[^$\n]+\$",
             SHORTCODE,
-            r"(?<=\]\()<[^>\n]*>|</?[A-Za-z][^>]*>",
+            r"(?<=\]\()<[^>\n]*>",
+            r"(?P<html_tag></?[A-Za-z][A-Za-z0-9:-]*(?=[\s/>]))",
             # Reference definitions include the ID and optional link title.
             r"(?m:^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*[^\n]+)",
             r"(?<=\]\[)[^\]\n]+(?=\])",
@@ -79,13 +81,55 @@ class _ProtectedMatch:
 
 
 class _ProtectedSpans:
-    """Regex spans, with a balanced scanner for Markdown link destinations."""
+    """Regex spans with scanners for link destinations and quoted HTML tags."""
+
+    @staticmethod
+    def _html_tag_end(text, position):
+        """Skip quoted attributes and Hugo shortcodes before closing a tag."""
+        quote = None
+        while position < len(text):
+            if text.startswith(("{{<", "{{%"), position):
+                closing = ">}}" if text[position + 2] == "<" else "%}}"
+                position += 3
+                shortcode_quote = None
+                while position < len(text):
+                    char = text[position]
+                    if shortcode_quote:
+                        if char == "\\" and shortcode_quote != "`":
+                            position += 2
+                            continue
+                        if char == shortcode_quote:
+                            shortcode_quote = None
+                    elif text.startswith(closing, position):
+                        position += len(closing)
+                        break
+                    elif char in "\"'`":
+                        shortcode_quote = char
+                    position += 1
+                else:
+                    return None
+                continue
+            char = text[position]
+            if quote:
+                if char == quote:
+                    quote = None
+            elif char in "\"'":
+                quote = char
+            elif char == ">":
+                return position + 1
+            position += 1
+        return None
 
     def finditer(self, text):
         position = 0
         while match := _PROTECTED.search(text, position):
             end = match.end()
-            if match.group("destination") is not None:
+            if match.group("html_tag") is not None:
+                end = self._html_tag_end(text, end)
+                if end is None:
+                    position = match.end()
+                    continue
+            elif match.group("destination") is not None:
                 end, depth = match.start(), 0
                 while end < len(text):
                     char = text[end]
@@ -138,6 +182,103 @@ def heading_lines(markdown):
     return result
 
 
+def _protected_parts(text):
+    """Protected content, excluding intentionally translatable display labels."""
+
+    def neutralize(match):
+        value = match[0]
+        if value.startswith("{{") and not re.match(r"\{\{[<%]\s*katex\b", value):
+            value = re.sub(
+                r'\b(title|label|description|caption)="[^"]*"', r'\1=""', value
+            )
+            value = re.sub(r'(\btab\s+)"[^"]*"', r'\1""', value)
+        if value.startswith("<") and not value.startswith("<!--"):
+            value = re.sub(r'\b(alt|title|aria-label)="[^"]*"', r'\1=""', value)
+        return value
+
+    return Counter(neutralize(m) for m in PROTECTED.finditer(text))
+
+
+def _link_structure(text):
+    """Markdown link/image targets and reference IDs, independent of label prose."""
+    protected = {}
+
+    def hide(match):
+        token = f"\x00{len(protected)}\x00"
+        protected[token] = match[0]
+        return token
+
+    masked = PROTECTED.sub(hide, text)
+    result = Counter()
+    position = 0
+    while position < len(masked):
+        if masked[position] == "\\":
+            position += 2
+            continue
+        if masked[position] != "[":
+            position += 1
+            continue
+        start, end, depth = position, position + 1, 1
+        while end < len(masked) and depth:
+            if masked[end] == "\\":
+                end += 2
+                continue
+            if masked[end] == "[":
+                depth += 1
+            elif masked[end] == "]":
+                depth -= 1
+            end += 1
+        if depth or end >= len(masked) or masked[end] not in "([":
+            position += 1
+            continue
+        opening = masked[end]
+        closing = ")" if opening == "(" else "]"
+        target_start, cursor, depth = end + 1, end + 1, 1
+        quote = None
+        while cursor < len(masked) and depth:
+            char = masked[cursor]
+            if char == "\\":
+                cursor += 2
+                continue
+            if quote:
+                if char == quote:
+                    quote = None
+            elif char in "\"'" and opening == "(":
+                quote = char
+            elif char == opening:
+                depth += 1
+            elif char == closing:
+                depth -= 1
+            cursor += 1
+        if depth:
+            position += 1
+            continue
+        target = masked[target_start : cursor - 1]
+        target = re.sub(r"\x00\d+\x00", lambda m: protected[m[0]], target)
+        # Display text in shortcode destinations can be translated separately.
+        identity = tuple(sorted(_protected_parts(target).items()))
+        residual = PROTECTED.sub(lambda m: "", target).strip()
+        result[
+            (start > 0 and masked[start - 1] == "!", opening, identity, residual)
+        ] += 1
+        position = cursor
+    return result
+
+
+def _same_structure(source, translated):
+    def unmatched_html_prefixes(text):
+        # An unterminated outer tag may otherwise be skipped while its nested
+        # intact tag is counted, hiding a malformed duplicate such as <img src=".
+        residual = PROTECTED.sub(lambda match: "", text)
+        return Counter(re.findall(r"</?[A-Za-z][A-Za-z0-9:-]*(?=[\s/>]|$)", residual))
+
+    return (
+        _protected_parts(source) == _protected_parts(translated)
+        and _link_structure(source) == _link_structure(translated)
+        and unmatched_html_prefixes(source) == unmatched_html_prefixes(translated)
+    )
+
+
 def validate_translation(source, translated):
     """Reject damaged code, math, links, shortcodes, or document structure."""
     if "\ufffd" in translated or TOKEN.search(translated):
@@ -153,24 +294,7 @@ def validate_translation(source, translated):
     ]:
         raise ValueError("Translation changed the heading hierarchy")
 
-    def protected_parts(text):
-        # Display-only shortcode arguments and HTML alternative text may differ.
-        def neutralize(match):
-            value = match[0]
-            if value.startswith("{{") and not re.match(r"\{\{[<%]\s*katex\b", value):
-                value = re.sub(
-                    r'\b(title|label|description|caption)="[^"]*"', r'\1=""', value
-                )
-                value = re.sub(r'(\btab\s+)"[^"]*"', r'\1""', value)
-            if value.startswith("<") and not value.startswith("<!--"):
-                value = re.sub(r'\b(alt|title|aria-label)="[^"]*"', r'\1=""', value)
-            return value
-
-        return Counter(neutralize(m) for m in PROTECTED.finditer(text))
-
-    if protected_parts(source[src_front.end() :]) != protected_parts(
-        translated[dst_front.end() :]
-    ):
+    if not _same_structure(source[src_front.end() :], translated[dst_front.end() :]):
         raise ValueError("Translation changed protected code, math, links, or markup")
 
 
@@ -179,6 +303,40 @@ def language_info(language):
         return LANGUAGES[language]
     except KeyError as exc:
         raise ValueError(f"Unsupported translation language: {language}") from exc
+
+
+def _translate_structured_fragments(source, *, endpoint, model, language):
+    """Recover one damaged field without asking the model to recreate markup."""
+    scaffold = re.compile(
+        rf"({TOKEN.pattern}|\\.|&(?:\#[xX]?[0-9A-Fa-f]+|[A-Za-z]+);|[\[\]()!*_`<>|{{}}]+)"
+    )
+    parts = scaffold.split(source)
+    fields, wrappers = {}, {}
+    for index, part in enumerate(parts):
+        if scaffold.fullmatch(part) or not re.search(r"[A-Za-z]", part):
+            continue
+        match = re.fullmatch(r"([^A-Za-z]*)(.*?[A-Za-z0-9])([^A-Za-z0-9]*)", part, re.S)
+        if not match:
+            raise ValueError("Cannot safely separate translation prose from markup")
+        key = f"p{index}"
+        fields[key] = match[2]
+        wrappers[key] = (index, match[1], match[3])
+    if not fields:
+        return source
+    translated = _translate_prose_fragments(
+        fields,
+        endpoint=endpoint,
+        model=model,
+        language=language,
+    )
+    for key, text in translated.items():
+        index, prefix, suffix = wrappers[key]
+        parts[index] = prefix + text + suffix
+    result = "".join(parts)
+    error = _field_error(source, result, language)
+    if error:
+        raise ValueError(f"Structure recovery returned {error}")
+    return result
 
 
 def translate(source, *, endpoint, model, language="zh-cn"):
@@ -230,7 +388,7 @@ def translate(source, *, endpoint, model, language="zh-cn"):
     batch = {}
     size = 0
     for key, value in fields.items():
-        if batch and size + len(value) > 4500:
+        if batch and (size + len(value) > 1800 or len(batch) >= 12):
             translated.update(
                 translate_batch(
                     batch, endpoint=endpoint, model=model, language=language
@@ -243,6 +401,19 @@ def translate(source, *, endpoint, model, language="zh-cn"):
         translated.update(
             translate_batch(batch, endpoint=endpoint, model=model, language=language)
         )
+
+    def expand(text):
+        return TOKEN.sub(lambda m: restorations[m[0]], text)
+
+    for key, value in fields.items():
+        if not _same_structure(expand(value), expand(translated[key])):
+            translated[key] = _translate_structured_fragments(
+                value, endpoint=endpoint, model=model, language=language
+            )
+            if not _same_structure(expand(value), expand(translated[key])):
+                raise ValueError(
+                    f"Fragment translation changed protected structure in {key}"
+                )
 
     def substitute(text):
         return re.sub(
@@ -265,6 +436,10 @@ def translate(source, *, endpoint, model, language="zh-cn"):
     result = front_text + result
     validate_translation(source, result)
     return result
+
+
+class TranslationServiceError(RuntimeError):
+    """A temporary connection or server failure eligible for bounded recovery."""
 
 
 def _request_batch(fields, *, endpoint, model, language):
@@ -311,8 +486,17 @@ def _request_batch(fields, *, endpoint, model, language):
     try:
         with urlopen(request, timeout=300) as response:
             result = json.loads(json.load(response)["message"]["content"])
-    except URLError as exc:
-        raise RuntimeError(
+    except HTTPError as exc:
+        error = (
+            TranslationServiceError
+            if exc.code == 429 or 500 <= exc.code < 600
+            else RuntimeError
+        )
+        raise error(
+            f"Local Ollama translation failed ({model} at {endpoint}): HTTP {exc.code}"
+        ) from exc
+    except (URLError, TimeoutError, ConnectionError, HTTPException) as exc:
+        raise TranslationServiceError(
             f"Local Ollama translation failed ({model} at {endpoint}): {exc}"
         ) from exc
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
@@ -356,6 +540,28 @@ def translate_batch(fields, *, endpoint, model, language="zh-cn", _retry=False):
             raise ValueError(
                 "Translator returned unexpected fields or a non-object response"
             )
+    except TranslationServiceError as exc:
+        if _retry:
+            raise TranslationServiceError(
+                f"{exc}; failed fields: {', '.join(fields)}"
+            ) from exc
+        # One recovery layer only: smaller requests may finish within the CPU
+        # timeout, while a persistent outage must not trigger an expanding tree.
+        items = list(fields.items())
+        middle = (len(items) + 1) // 2
+        recovered = {}
+        for part in (items[:middle], items[middle:]):
+            if part:
+                recovered.update(
+                    translate_batch(
+                        dict(part),
+                        endpoint=endpoint,
+                        model=model,
+                        language=language,
+                        _retry=True,
+                    )
+                )
+        return recovered
     except ValueError:
         if _retry:
             raise
@@ -391,6 +597,47 @@ def translate_batch(fields, *, endpoint, model, language="zh-cn", _retry=False):
     return result
 
 
+def _translate_prose_fragments(fields, *, endpoint, model, language):
+    """Recover a damaged fragment batch with one independent call per fragment."""
+    if not fields:
+        return {}
+
+    def validate(expected, result):
+        if not isinstance(result, dict) or result.keys() != expected.keys():
+            raise ValueError("Translator returned invalid fragment fields")
+        for key, source in expected.items():
+            error = _field_error(source, result[key], language)
+            if error:
+                raise ValueError(f"Translator returned {error} in fragment {key}")
+            if not _same_structure(source, result[key]):
+                raise ValueError(
+                    f"Translator damaged plain text in structure recovery: {key}"
+                )
+        return result
+
+    try:
+        return validate(
+            fields,
+            _request_batch(fields, endpoint=endpoint, model=model, language=language),
+        )
+    except (ValueError, TranslationServiceError):
+        # An empty fragment can indicate that the model merged neighboring
+        # meanings and shifted their field assignments. Discard the whole batch
+        # instead of retaining apparently valid but misaligned translations.
+        translated = {}
+        for key, source in fields.items():
+            fragment = {key: source}
+            translated.update(
+                validate(
+                    fragment,
+                    _request_batch(
+                        fragment, endpoint=endpoint, model=model, language=language
+                    ),
+                )
+            )
+        return translated
+
+
 def _translate_fragments(source, *, endpoint, model, language):
     """Keep stubborn code/formula placeholders entirely outside generation."""
     parts = re.split(f"({TOKEN.pattern})", source)
@@ -405,15 +652,10 @@ def _translate_fragments(source, *, endpoint, model, language):
         key = f"p{index}"
         fields[key] = match[2]
         wrappers[key] = (index, match[1], match[3])
-    translated = _request_batch(
+    translated = _translate_prose_fragments(
         fields, endpoint=endpoint, model=model, language=language
     )
-    if not isinstance(translated, dict) or translated.keys() != fields.keys():
-        raise ValueError("Translator returned invalid fragment fields")
     for key, text in translated.items():
-        error = _field_error(fields[key], text, language)
-        if error:
-            raise ValueError(f"Translator returned {error} in fragment {key}")
         index, prefix, suffix = wrappers[key]
         parts[index] = prefix + text + suffix
     result = "".join(parts)
@@ -429,19 +671,39 @@ def load_translation(
     info = language_info(language)
     cache = cache_root / (path.as_posix() + ".json")
     if cache.exists():
-        record = json.loads(cache.read_text(encoding="utf-8"))
-        if (
-            record.get("source_sha256") == digest(source)
-            and record.get("language") == language
-        ):
-            validate_translation(source, record["translation"])
-            return record["translation"]
+        try:
+            record = json.loads(cache.read_text(encoding="utf-8"))
+            if not isinstance(record, dict):
+                raise ValueError("Cache record is not a JSON object")
+            if (
+                record.get("source_sha256") == digest(source)
+                and record.get("language") == language
+            ):
+                translated = record.get("translation")
+                if not isinstance(translated, str):
+                    raise ValueError("Cache record has no translation text")
+                validate_translation(source, translated)
+                return translated
+        except ValueError as exc:
+            if cache_only:
+                raise ValueError(
+                    f"Invalid {info['target']} translation cache for {path}: {exc}"
+                ) from exc
+            print(
+                f"Regenerating invalid {info['target']} translation cache for {path}: {exc}",
+                flush=True,
+            )
     if cache_only:
         raise ValueError(
             f"Missing or stale {info['target']} translation: {path}. Run without --cache-only with Ollama running."
         )
     print(f"Translating {path} into {info['target']} with {model}…", flush=True)
-    result = translate(source, endpoint=endpoint, model=model, language=language)
+    try:
+        result = translate(source, endpoint=endpoint, model=model, language=language)
+    except (ValueError, RuntimeError) as exc:
+        raise type(exc)(
+            f"{info['target']} translation failed for {path}: {exc}"
+        ) from exc
     cache.parent.mkdir(parents=True, exist_ok=True)
     temporary = cache.with_suffix(".tmp")
     temporary.write_text(

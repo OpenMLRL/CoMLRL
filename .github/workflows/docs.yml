@@ -28,7 +28,7 @@ jobs:
         run: hugo --gc --minify -s docs -b "https://openmlrl.github.io/CoMLRL/"
 
       - name: Check translation protection
-        run: python3 -B -m unittest discover -s docs/scripts -p test_translations.py
+        run: python3 -B -m unittest discover -s docs/scripts -p 'test_translation*.py'
 
       - name: Check rendered documentation
         run: python3 docs/scripts/check_html.py docs/public
