@@ -39,7 +39,7 @@ MODEL_ID = (
     r"(?=[A-Za-z0-9_.-]*\d)[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?"
 )
 COUNT = r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?x(?![A-Za-z0-9])"
-# Prose terms every language keeps in English; masked before translation only.
+# Terms every language keeps in English: masked before translation, then validated.
 KEEP_ENGLISH = re.compile(
     r"(?<![\w-])(?:[Aa]ctor-[Cc]ritic|[Aa]ctors?|[Cc]ritics?|[Rr]ollouts?)(?![\w-])"
 )
@@ -300,6 +300,10 @@ def validate_translation(source, translated):
 
     if not _same_structure(source[src_front.end() :], translated[dst_front.end() :]):
         raise ValueError("Translation changed protected code, math, links, or markup")
+    if Counter(KEEP_ENGLISH.findall(source)) != Counter(
+        KEEP_ENGLISH.findall(translated)
+    ):
+        raise ValueError("Translation changed terms that stay in English")
 
 
 def language_info(language):
@@ -348,10 +352,11 @@ def translate(source, *, endpoint, model, language="zh-cn"):
     language_info(language)
     fields = {}
     restorations = {}
+    terms = set()
 
     def field(value):
         key = f"s{len(fields)}"
-        fields[key] = value
+        fields[key] = KEEP_ENGLISH.sub(keep_english, value)
         return key
 
     def protect(match):
@@ -371,6 +376,11 @@ def translate(source, *, endpoint, model, language="zh-cn"):
         restorations[token] = value
         return token
 
+    def keep_english(match):
+        token = protect(match)
+        terms.add(token)
+        return token
+
     front = FRONT.match(source)
     if not front:
         raise ValueError("Expected YAML frontmatter")
@@ -379,7 +389,9 @@ def translate(source, *, endpoint, model, language="zh-cn"):
         lambda m: m[1] + ": @YAML:" + field(m[2].strip("\"'")) + "@",
         front[0],
     )
-    masked = KEEP_ENGLISH.sub(protect, PROTECTED.sub(protect, source[front.end() :]))
+    masked = KEEP_ENGLISH.sub(
+        keep_english, PROTECTED.sub(protect, source[front.end() :])
+    )
     lines = []
     for line in masked.splitlines(keepends=True):
         match = re.match(r"^(\s*(?:(?:#{1,6}|[-*+]|\d+\.|>)\s+)?)(.*?)(\n?)$", line)
@@ -418,6 +430,11 @@ def translate(source, *, endpoint, model, language="zh-cn"):
                 raise ValueError(
                     f"Fragment translation changed protected structure in {key}"
                 )
+    # Titles and shortcode labels are inserted after restoration; restore terms first.
+    for key, value in translated.items():
+        translated[key] = TOKEN.sub(
+            lambda m: restorations[m[0]] if m[0] in terms else m[0], value
+        )
 
     def substitute(text):
         return re.sub(
