@@ -1,0 +1,67 @@
+[docsHome]
+other = "CoMLRL documentation home"
+[docsProjectLinks]
+other = "Project links"
+[docsGitHubStars]
+other = "{{ .Count }} GitHub stars"
+[docsGitHubStarsUpdated]
+other = "{{ .Count }} stars · checked {{ .Updated }}"
+[docsColorTheme]
+other = "Color theme"
+[docsLightMode]
+other = "Light mode"
+[docsDarkMode]
+other = "Dark mode"
+[docsReadingMode]
+other = "Reading mode"
+[docsAreas]
+other = "Documentation areas"
+[docsDocumentation]
+other = "Documentation"
+[docsExamples]
+other = "Examples"
+[docsEnvironments]
+other = "Environments"
+[docsOverview]
+other = "Overview"
+[docsExampleOverview]
+other = "Example Overview"
+[docsResearchOverview]
+other = "Research Overview"
+[docsResearch]
+other = "Research"
+[docsPapers]
+other = "Papers"
+[docsExamplePages]
+other = "Examples pages"
+[docsResearchPages]
+other = "Research pages"
+[docsDocumentationPages]
+other = "Documentation pages"
+[docsMenu]
+other = "Menu"
+[docsOnThisPage]
+other = "On this page"
+[docsPageSections]
+other = "Page sections"
+[docsLanguage]
+other = "Language"
+[docsAutomaticTranslation]
+other = "Automatically translated"
+[docsEnglishOriginal]
+other = "English original"
+[docsSkipToContent]
+other = "Skip to content"
+[docsDocumentationNavigation]
+other = "Documentation navigation"
+[docsAdjacentPages]
+other = "Adjacent pages"
+[docsPreviousPage]
+other = "Previous page"
+[docsNextPage]
+other = "Next page"
+
+[docsExternalFeedback]
+other = "External Feedback"
+[docsParameters]
+other = "Parameters"

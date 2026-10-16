@@ -4,7 +4,7 @@ weight: 3
 math: true
 ---
 
-Multi-Agent Direct Preference Optimization (MADPO) trains the agents directly on preferred and rejected joint responses, without a reward model or a separate RL stage. Its loss combines all agents' preference margins, so each policy learns from the team's outcome.
+Multi-Agent Direct Preference Optimization (MADPO) trains the agents directly from preferred and rejected joint responses, without a reward model or a separate RL stage. Its loss combines all agents' preference margins, so each policy learns from the team's outcome.
 
 The training flow is: **task items → preference pairs → joint preference loss → policy updates**. [MARLHF]({{< relref "/docs/mapl/marlhf" >}}) uses the same pairs to fit a joint reward model first and then trains the policies with RL.
 
@@ -16,9 +16,9 @@ The diagram uses the same task item and preference pairs as the [MARLHF]({{< rel
 
 Each agent {{< katex >}}i\in\mathcal{I}=\{1,\ldots,n\}{{< /katex >}} samples {{< katex >}}a_{i,t}\sim\pi_{\theta_i}(\cdot\mid h_{i,t}){{< /katex >}} from its local history; the responses form the joint action {{< katex >}}\mathbf{a}_t=\{a_{1,t},\ldots,a_{n,t}\}{{< /katex >}} with joint history {{< katex >}}\mathbf{h}_t{{< /katex >}}. Only a single turn is currently supported (horizon {{< katex >}}H=1{{< /katex >}}), so {{< katex >}}h_{i,0}{{< /katex >}} is agent {{< katex >}}i{{< /katex >}}'s prompt and {{< katex >}}\mathbf{a}_0{{< /katex >}} is the joint response.
 
-For each task item in `train_dataset`, every agent samples `preference_num_candidates` responses from its formatted prompt. Responses with the same candidate index form a joint response and share one reward from `reward_func` (after the optional `reward_processor`). Of two joint responses with different rewards, the higher one is the winner {{< katex >}}w{{< /katex >}} and the other the loser {{< katex >}}l{{< /katex >}}; ties are discarded. Each pair {{< katex >}}(\mathbf{h}_H^{w},\mathbf{h}_H^{l}){{< /katex >}} holds the two joint histories of one task.
+For each task item in `train_dataset`, every agent samples `preference_num_candidates` responses from its formatted prompt. Responses with the same candidate index form a joint response and share one reward from `reward_func` (after the optional `reward_processor`). For two joint responses with different rewards, the response with the higher reward is the winner {{< katex >}}w{{< /katex >}} and the other the loser {{< katex >}}l{{< /katex >}}; ties are discarded. Each pair {{< katex >}}(\mathbf{h}_H^{w},\mathbf{h}_H^{l}){{< /katex >}} contains the two joint histories for one task.
 
-The base trainer collects the pairs once and reuses them for `num_train_epochs`; `pair_selection` and `preference_pairs_per_sample` set which pairs each task keeps.
+The base trainer collects the pairs once and reuses them for `num_train_epochs`; `pair_selection` and `preference_pairs_per_sample` determine which pairs are retained for each task.
 
 {{% hint warning %}}
 MADPO currently requires `num_turns=1` and `joint_mode="aligned"`. `pair_selection="all"` requires `preference_pairs_per_sample=None`. If no task yields a non-tied pair, training returns without updating the policies.
@@ -26,7 +26,7 @@ MADPO currently requires `num_turns=1` and `joint_mode="aligned"`. `pair_selecti
 
 ## Joint Preference Objective
 
-Each agent's margin is its log-probability gap between the winning and losing responses, and the joint margin sums these over the agents:
+Each agent's margin is the difference between its log-probabilities for the winning and losing responses. The joint margin sums these differences across agents:
 
 {{< katex display=true >}}
 \Delta_{\theta_i}=\sum_{t=0}^{H-1}\Big(\log\pi_{\theta_i}(a_{i,t}^{w}\mid h_{i,t}^{w})-\log\pi_{\theta_i}(a_{i,t}^{l}\mid h_{i,t}^{l})\Big),
@@ -42,7 +42,7 @@ MADPO minimizes
 \Big[\log\sigma\big(\eta\,\Delta_{\boldsymbol{\theta}}\big)\Big],
 {{< /katex >}}
 
-where {{< katex >}}\sigma{{< /katex >}} is the sigmoid function, {{< katex >}}\eta>0{{< /katex >}} is `dpo_beta` (default 0.1), and {{< katex >}}\mathcal{B}{{< /katex >}} is the set of training pairs. The task reward only orders each pair; the loss itself uses the policies' log-probabilities.
+where {{< katex >}}\sigma{{< /katex >}} is the sigmoid function, {{< katex >}}\eta>0{{< /katex >}} is `dpo_beta` (default 0.1), and {{< katex >}}\mathcal{B}{{< /katex >}} is the set of training pairs. The task reward determines only the ordering within each pair; the loss itself uses the policies' log-probabilities.
 
 The gradient for agent {{< katex >}}i{{< /katex >}} is
 
@@ -52,19 +52,19 @@ The gradient for agent {{< katex >}}i{{< /katex >}} is
 \Big[\sigma\big(-\eta\,\Delta_{\boldsymbol{\theta}}\big)\,\nabla_{\theta_i}\Delta_{\theta_i}\Big].
 {{< /katex >}}
 
-The weight {{< katex >}}\sigma(-\eta\,\Delta_{\boldsymbol{\theta}}){{< /katex >}} depends on the whole team's margin, while the gradient flows only through agent {{< katex >}}i{{< /katex >}}'s own margin. In each batch, the trainer computes all margins once without gradients, then updates each agent with its own differentiable margin plus the others' detached margins.
+The weight {{< katex >}}\sigma(-\eta\,\Delta_{\boldsymbol{\theta}}){{< /katex >}} depends on the team's joint margin, while the gradient flows only through agent {{< katex >}}i{{< /katex >}}'s own margin. In each batch, the trainer computes all margins once without gradients, then updates each agent with its own differentiable margin plus the others' detached margins.
 
 ### Reference-Free Implementation
 
-Eq. 6 of the [MAPL paper](https://arxiv.org/abs/2609.32827) replaces {{< katex >}}\log\pi_{\theta_i}{{< /katex >}} in {{< katex >}}\Delta_{\theta_i}{{< /katex >}} with the log-ratio {{< katex >}}\log(\pi_{\theta_i}/\pi_{\mathrm{ref},i}){{< /katex >}} against a frozen reference policy. CoMLRL implements the reference-free form above: the inherited `reference_kl_enabled`, `reference_kl_coef`, and `reference_devices` settings do not add reference terms to the MADPO loss.
+Equation 6 of the [MAPL paper](https://arxiv.org/abs/2609.32827) replaces {{< katex >}}\log\pi_{\theta_i}{{< /katex >}} in {{< katex >}}\Delta_{\theta_i}{{< /katex >}} with the log-ratio {{< katex >}}\log(\pi_{\theta_i}/\pi_{\mathrm{ref},i}){{< /katex >}} against a frozen reference policy. CoMLRL implements the reference-free form above: the inherited `reference_kl_enabled`, `reference_kl_coef`, and `reference_devices` settings do not add reference terms to the MADPO loss.
 
 {{% hint warning %}}
-The decentralized scorer drops the last completion token after trimming padding, so each agent's margin omits that token's log-probability. The centralized scorer covers the full joint completion.
+The decentralized scorer excludes the last completion token after trimming padding, so each agent's margin omits that token's log-probability. The centralized scorer covers the full joint completion.
 {{% /hint %}}
 
 ## Configuration
 
-Import `MADPOConfig` and `MADPOTrainer` from `comlrl.trainers.preference`.
+Users can import `MADPOConfig` and `MADPOTrainer` from `comlrl.trainers.preference`.
 
 {{% hint info %}}
 **MADPOConfig** parameters:
@@ -74,8 +74,8 @@ Import `MADPOConfig` and `MADPOTrainer` from `comlrl.trainers.preference`.
 - `num_train_epochs`: Optimization epochs over the collected preference pairs
 - `agent_learning_rate`: Policy learning rate
 - `preference_num_candidates`: Candidates sampled per task and actor; at least 2
-- `preference_pairs_per_sample`: Maximum pairs kept per task, or `None` for no limit
-- `pair_selection`: `"reward_gap"` keeps the largest reward gaps, `"random"` a random subset, and `"all"` every non-tied pair
+- `preference_pairs_per_sample`: Maximum pairs retained per task, or `None` for no limit
+- `pair_selection`: `"reward_gap"` selects pairs with the largest reward gaps, `"random"` selects a random subset, and `"all"` retains every non-tied pair
 - `dpo_beta`: Positive coefficient on the joint margin
 - `train_batch_size`: Preference pairs per update; defaults to `rollout_buffer_size`
 - `max_new_tokens`, `temperature`, `top_p`, `top_k`: Candidate generation settings
@@ -106,8 +106,8 @@ Evaluation samples responses from the current policies and scores them with the 
 
 ## Collaboration and Iterative Training
 
-Decentralized MADPO trains one policy per agent with the summed margin {{< katex >}}\Delta_{\boldsymbol{\theta}}{{< /katex >}}. With `collaboration_mode="centralized"`, one actor {{< katex >}}\boldsymbol{\pi}_{\boldsymbol{\theta}}(\mathbf{a}_t\mid\mathbf{h}_t){{< /katex >}} generates the complete joint response, and {{< katex >}}\Delta_{\boldsymbol{\theta}}{{< /katex >}} is that actor's margin on the joint text. Keep `num_agents` equal to the number of task roles, but supply one actor and tokenizer. The joint text is kept for preference training and parsed into role responses only for task rewards and evaluation. See [Training Framework]({{< relref "/docs/mapl/training-framework#collaboration-modes" >}}) for the layouts and adapter interface.
+Decentralized MADPO trains one policy per agent with the summed margin {{< katex >}}\Delta_{\boldsymbol{\theta}}{{< /katex >}}. With `collaboration_mode="centralized"`, one actor {{< katex >}}\boldsymbol{\pi}_{\boldsymbol{\theta}}(\mathbf{a}_t\mid\mathbf{h}_t){{< /katex >}} generates the complete joint response, and {{< katex >}}\Delta_{\boldsymbol{\theta}}{{< /katex >}} is that actor's margin on the joint text. `num_agents` must equal the number of task roles, and the configuration requires one actor and tokenizer. The joint text is retained for preference training and parsed into role responses only for task rewards and evaluation. [Training Framework]({{< relref "/docs/mapl/training-framework#collaboration-modes" >}}) describes the layouts and adapter interface.
 
 `MADPOIterTrainer` repeats data collection and training. Iteration {{< katex >}}\nu{{< /katex >}} pairs each new current-policy sample with the comparator sample at the same candidate index (either side can win), then applies the MADPO updates to the selected pairs {{< katex >}}\mathcal{B}^{(\nu)}{{< /katex >}}. An iteration is not a dialog turn, so the single-turn, aligned-response restriction still applies.
 
-See [Training Framework]({{< relref "/docs/mapl/training-framework#iterative-training" >}}) for the iterative configuration, the comparator, and the replay buffer that selects {{< katex >}}\mathcal{B}^{(\nu)}{{< /katex >}}.
+[Training Framework]({{< relref "/docs/mapl/training-framework#iterative-training" >}}) describes the iterative configuration, the comparator, and the replay buffer that selects {{< katex >}}\mathcal{B}^{(\nu)}{{< /katex >}}.

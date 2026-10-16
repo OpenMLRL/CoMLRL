@@ -36,6 +36,12 @@ jobs:
         cd docs
         hugo --minify
 
+    - name: Check translation protection
+      run: python3 -B -m unittest discover -s docs/scripts -p test_translations.py
+
+    - name: Check rendered documentation
+      run: python3 docs/scripts/check_html.py docs/public
+
     - name: Deploy to OpenMLRL.github.io
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       env:

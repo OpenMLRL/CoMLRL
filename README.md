@@ -65,10 +65,10 @@ conda install -c conda-forge comlrl
 - **Environments that simulate real-world tasks for training and evaluating LLM collaboration:**
   - [**_Writing_**](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
     - [TLDR](https://huggingface.co/datasets/trl-lib/tldr) - Summarizing Reddit posts.
-    - [ArXiv](http://arxiv.org/abs/1905.00075) - Expanding abstracts into introductions.
+    - [arXiv](https://arxiv.org/abs/1905.00075) - Expanding abstracts into introductions.
   - [**_Coding_**](https://github.com/OpenMLRL/LLM_Collab_Code_Generation): Generate code solutions for programming problems.
-    - [MBPP](https://arxiv.org/abs/2108.07732) - Mostly basic python problems.
-    - [HumanEval](https://arxiv.org/abs/2107.03374) - Handwritten evaluation problems.
+    - [MBPP](https://github.com/google-research/google-research/tree/master/mbpp) - Mostly basic python problems.
+    - [HumanEval](https://github.com/openai/human-eval) - Handwritten evaluation problems.
     - [CoopHumanEval](https://huggingface.co/datasets/OpenMLRL/CoopHumanEval) - HumanEval with cooperative nature.
     - [ClassEval](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Complete class-level code based on attributes and docstrings.
   - [**_Minecraft_**](https://github.com/OpenMLRL/LLM_Collab_Minecraft): Collaborative building tasks in Minecraft.
@@ -76,7 +76,7 @@ conda install -c conda-forge comlrl
     - [HouseBuild](https://github.com/OpenMLRL/LLM_Collab_Minecraft/tree/main/house_build) - Constructing houses from given blueprints while defending against spider attacks.
   - [**_Travel_**](https://github.com/OpenMLRL/LLM_Collab_Travel): Collaborative travel planning under user constraints.
     - [TravelPlanner](https://huggingface.co/datasets/osunlp/TravelPlanner) - Planning multi-day trip itineraries.
-  - [**_BFCL v4_**](https://github.com/OpenMLRL/LLM_Collab_BFCL-v4): Collaborative function calling with tools.
+  - [**_Tool-Use_**](https://github.com/OpenMLRL/LLM_Collab_BFCL-v4): Collaborative function calling with tools using [BFCL v4](https://gorilla.cs.berkeley.edu/leaderboard.html).
     - [Native Parallel](https://huggingface.co/datasets/OpenMLRL/BFCL-V4-Parallel-Native) - Making parallel function calls.
 
 ## Usage

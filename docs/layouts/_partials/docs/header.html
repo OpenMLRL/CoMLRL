@@ -1,14 +1,14 @@
 <div class="docs-mobile-controls">
   <button type="button" data-toggle="menu-control" aria-controls="site-navigation" aria-expanded="false">
-    <img src="{{ partial "docs/icon" "menu" }}" class="book-icon" alt="" /> Menu
+    <img src="{{ partial "docs/icon" "menu" }}" class="book-icon" alt="" /> {{ i18n "docsMenu" }}
   </button>
   {{ if partial "docs/toc-show" . }}
   <button type="button" data-toggle="toc-control" aria-controls="mobile-toc" aria-expanded="false">
-    <img src="{{ partial "docs/icon" "toc" }}" class="book-icon" alt="" /> On this page
+    <img src="{{ partial "docs/icon" "toc" }}" class="book-icon" alt="" /> {{ i18n "docsOnThisPage" }}
   </button>
   {{ end }}
 </div>
 <noscript>
-  <label for="menu-control">Menu</label>
-  {{ if partial "docs/toc-show" . }}<label for="toc-control">On this page</label>{{ end }}
+  <label for="menu-control">{{ i18n "docsMenu" }}</label>
+  {{ if partial "docs/toc-show" . }}<label for="toc-control">{{ i18n "docsOnThisPage" }}</label>{{ end }}
 </noscript>

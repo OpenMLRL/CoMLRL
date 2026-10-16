@@ -1,0 +1,23 @@
+{{- $currentLanguage := .Language.Lang -}}
+{{- $translations := sort .AllTranslations "Language.Weight" -}}
+{{- if gt (len $translations) 1 -}}
+<details class="docs-language-switcher" data-language-menu>
+  <summary class="docs-language-summary" aria-label="{{ i18n "docsLanguage" }}: {{ .Language.LanguageName | default $currentLanguage }}">
+    <svg class="docs-language-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h1v4l4-4h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z" /><path d="M16 7h4a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-1v4l-4-4h-4a2 2 0 0 1-2-2v-3" /></svg>
+    <span class="docs-language-current">{{ .Language.LanguageName | default $currentLanguage }}</span>
+    <svg class="docs-language-chevron" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+  </summary>
+  <ul class="docs-language-options" aria-label="{{ i18n "docsLanguage" }}">
+    {{- range $translations }}
+    <li>
+      <a href="{{ .RelPermalink }}" lang="{{ .Language.Lang }}" hreflang="{{ .Language.Lang }}" data-language-link{{ if eq $currentLanguage .Language.Lang }} aria-current="page"{{ end }}>
+        <span>{{ .Language.LanguageName | default .Language.Lang }}</span>
+        {{- if eq $currentLanguage .Language.Lang }}
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 3 3 7-7" /></svg>
+        {{- end }}
+      </a>
+    </li>
+    {{- end }}
+  </ul>
+</details>
+{{- end -}}

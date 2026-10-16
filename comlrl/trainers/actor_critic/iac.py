@@ -406,7 +406,11 @@ class IACTrainer(ActorCriticTrainerBase):
             "reference_devices": getattr(self.args, "reference_devices", None),
         }
 
-        wandb.init(**wandb_init_kwargs(self.wandb_config, config_dict))
+        previous_run = wandb.run
+        self._checkpoint_record_wandb_run(
+            wandb.init(**wandb_init_kwargs(self.wandb_config, config_dict)),
+            previous_run=previous_run,
+        )
         self.wandb_initialized = True
 
     def _generate_rollout(

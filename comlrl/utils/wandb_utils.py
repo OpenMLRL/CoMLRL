@@ -31,6 +31,9 @@ def wandb_init_kwargs(wandb_config: Any, run_config: Dict[str, Any]) -> Dict[str
     tags = wandb_config.get("tags")
     if isinstance(tags, list):
         init_kwargs["tags"] = tags
+    for key in ("id", "resume"):
+        if key in wandb_config:
+            init_kwargs[key] = wandb_config[key]
     return init_kwargs
 
 

@@ -1,0 +1,73 @@
+[docsHome]
+other = "CoMLRL 문서 홈"
+[docsProjectLinks]
+other = "프로젝트 링크"
+[docsGitHubStars]
+other = "GitHub 스타 {{ .Count }}개"
+[docsGitHubStarsUpdated]
+other = "스타 {{ .Count }}개 · 확인: {{ .Updated }}"
+[docsColorTheme]
+other = "색상 테마"
+[docsLightMode]
+other = "라이트 모드"
+[docsDarkMode]
+other = "다크 모드"
+[docsReadingMode]
+other = "읽기 모드"
+[docsAreas]
+other = "문서 영역"
+[docsDocumentation]
+other = "문서"
+[docsExamples]
+other = "예제"
+[docsEnvironments]
+other = "환경"
+[docsOverview]
+other = "개요"
+[docsExampleOverview]
+other = "예제 개요"
+[docsResearchOverview]
+other = "연구 개요"
+[docsResearch]
+other = "연구"
+[docsPapers]
+other = "논문"
+[docsExamplePages]
+other = "예제 페이지"
+[docsResearchPages]
+other = "연구 페이지"
+[docsDocumentationPages]
+other = "문서 페이지"
+[docsMenu]
+other = "메뉴"
+[docsOnThisPage]
+other = "이 페이지의 내용"
+[docsPageSections]
+other = "페이지 섹션"
+[docsLanguage]
+other = "언어"
+[docsAutomaticTranslation]
+other = "자동 번역"
+[docsEnglishOriginal]
+other = "영어 원문"
+[docsSkipToContent]
+other = "본문으로 이동"
+[docsDocumentationNavigation]
+other = "문서 탐색"
+[docsAdjacentPages]
+other = "이전 및 다음 페이지"
+[docsPreviousPage]
+other = "이전 페이지"
+[docsNextPage]
+other = "다음 페이지"
+[Search]
+other = "검색"
+["Edit this page"]
+other = "이 페이지 편집"
+["Last modified by"]
+other = "마지막 수정자"
+
+[docsExternalFeedback]
+other = "외부 피드백"
+[docsParameters]
+other = "매개변수"

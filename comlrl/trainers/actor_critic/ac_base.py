@@ -1,4 +1,5 @@
 from collections import defaultdict
+import numbers
 from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -9,10 +10,11 @@ from tqdm import tqdm  # type: ignore
 from torch.utils.data import DataLoader
 
 from comlrl.models.actor_critic import CausalLMWithValueHead
+from comlrl.utils.checkpoint import TrainingCheckpointMixin
 from comlrl.utils.reference_kl import reference_kl_coef, reference_kl_enabled
 
 
-class ActorCriticTrainerBase:
+class ActorCriticTrainerBase(TrainingCheckpointMixin):
     """Shared training utilities for actor-critic style trainers."""
 
     def _kl_shaped_reward(
@@ -511,7 +513,40 @@ class ActorCriticTrainerBase:
             self._log_metrics(eval_log)
         return eval_log
 
-    def train(self) -> None:
+    def train(
+        self,
+        *,
+        resume_from_checkpoint=None,
+        checkpoint_dir=None,
+        checkpoint_interval=1,
+        checkpoint_total_limit=None,
+    ) -> None:
+        """Train with optional resume and checkpointing at complete epoch boundaries."""
+        if (
+            isinstance(checkpoint_interval, bool)
+            or not isinstance(checkpoint_interval, numbers.Integral)
+            or checkpoint_interval < 1
+        ):
+            raise ValueError("checkpoint_interval must be a positive integer.")
+        if (
+            resume_from_checkpoint is not None
+            or checkpoint_dir is not None
+            or checkpoint_interval != 1
+            or checkpoint_total_limit is not None
+        ):
+            with self._checkpoint_context(
+                resume_from_checkpoint=resume_from_checkpoint,
+                checkpoint_dir=checkpoint_dir,
+                checkpoint_interval=checkpoint_interval,
+                checkpoint_total_limit=checkpoint_total_limit,
+            ):
+                return self._train_checkpoint_epochs(
+                    self._checkpoint_progress, self._checkpoint_commit
+                )
+
+        if not getattr(self, "_checkpoint_context_active", False):
+            self._checkpoint_save_blocked = True
+
         total_epochs = self.args.num_train_epochs
 
         for epoch in range(total_epochs):
@@ -529,3 +564,78 @@ class ActorCriticTrainerBase:
 
             self._flush_buffers(epoch_metrics)
             self._on_epoch_end(epoch, total_epochs, epoch_metrics)
+
+        if not getattr(self, "_checkpoint_context_active", False):
+            self._checkpoint_progress = {
+                "kind": "actor_critic",
+                "epoch": total_epochs,
+            }
+            self._checkpoint_save_blocked = False
+
+    def _checkpoint_validate_progress(self, state):
+        """Reject incompatible saved RL cursors before restoring trainer state."""
+        progress = state["progress"]
+        total_epochs = self.args.num_train_epochs
+        if not isinstance(progress, dict):
+            raise ValueError("Actor-critic checkpoint progress must be a dictionary.")
+        if progress and (
+            progress.get("kind") != "actor_critic" or "epoch" not in progress
+        ):
+            raise ValueError(
+                "Checkpoint does not contain an actor-critic epoch cursor."
+            )
+        start_epoch = progress.get("epoch", 0)
+        if (
+            type(start_epoch) is not int
+            or start_epoch < 0
+            or start_epoch > total_epochs
+        ):
+            raise ValueError(
+                "Actor-critic checkpoint epoch must be between 0 and num_train_epochs."
+            )
+        if progress and any(state["runtime"].get("rollout_buffers", [])):
+            raise ValueError(
+                "Actor-critic resume requires an epoch boundary with empty rollout buffers."
+            )
+        return start_epoch
+
+    def _on_checkpoint_train_start(self, start_epoch: int, total_epochs: int) -> None:
+        """Align subclass state before a checkpoint-aware epoch loop starts.
+
+        Called once after cursor validation and before any dataloader is built,
+        including when all configured epochs have already been completed.
+        ``start_epoch`` is the number of completed epochs, or zero for a new run.
+        """
+
+    def _train_checkpoint_epochs(self, progress, commit) -> None:
+        """Run complete RL epochs, optionally inside a parent trainer's context."""
+        total_epochs = self.args.num_train_epochs
+        start_epoch = ActorCriticTrainerBase._checkpoint_validate_progress(
+            self,
+            {
+                "progress": progress,
+                "runtime": {"rollout_buffers": self.rollout_buffers},
+            },
+        )
+        self._on_checkpoint_train_start(start_epoch, total_epochs)
+        self._checkpoint_init_wandb()
+
+        for epoch in range(start_epoch, total_epochs):
+            epoch_metrics = defaultdict(list)
+            dataloader = self.get_train_dataloader()
+            it = self._iter_dataloader(dataloader, epoch, total_epochs)
+            for batch_idx, batch in it:
+                if (
+                    self.eval_dataset is not None
+                    and self.args.eval_interval > 0
+                    and batch_idx % int(self.args.eval_interval) == 0
+                ):
+                    self.evaluate()
+                self._run_batch(batch, epoch_metrics)
+
+            self._flush_buffers(epoch_metrics)
+            self._on_epoch_end(epoch, total_epochs, epoch_metrics)
+            commit(
+                {"kind": "actor_critic", "epoch": epoch + 1},
+                force=epoch + 1 == total_epochs,
+            )

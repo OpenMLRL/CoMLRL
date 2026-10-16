@@ -8,10 +8,50 @@ This folder contains the Hugo site for CoMLRL’s documentation using the Hugo B
 2. From the repo root, run:
 
 ```bash
-hugo server -s docs -D
+python3 docs/scripts/preview.py
 ```
 
-Hugo will fetch the Book theme via Hugo Modules on first run (requires internet access). Open the local URL printed by Hugo (usually http://localhost:1313).
+Hugo will fetch the Book theme via Hugo Modules on first run (requires internet access). The preview command performs a fresh production build, checks the generated HTML for corrupted text and unexpanded shortcodes, and serves it at http://localhost:1313. Draft pages remain excluded.
+
+After editing, stop the preview with Ctrl+C, rerun the command, and refresh the browser. This uses complete static builds because incremental previews have produced malformed shortcode output during documentation edits. The server disables browser caching.
+
+Existing build output can also be checked before publishing:
+
+```bash
+python3 docs/scripts/check_html.py docs/public
+```
+
+## Multilingual preview
+
+English remains the only maintained content in `content/`. The multilingual preview includes English, Simplified Chinese, Japanese, Korean, Spanish, French, and German:
+
+```bash
+python3 docs/scripts/preview.py --multilingual
+```
+
+The header's language menu switches to the same page and retains the current section anchor. Generated translations are labelled and link to the English original. Code blocks, code comments, model identifiers, formulas, and link destinations are preserved. The language menu lists only languages included in the current build.
+
+Translations are cached independently in the Git-ignored `.cache/docs-translations/<language>/` directories at the repository root. A source hash determines whether each page needs translation. Unchanged pages reuse their cache; changed or missing pages are translated by a local Ollama service at `http://127.0.0.1:11434`. The default model is `qwen2.5-coder:3b`; `--model` selects another installed model. Local translation requires Ollama to be running and the chosen model to be installed. It does not require Crowdin or a paid translation API, but uses the local device's compute resources. Translation quality still benefits from review.
+
+The first build generates any missing translations and can take longer; subsequent builds reuse them. `--cache-only` builds without contacting Ollama and fails if any selected language has a missing or stale translation. Caches are local: a fresh checkout needs to generate them, or restore them from a build cache. Generated translated Markdown exists only in a temporary build directory; generated HTML is never added to Git by these scripts.
+
+To build a subset, use `--languages zh-cn ja es` (English is always included). The existing `--bilingual` option still builds only English and Simplified Chinese. Language codes, names, and terminology are configured in `data/languages.json`.
+
+To produce a deployment artifact in an **empty** output directory:
+
+```bash
+python3 docs/scripts/build.py --multilingual \
+  --destination /tmp/comlrl-multilingual-site \
+  --base-url https://openmlrl.github.io/CoMLRL/
+```
+
+The build checks protected Markdown, preserves English heading and API-card anchors, and validates rendered code, formulas, links, assets, language switches, and redirects before writing the output. A failed translation or validation stops the build. The output can be uploaded as a Pages artifact; it should not be copied into the OpenMLRL repository and committed. This local trial does not enable multilingual production deployment. Hosted CI does not have access to the Ollama service on a developer's computer; it needs its own translation runtime or a restored, current translation cache before a multilingual build can succeed.
+
+The translation guards and cache behavior can be checked without a model or network access:
+
+```bash
+python3 -B -m unittest discover -s docs/scripts -p test_translations.py
+```
 
 ## Research publications
 
@@ -25,7 +65,7 @@ The `static/img/comlrl-logo-dark-colors.svg` and `static/img/comlrl-logo-reading
 
 Keep syntax highlighting class-based (`markup.highlight.noClasses = false`) so `assets/_syntax.scss` can style both themes. `assets/_diagram-theme.scss` adjusts SVG paint for dark backgrounds without changing mathematical glyphs, geometry, or animation stages. Printing uses the light palette.
 
-The GitHub link includes the repository's star count. `data/github.json` holds the verified fallback snapshot; `assets/github-stars.js` refreshes it from GitHub's public API and caches successful responses locally for one hour. API errors retain the last available count.
+The header groups the OpenMLRL link, GitHub link, and theme controls with compact spacing. The GitHub link does not display or fetch a star count.
 
 ## Overview demo
 
@@ -55,11 +95,13 @@ The script only inserts animation attributes and verifies that removing them rep
 
 ## Deploy (GitHub Pages – native actions)
 
-Publishing is currently manual. Run `.github/workflows/docs.yml` with the workflow-dispatch input `publish=true`; a push to `main` does not deploy this site. The workflow:
+The native Pages workflow is manual. Run `.github/workflows/docs.yml` with the workflow-dispatch input `publish=true`. The workflow:
 
 - Configures Pages and computes the correct base URL for a project site.
 - Builds the Hugo site from `docs/`.
 - Uploads the static site as a Pages artifact and deploys it.
+
+The separate legacy `docs-build.yml` workflow still builds English on pushes and copies that English output into `OpenMLRL.github.io/static/CoMLRL`. It is not used by the multilingual preview. A future multilingual deployment should upload build artifacts directly instead of extending that Git-copy step to generated translations.
 
 One-time repo setting: in GitHub → Settings → Pages → Build and deployment, set Source to “GitHub Actions”.
 

@@ -1,0 +1,73 @@
+[docsHome]
+other = "CoMLRL ドキュメントのトップページ"
+[docsProjectLinks]
+other = "プロジェクト関連リンク"
+[docsGitHubStars]
+other = "GitHub スター {{ .Count }} 件"
+[docsGitHubStarsUpdated]
+other = "スター {{ .Count }} 件 · 確認日：{{ .Updated }}"
+[docsColorTheme]
+other = "カラーテーマ"
+[docsLightMode]
+other = "ライトモード"
+[docsDarkMode]
+other = "ダークモード"
+[docsReadingMode]
+other = "読書モード"
+[docsAreas]
+other = "ドキュメントのセクション"
+[docsDocumentation]
+other = "ドキュメント"
+[docsExamples]
+other = "使用例"
+[docsEnvironments]
+other = "環境"
+[docsOverview]
+other = "概要"
+[docsExampleOverview]
+other = "使用例の概要"
+[docsResearchOverview]
+other = "研究の概要"
+[docsResearch]
+other = "研究"
+[docsPapers]
+other = "論文"
+[docsExamplePages]
+other = "使用例のページ"
+[docsResearchPages]
+other = "研究のページ"
+[docsDocumentationPages]
+other = "ドキュメントのページ"
+[docsMenu]
+other = "メニュー"
+[docsOnThisPage]
+other = "このページの内容"
+[docsPageSections]
+other = "ページ内のセクション"
+[docsLanguage]
+other = "言語"
+[docsAutomaticTranslation]
+other = "自動翻訳"
+[docsEnglishOriginal]
+other = "英語の原文"
+[docsSkipToContent]
+other = "本文へ移動"
+[docsDocumentationNavigation]
+other = "ドキュメントのナビゲーション"
+[docsAdjacentPages]
+other = "前後のページ"
+[docsPreviousPage]
+other = "前のページ"
+[docsNextPage]
+other = "次のページ"
+[Search]
+other = "検索"
+["Edit this page"]
+other = "このページを編集"
+["Last modified by"]
+other = "最終更新者"
+
+[docsExternalFeedback]
+other = "外部フィードバック"
+[docsParameters]
+other = "パラメータ"

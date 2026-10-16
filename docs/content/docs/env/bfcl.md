@@ -1,5 +1,5 @@
 ---
-title: BFCL v4
+title: Tool-Use
 weight: 6
 bookSearchExclude: true
 bookHref: https://github.com/OpenMLRL/LLM_Collab_BFCL-v4

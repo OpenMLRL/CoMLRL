@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="{{ .Page.Site.Language.Lang }}">
+<html lang="{{ with .Page }}{{ .Site.Language.Lang }}{{ else }}en{{ end }}">
 <head>
   <meta charset="utf-8">
   <title>{{ .Permalink }}</title>
   <link rel="canonical" href="{{ .Permalink }}">
-  {{ if eq .Page.Path "/docs/multi-turn/algorithm" }}
+  {{ if and .Page (eq .Page.Path "/docs/multi-turn/algorithm") }}
     {{ with .Page.Site.GetPage "/docs/multi-turn/transition" }}
     <script>
       // Preserve bookmarks to the transition half of the former combined guide.
@@ -25,7 +25,7 @@
     </script>
     {{ end }}
     <noscript><meta http-equiv="refresh" content="0; url={{ .Permalink }}"></noscript>
-  {{ else if eq .Page.Path "/docs/dev/support" }}
+  {{ else if and .Page (eq .Page.Path "/docs/dev/support") }}
     <script>
       // Keep bookmarks to the three parts of the former Developer guide.
       (function () {
@@ -45,6 +45,6 @@
   {{ end }}
 </head>
 <body>
-  <p><a href="{{ .Permalink }}">Continue to {{ .Page.Title }}</a></p>
+  <p><a href="{{ .Permalink }}">Continue{{ with .Page }} to {{ .Title }}{{ end }}</a></p>
 </body>
 </html>

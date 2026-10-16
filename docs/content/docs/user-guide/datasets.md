@@ -6,11 +6,11 @@ aliases:
   - /docs/user-guide/datasets-evaluation-logging/
 ---
 
-Keep task inputs and metadata together in a dataset and reserve a separate evaluation split. This guide uses the length-ratio task from the [quick start]({{< relref "docs/examples/comlrl-quick-start" >}}) to prepare data for training and evaluation.
+Users can keep task inputs and metadata in the same dataset, with a separate split for evaluation. This guide prepares training and evaluation data for the length-ratio task from the [quick start]({{< relref "docs/examples/comlrl-quick-start" >}}).
 
 ## Dataset Splits
 
-Each dataset row is a dictionary. The default formatter reads its `prompt` field; additional fields can hold targets, labels, test cases, or other information needed by your reward function. Trainers pass the original row to the reward function through `batch_items`.
+Each dataset row is a dictionary. The default formatter reads its `prompt` field; additional fields can hold targets, labels, test cases, or other information required by the reward function. Trainers pass the original row to the reward function through `batch_items`.
 
 ```python
 from datasets import Dataset
@@ -37,13 +37,13 @@ train_dataset = split["train"]
 eval_dataset = split["test"]
 ```
 
-Here, eight rows are used for training and two are held out for evaluation. `seed` makes the split repeatable; it does not set the random seed for model generation. If your dataset already provides separate training and validation splits, pass those directly instead.
+Here, eight rows are used for training and two are held out for evaluation. `seed` makes the split repeatable; it does not set the random seed for model generation. Existing training and validation splits can be used directly.
 
-The current training data loaders preserve dataset order. Use `train_dataset.shuffle(seed=42)` before creating the trainer if you want a shuffled order; this produces a fixed order rather than a new shuffle each epoch.
+The current training data loaders preserve dataset order. Users can shuffle the data with `train_dataset.shuffle(seed=42)` before creating the trainer. This produces a fixed order, without reshuffling each epoch.
 
 ## Prompts and Rewards
 
-Pass one formatter to share a prompt format across agents, or a list of formatters in actor order to assign different roles. Only fields used by the formatter enter the model prompt; the reward function can still read the full row.
+Users can share a prompt format across agents with one formatter, or assign different roles with a list of formatters in actor order. Only fields used by the formatter enter the model prompt; the reward function can still read the full row.
 
 ```python
 import math
@@ -71,7 +71,7 @@ def reward_func(brief_completions, detailed_completions, *, batch_items):
 
 Each completion argument is a list of strings for one agent. The trainers used here call the reward function for one dataset row at a time, with that row available as `batch_items[0]`. This function returns one shared reward per aligned pair of responses. The task rewards a character-count ratio; it does not measure writing quality, and the agents generate independently.
 
-You can check the data and reward without loading any models:
+Users can check the data and reward function without loading models:
 
 ```python
 item = train_dataset[0]
@@ -80,11 +80,11 @@ assert reward_func(["Hi"], ["Hello"], batch_items=[item]) == [1.0]
 assert reward_func([""], ["Hello"], batch_items=[item]) == [0.0]
 ```
 
-For multi-turn tasks, formatters may also accept `external_prompts`. See [Multi-Turn Interaction]({{< relref "docs/multi-turn/transition" >}}) for the transition interface.
+For multi-turn tasks, formatters may also accept `external_prompts`. The transition interface is described in [Multi-Turn Interaction]({{< relref "docs/multi-turn/transition" >}}).
 
 ## Training and Evaluation
 
-Supply `train_dataset` and `eval_dataset` separately. Evaluation uses the same formatters and reward function as training, without updating model weights. It still samples model outputs using the generation settings, so repeated evaluations can produce different scores.
+Users can provide training and evaluation data separately through `train_dataset` and `eval_dataset`. Evaluation uses the training formatters and reward function without updating model weights. Outputs are sampled with the configured generation settings, so repeated evaluations can produce different scores.
 
 ```python
 from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
@@ -116,7 +116,7 @@ metrics = trainer.evaluate(num_eval_samples=len(eval_dataset))
 print(metrics)
 ```
 
-For the MAREINFORCE family, IAC, and MAAC, `eval_interval` counts training dataset items: evaluation runs before item zero of each epoch, then at every configured interval. Set it to `0` for manual evaluation only. `eval_num_samples` limits the number of dataset rows evaluated, starting from the beginning of the evaluation split. Use a positive count; to evaluate the entire split, use its length. `eval_batch_size` controls the evaluation data loader batch size, not the number of generated responses per agent.
+For the MAREINFORCE family, IAC, and MAAC, `eval_interval` counts training dataset items. Evaluation runs before item zero of each epoch, then at the configured interval; `0` enables manual evaluation only. `eval_num_samples` specifies a positive limit on evaluated rows, starting at the beginning of the evaluation split. Setting it to the split length evaluates all rows. `eval_batch_size` controls the evaluation data loader batch size, not the number of responses generated per agent.
 
 MAGRPO, IAC, and MAAC generate one response per agent per turn during evaluation. IAC and MAAC use their rollout collection path, with the configured turn structure, but their `evaluate()` method takes no sample-count argument:
 
@@ -129,4 +129,4 @@ metrics = ac_trainer.evaluate()
 Without an `eval_dataset`, `evaluate()` returns an empty dictionary. For MAPL, manual `evaluate(num_eval_samples=...)` is also available; the automatic evaluation schedule follows the preference-update or actor-training stage rather than the dataset-item schedule above.
 
 
-See [Logging Metric]({{< relref "docs/user-guide/logging" >}}) for saving evaluation results, recording training curves, and adding custom metrics.
+[Logging Metric]({{< relref "docs/user-guide/logging" >}}) covers saving evaluation results, recording training curves, and adding custom metrics.

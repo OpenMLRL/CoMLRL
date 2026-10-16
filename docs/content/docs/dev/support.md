@@ -7,18 +7,18 @@ aliases:
 
 # Support
 
-We are willing to help you with any issues you encounter while using CoMLRL.
+We are happy to help with issues encountered while using CoMLRL.
 
 ## Report Issues
 
-If you are stuck with a problem using CoMLRL, please follow this procedure:
+The following steps can help users resolve or report an issue:
 
 {{% steps %}}
 
-1. Read the documentation first, including using the search feature (Ctrl + K).
+1. Users can first consult the documentation, including the search feature (Ctrl + K).
 
-2. Search the [GitHub Issues](https://github.com/OpenMLRL/CoMLRL/issues) archives to see if someone else already had the same problem.
+2. A search of existing [GitHub Issues](https://github.com/OpenMLRL/CoMLRL/issues) may reveal reports of the same problem.
 
-3. Before writing, try to create a minimal example that reproduces the problem. You'll get the fastest response if you can send just a handful of lines of code that show what isn't working.
+3. A minimal reproducible example helps diagnose the issue. A few lines of code that demonstrate the problem can lead to a faster response.
 
 {{% /steps %}}

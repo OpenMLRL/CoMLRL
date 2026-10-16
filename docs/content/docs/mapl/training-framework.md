@@ -8,7 +8,7 @@ aliases:
   - /docs/mapl/replay-buffer/
 ---
 
-MARLHF and MADPO share one training framework. Actors generate joint responses, the task reward ranks them into preference pairs, and the iterative trainers repeat this against a comparator, with a replay buffer selecting the pairs for each update. This page covers the actor layouts, the iterative loop, the comparator, and replay; [MARLHF]({{< relref "/docs/mapl/marlhf" >}}) and [MADPO]({{< relref "/docs/mapl/madpo" >}}) describe the two learning objectives.
+MARLHF and MADPO share a training framework. Actors generate joint responses, and the task reward ranks them to form preference pairs. The iterative trainers repeat this process against a comparator, while a replay buffer selects the pairs for each update. [MARLHF]({{< relref "/docs/mapl/marlhf" >}}) and [MADPO]({{< relref "/docs/mapl/madpo" >}}) describe the two learning objectives.
 
 ## Collaboration Modes
 
@@ -17,31 +17,31 @@ MARLHF and MADPO share one training framework. Actors generate joint responses, 
 | Actor layout | Comparator layout | Joint responses |
 | --- | --- | --- |
 | Decentralized | Decentralized | Each role generates its own response on both sides of the comparison. |
-| Decentralized | Centralized | Separate actors are compared with one comparator that writes all roles' responses. |
-| Centralized | Centralized | One actor and one comparator each write a complete joint response. |
+| Decentralized | Centralized | Separate actors are compared with one comparator that generates all roles' responses. |
+| Centralized | Centralized | One actor and one comparator each generate a complete joint response. |
 
 The diagram compares the three supported layouts, with the actor on the left and the comparator {{< katex >}}\varpi{{< /katex >}} on the right.
 
 {{< rollout-diagram diagram="mapl-layouts" title="Actor and comparator layouts" description="One policy per role on both sides; one policy per role against a comparator whose joint response is split into roles; or one policy on each side writing the whole joint response." >}}
 
-In **decentralized** mode, each agent has its own policy and response; MADPO combines their preference margins, and MARLHF learns one reward from the joint responses. In **centralized** mode, one actor receives every role's prompt and writes the complete joint response.
+In **decentralized** mode, each agent has its own policy and response; MADPO combines their preference margins, and MARLHF learns one reward from the joint responses. In **centralized** mode, one actor receives every role's prompt and generates the complete joint response.
 
 {{% hint warning %}}
-All four preference trainers currently require `num_turns=1` and `joint_mode="aligned"`. Centralized actor training forces a centralized comparator in the iterative trainers; a centralized actor with a decentralized comparator is not supported.
+All four preference trainers currently require `num_turns=1` and `joint_mode="aligned"`. Centralized actor training automatically uses a centralized comparator in the iterative trainers; a centralized actor with a decentralized comparator is not supported.
 {{% /hint %}}
 
 ## Centralized Preference Collaboration
 
 `MADPOConfig`, `MARLHFConfig`, and their iterative variants accept `collaboration_mode="centralized"` (default `"decentralized"`). One actor and one optimizer then train on the complete joint response, including the role delimiters, so later roles are conditioned on earlier ones.
 
-The default `TaggedCentralizedComparatorAdapter` writes indexed `<agent_0>...</agent_0>` sections. A downstream `centralized_comparator_adapter` can redefine the joint prompt (`build_prompt`) and the role parser (`parse_completion`); the same adapter serves the actor and the comparator. Parsing happens only for the task reward and evaluation; replay, learned-reward scoring, and training keep the joint text.
+The default `TaggedCentralizedComparatorAdapter` writes indexed `<agent_0>...</agent_0>` sections. A custom `centralized_comparator_adapter` can redefine the joint prompt (`build_prompt`) and the role parser (`parse_completion`); the same adapter serves the actor and the comparator. Parsing happens only for the task reward and evaluation; replay, learned-reward scoring, and training retain the joint text.
 
-- Keep `num_agents` equal to the number of task roles, but supply one actor: `agent_model` once, or one entry in `agents` with its tokenizer.
-- `agent_devices` and, with reference KL, `reference_devices` describe one actor; the reward model and an external comparator keep their own device settings.
-- `max_new_tokens` is the **total joint-response** budget, so roughly double a per-role limit. For MARLHF, `reward_max_length` must also cover the joint prompt and every role's output.
-- MADPO stays reference-free; MARLHF's online RL stage applies the configured KL penalty.
-- The iterative trainers require `comparator_centralized_agent_index=0`; every comparator source keeps its meaning.
-- One joint completion counts as one environment step, and a preference pair uses `environment_steps_per_pair` (default 2). Checkpoints contain one actor (`agent_0`).
+- `num_agents` must equal the number of task roles. Centralized training requires one actor, specified through `agent_model` once or one entry in `agents` with its tokenizer.
+- `agent_devices` and, with reference KL, `reference_devices` describe one actor; the reward model and an external comparator retain their own device settings.
+- `max_new_tokens` is the **total joint-response** budget. For two roles, this is roughly twice a per-role limit. For MARLHF, `reward_max_length` must also cover the joint prompt and every role's output.
+- MADPO remains reference-free; MARLHF's online RL stage applies the configured KL penalty.
+- The iterative trainers require `comparator_centralized_agent_index=0`; all comparator sources retain their defined behavior.
+- One joint completion counts as one environment step, and a preference pair uses `environment_steps_per_pair` (default 2). Actor checkpoints contain one actor (`agent_0`).
 
 W&B records `collaboration_mode`, `num_roles`, `num_actor_models`, and the effective comparator generation mode.
 
@@ -56,15 +56,15 @@ The diagram unrolls one iteration {{< katex >}}\nu{{< /katex >}}, from sampling 
 - **MADPOIter** runs MADPO updates on the selected pairs for `num_train_epochs` per iteration.
 - **MARLHFIter** fits a newly initialized reward model on the selected pairs, then runs the selected online RL algorithm.
 
-An iteration is a refresh-and-training round, not a dialog turn. Import the iterative configurations and trainers from `comlrl.trainers.preference`.
+An iteration is a refresh-and-training round, not a dialog turn. Users can import the iterative configurations and trainers from `comlrl.trainers.preference`.
 
 {{% hint info %}}
 **MADPOIterConfig** parameters:
 
 - Inherits `MADPOConfig`; `num_train_epochs` applies to each iteration
 - `num_iterations`: Number of refresh-and-training rounds
-- `pair_selection`: Adds `"comparator_reward"` (the iterative default), which prefers higher comparator rewards, then larger reward gaps; `"all"` keeps every non-tied comparison and requires `preference_pairs_per_sample=None`
-- Comparator and replay settings: see [Comparator](#comparator) and [Replay Buffer](#replay-buffer)
+- `pair_selection`: Adds `"comparator_reward"` (the iterative default), which prefers higher comparator rewards, then larger reward gaps; `"all"` retains every non-tied comparison and requires `preference_pairs_per_sample=None`
+- Comparator and replay settings: described in [Comparator](#comparator) and [Replay Buffer](#replay-buffer)
 {{% /hint %}}
 
 {{% hint info %}}
@@ -77,9 +77,9 @@ An iteration is a refresh-and-training round, not a dialog turn. Import the iter
 
 ## Comparator
 
-The comparator supplies the other side of each comparison. `comparator_policy` chooses its source, and [`comparator_generation_mode`](#comparator-generation) chooses whether it writes separate role responses or one joint response.
+The comparator supplies the alternative responses for each comparison. `comparator_policy` chooses its source, and [`comparator_generation_mode`](#comparator-generation) chooses whether it generates separate role responses or one joint response.
 
-Each iteration, the current actors and the comparator answer the same task, and every same-index comparison with a clear task-reward winner becomes a preference pair.
+In each iteration, the current actors and the comparator respond to the same task, and every same-index comparison with a clear task-reward winner becomes a preference pair.
 
 {{< rollout-diagram diagram="comparator-pairs" title="Comparator pairs" description="The current actors and the comparator sample for the same task; the task reward decides each same-index comparison in either direction, and the decided comparisons form the iteration's preference pairs." >}}
 
@@ -91,7 +91,7 @@ Each iteration, the current actors and the comparator answer the same task, and 
 | `history` | A saved actor checkpoint from `comparator_history_k` iterations back; the initial policy until one exists. |
 | `api` | A remote model endpoint. |
 
-The `history` source saves policy checkpoints automatically. The two sides may sample different numbers of candidates, but only indices present on both sides are compared. `pair_selection="comparator_reward"` ranks comparisons by comparator reward and then gap; it does not assume the comparator wins.
+The `history` source saves policy checkpoints automatically. The two sides may sample different numbers of candidates, but only indices present on both sides are compared. `pair_selection="comparator_reward"` ranks comparisons by comparator reward and then reward gap; it does not assume the comparator wins.
 
 {{% hint info %}}
 **Comparator** parameters:
@@ -106,19 +106,19 @@ The `history` source saves policy checkpoints automatically. The two sides may s
 
 ### Comparator Generation
 
-With decentralized actors, a decentralized comparator (the default) writes one response per role, while a centralized comparator receives the adapter's joint prompt and writes all roles together. Its joint text is then parsed into role responses before pairs are built. With a centralized actor, the comparator's joint text is kept throughout preference learning.
+With decentralized actors, a decentralized comparator (the default) generates one response per role, while a centralized comparator receives the adapter's joint prompt and generates all roles' responses together. Its joint text is then parsed into role responses before pairs are built. With a centralized actor, the comparator's joint text is retained throughout preference learning.
 
 {{% hint info %}}
 **Comparator generation** parameters:
 
 - `comparator_generation_mode`: `"decentralized"` or `"centralized"`
-- `comparator_centralized_agent_index`: Role whose actor or checkpoint writes a centralized comparator's joint response (current, current-copy, or history sources); defaults to 0, and centralized actor training requires 0
+- `comparator_centralized_agent_index`: Role whose actor or checkpoint generates a centralized comparator's joint response (current, current-copy, or history sources); defaults to 0, and centralized actor training requires 0
 - `centralized_comparator_adapter`: Trainer argument with the shared joint prompt builder and role parser
 {{% /hint %}}
 
 ### Local Models
 
-`comparator_model_name` gives one shared model source, and `comparator_agents` lists explicit sources. A decentralized comparator uses one model per role; a centralized comparator uses one model, chosen by `comparator_centralized_agent_index` when `comparator_agents` lists one source per role. Sources can be model repositories or local checkpoints; see [Model Loading]({{< relref "/docs/user-guide/model-loading" >}}).
+Users can specify a shared model source through `comparator_model_name`, or a list of sources through `comparator_agents`. A decentralized comparator uses one model per role; a centralized comparator uses one model, chosen by `comparator_centralized_agent_index` when `comparator_agents` lists one source per role. Sources can be model repositories or local checkpoints, as described in [Model Loading]({{< relref "/docs/user-guide/model-loading" >}}).
 
 ```text
 comparator_policy=model
@@ -132,12 +132,12 @@ comparator_devices=cuda:1
 
 With `comparator_policy=api`, the comparator queries a remote model. `comparator_api_format` selects the request format:
 
-- `generic` (default): The request carries the prompt, actor index, task item, candidate count, and generation settings; completions are read from `comparator_api_response_field`.
+- `generic` (default): The request includes the prompt, actor index, task item, candidate count, and generation settings; completions are read from `comparator_api_response_field`.
 - `openai`: Chat Completions, also used by compatible endpoints such as DeepSeek's.
 - `anthropic`: Anthropic Messages API (`https://api.anthropic.com/v1/messages`, `ANTHROPIC_API_KEY`).
 - `openai_responses` (alias `responses` or `codex`): OpenAI Responses API (`https://api.openai.com/v1/responses`, `OPENAI_API_KEY`).
 
-The Anthropic and Responses formats have no `n` parameter, so they send one request per candidate. Prompts are the usual centralized or decentralized comparator prompts.
+The Anthropic and Responses formats have no `n` parameter, so they send one request per candidate. Requests use the standard centralized or decentralized comparator prompts.
 
 ```text
 comparator_policy=api
@@ -164,7 +164,7 @@ comparator_api_key_env=ANTHROPIC_API_KEY
 
 ## Replay Buffer
 
-The replay buffer decides which stored pairs train each round. The current round is written first, so it is eligible alongside earlier rounds.
+The replay buffer selects which stored pairs are used for training in each round. The current round's dataset is saved first, so it is eligible alongside earlier rounds.
 
 | Mode | Eligible preference data |
 | --- | --- |
@@ -192,7 +192,7 @@ w_a = \frac{\lambda^a}{\sum_{j=0}^{K-1}\lambda^j},
 
 ### Sampling
 
-Historical modes assign each of the `preference_replay_sample_size` draws to a dataset by weight, then sample pairs within each dataset, without repetition while the assigned count fits (larger counts cycle through shuffled copies). The combined sample is shuffled. The default sample size is the current round's pair count, or the latest non-empty dataset's size if the current round is empty.
+Historical modes assign each of the `preference_replay_sample_size` draws to a dataset by weight, then sample pairs within each dataset. Sampling proceeds without repetition when the assigned count does not exceed the dataset size; larger counts cycle through shuffled copies. The combined sample is shuffled. The default sample size is the current round's pair count, or the latest non-empty dataset's size if the current round is empty.
 
 {{% hint info %}}
 **Replay Buffer** parameters:
@@ -204,7 +204,7 @@ Historical modes assign each of the `preference_replay_sample_size` draws to a d
 - `preference_replay_dir`: Optional location of the saved round datasets
 {{% /hint %}}
 
-`current` rejects `preference_replay_sample_size` and `preference_replay_lambda`, and accepts `preference_replay_k` only as `None` or 1. Use `preference_replay_k` only with `nearest_k`, and `preference_replay_lambda` only with `lambda_decay`.
+`current` rejects `preference_replay_sample_size` and `preference_replay_lambda`, and accepts `preference_replay_k` only as `None` or 1. The mode-specific options are `preference_replay_k` for `nearest_k` and `preference_replay_lambda` for `lambda_decay`.
 
 ```python
 from comlrl.trainers.preference import MADPOIterConfig
@@ -217,8 +217,8 @@ args = MADPOIterConfig(
 )
 ```
 
-`MARLHFIterConfig` accepts the same options; for the latest rounds only, use `preference_replay_mode="nearest_k"` with `preference_replay_k`.
+`MARLHFIterConfig` accepts the same options. To replay only the latest rounds, users can set `preference_replay_mode="nearest_k"` and specify the number of rounds through `preference_replay_k`.
 
 ### Saved Preference Data
 
-Each round is written to `iteration_0001.json`, `iteration_0002.json`, and so on under `preference_replay_dir`, with the prompts, preferred and rejected completions, rewards, and metadata; historical samples are re-tokenized from this text. The replay index covers only the current trainer run, so pointing `preference_replay_dir` at an earlier run does not import its files. Actor checkpoints for the `history` comparator are stored separately under `policy_checkpoint_dir`.
+Each round is written to `iteration_0001.json`, `iteration_0002.json`, and so on under `preference_replay_dir`, with the prompts, preferred and rejected completions, rewards, and metadata. Historical samples are re-tokenized from this text. Setting `preference_replay_dir` to an earlier run alone does not import its files. [Training checkpoints]({{< relref "/docs/user-guide/model-loading#training-state" >}}) restore the replay index and its data. Actor checkpoints for the `history` comparator are stored separately under `policy_checkpoint_dir`.

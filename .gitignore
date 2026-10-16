@@ -171,3 +171,6 @@ wandb/
 
 # Hugo cache
 .hugo_cache/
+
+# Generated documentation; translation caches are covered by .cache above.
+/docs/public/

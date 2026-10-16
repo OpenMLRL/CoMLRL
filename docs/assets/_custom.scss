@@ -92,24 +92,25 @@ html[data-theme="reading"] .docs-brand {
   display: inline-flex;
   align-items: center;
   gap: .125rem;
-  margin-left: -.5rem;
-  padding: .1875rem;
+  margin-left: -1.75rem;
+  padding: .125rem;
   background: var(--docs-surface-tint);
   border: 1px solid $docs-border;
-  border-radius: .625rem;
+  border-radius: .5rem;
   &[hidden] { display: none; }
 }
 .docs-theme-option {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
+  width: 1.75rem;
+  height: 1.75rem;
   padding: 0;
   color: $docs-muted;
   border: 1px solid transparent;
-  border-radius: .4rem;
+  border-radius: .3125rem;
   background: transparent;
+  svg { width: 1rem; height: 1rem; }
   &:hover { color: $docs-accent; background: var(--docs-surface-hover); }
   &[aria-pressed="true"] {
     color: $docs-accent;
@@ -198,27 +199,20 @@ html[data-theme="reading"] .docs-brand {
 .docs-header-links {
   display: flex;
   align-items: center;
-  gap: 2.5rem;
+  gap: 1.25rem;
   margin-left: auto;
   font-size: .875rem;
   white-space: nowrap;
   a { display: flex; align-items: center; gap: .5rem; color: $docs-muted; }
   a:hover { color: $docs-accent; }
 }
-.docs-github-stars {
-  display: inline-flex;
-  align-items: center;
-  gap: .1875rem;
-  margin-left: 0;
-  font-variant-numeric: tabular-nums;
-  [data-star-count] { min-width: 3ch; }
-}
-.docs-header-links .docs-github-link { gap: .25rem; }
+.docs-header-links svg { flex: 0 0 auto; }
 .docs-area-tabs {
   border-top: 1px solid var(--docs-border);
   height: 3rem;
 }
 .docs-area-tabs-inner {
+  --docs-tabs-font-size: .875rem;
   display: flex;
   align-items: stretch;
   gap: 2.5rem;
@@ -233,7 +227,7 @@ html[data-theme="reading"] .docs-brand {
     padding: .1rem 0 0;
     border-bottom: 2px solid transparent;
     color: $docs-muted;
-    font-size: .875rem;
+    font-size: var(--docs-tabs-font-size);
     font-weight: 500;
   }
   a:hover { color: $docs-accent; }
@@ -416,6 +410,60 @@ main.container {
     .book-tabs-content { padding: 1.25rem; font-size: inherit; }
   }
 }
+// Compact, keyboard-accessible questions with answers revealed on demand.
+.book-layout-qa .book-article.markdown {
+  .docs-qa-item {
+    margin: .625rem 0;
+    padding: 0;
+    border: 1px solid $docs-border;
+    border-radius: .625rem;
+    background: var(--docs-surface);
+    scroll-margin-top: 12.5rem;
+
+    > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin: 0;
+      padding: 1rem 1.125rem;
+      border-radius: inherit;
+      color: $docs-ink;
+      font-size: inherit;
+      font-weight: 600;
+      line-height: 1.6;
+      text-wrap: pretty;
+      cursor: pointer;
+      list-style: none;
+      &::-webkit-details-marker { display: none; }
+      &::before { display: none; }
+      &::after {
+        content: "";
+        flex: 0 0 .4rem;
+        width: .4rem;
+        height: .4rem;
+        margin-right: .125rem;
+        border-right: 1.5px solid currentColor;
+        border-bottom: 1.5px solid currentColor;
+        color: $docs-muted;
+        transform: rotate(45deg);
+      }
+      &:hover { background: var(--docs-surface-soft); }
+      &:focus-visible { outline: 2px solid $docs-accent; outline-offset: 3px; }
+    }
+    &[open] > summary {
+      margin-bottom: 0;
+      color: $docs-accent;
+      &::after { transform: rotate(225deg); color: inherit; }
+    }
+    > .markdown-inner {
+      padding: 0 1.125rem 1.125rem;
+      > :first-child { margin-top: 0; }
+      > :last-child { margin-bottom: 0; }
+    }
+    &:first-child { margin-top: 0; }
+  }
+}
 .copy-code-button {
   position: absolute;
   top: .6rem;
@@ -456,7 +504,7 @@ main.container {
     color: inherit;
     text-decoration: none;
     transition: border-color .15s ease, background-color .15s ease;
-    &:hover, &:focus-visible {
+    &:hover, &:focus-within {
       background: var(--docs-accent-soft);
       border-color: var(--docs-accent-line);
       text-decoration: none;
@@ -479,7 +527,24 @@ main.container {
       letter-spacing: -.025em;
       svg { flex: 0 0 1rem; width: 1rem; height: 1rem; color: $docs-accent; }
     }
-    p { margin: 0; font-size: .9375rem; line-height: 1.7; color: $docs-muted; }
+    .docs-resource-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      flex: 1;
+      gap: .75rem;
+      color: inherit;
+      text-decoration: none;
+      &:hover { color: $docs-accent; }
+      &:focus-visible { outline: 2px solid $docs-accent; outline-offset: .25rem; border-radius: .15rem; }
+    }
+    .docs-resource-description {
+      font-size: .9375rem;
+      line-height: 1.7;
+      color: $docs-muted;
+      p { margin: 0; }
+      a { color: $docs-accent; text-decoration: underline; text-underline-offset: .18em; }
+    }
   }
 }
 .docs-sr-only {
@@ -839,7 +904,7 @@ body.docs-visual-open { overflow: hidden; }
   .docs-header-inner, main.container { gap: 2.5rem; padding-left: 1.5rem; padding-right: 1.5rem; }
   .docs-area-tabs-inner { padding: 0 1.5rem; }
   .docs-header-links { gap: 1rem; }
-  .docs-theme-switcher { margin-left: -.5rem; }
+  .docs-theme-switcher { margin-left: -1.25rem; }
   .docs-header-links > a:first-child { display: none; }
   .book-toc { display: none; }
   .book-header { display: block; }
@@ -849,7 +914,7 @@ body.docs-visual-open { overflow: hidden; }
 }
 @media screen and (max-width: $mobile-breakpoint) {
   .docs-header-inner { padding: 0 1.25rem; gap: 1.25rem; }
-  .docs-area-tabs-inner { padding: 0 7.25rem 0 1.25rem; gap: 1.75rem; }
+  .docs-area-tabs-inner { padding: 0 4.5rem 0 1.25rem; gap: 1.75rem; }
   .docs-brand { flex: 0 0 auto; img, .docs-logo-themed { width: 120px; } }
   .docs-header-search { max-width: none; }
   .docs-header-links {
@@ -858,8 +923,8 @@ body.docs-visual-open { overflow: hidden; }
     top: 4.5rem;
     height: 3rem;
     .docs-github-label { display: none; }
+    .docs-github-link { min-width: 2rem; min-height: 2rem; justify-content: center; }
   }
-  .docs-github-stars { margin-left: 0; font-size: .8125rem; }
   .docs-theme-switcher { margin-left: -.5rem; }
   main.container { display: block; padding: 9rem 1.25rem 0; }
   .book-page { max-width: none; }
@@ -909,7 +974,7 @@ body.docs-visual-open { overflow: hidden; }
   .docs-header-inner { position: relative; height: 7.5rem; padding-top: 1rem; align-items: flex-start; gap: 0; }
   .docs-brand { height: 2.5rem; align-items: center; }
   .docs-theme-switcher { margin-left: auto; }
-  .docs-header-search { position: absolute; top: 4.1rem; left: 1.25rem; right: 7.25rem; }
+  .docs-header-search { position: absolute; top: 4.1rem; left: 1.25rem; right: 4.5rem; }
   .docs-header-links { top: 4.1rem; height: 2.5rem; }
   .docs-area-tabs-inner { padding-right: 1.25rem; gap: clamp(1rem, 5vw, 1.5rem); }
   main.container { padding-top: 12rem; }
@@ -939,14 +1004,20 @@ body.docs-visual-open { overflow: hidden; }
   }
 }
 
-.book-kind-home .book-article > p:first-child[style] {
+.book-kind-home .book-article > .docs-welcome {
   font-family: inherit !important;
   font-size: 1.375rem !important;
   font-weight: 500 !important;
   line-height: 1.4 !important;
   letter-spacing: -.025em !important;
   color: $docs-ink;
+  margin: 0 0 1rem;
 }
 
 @import "syntax";
 @import "diagram-theme";
+@import "feedback-loop";
+
+@import "language";
+
+@import "algorithm-flows";

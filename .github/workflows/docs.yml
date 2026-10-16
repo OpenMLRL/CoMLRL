@@ -43,6 +43,9 @@ jobs:
       - name: Build with Hugo
         run: hugo --gc --minify -s docs -b "${{ steps.pages.outputs.base_url }}"
 
+      - name: Check rendered documentation
+        run: python3 docs/scripts/check_html.py docs/public
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

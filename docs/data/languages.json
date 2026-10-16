@@ -1,0 +1,121 @@
+{
+  "en": {
+    "name": "English",
+    "languageCode": "en-US",
+    "target": "English",
+    "cjk": false,
+    "weight": 1,
+    "instruction": "Write each JSON value in clear, concise English and preserve the field names.",
+    "example": "Users can use ZXQ00000QXZ with ZXQ00001QXZ.",
+    "glossary": {
+      "agent": "agent",
+      "joint response": "joint response",
+      "preference learning": "preference learning",
+      "reward model": "reward model",
+      "homogeneous": "homogeneous",
+      "heterogeneous": "heterogeneous"
+    }
+  },
+  "zh-cn": {
+    "name": "简体中文",
+    "languageCode": "zh-CN",
+    "target": "Simplified Chinese",
+    "cjk": true,
+    "weight": 2,
+    "instruction": "将每个 JSON 字段的英文值翻译成自然、简洁的简体中文，保留字段名。仅返回包含简体中文译文的 JSON 对象。",
+    "example": "用户可以将 ZXQ00000QXZ 与 ZXQ00001QXZ 配合使用。",
+    "glossary": {
+      "agent": "智能体",
+      "joint response": "联合响应",
+      "preference learning": "偏好学习",
+      "reward model": "奖励模型",
+      "homogeneous": "同构",
+      "heterogeneous": "异构"
+    }
+  },
+  "ja": {
+    "name": "日本語",
+    "languageCode": "ja-JP",
+    "target": "Japanese",
+    "cjk": true,
+    "weight": 3,
+    "instruction": "各 JSON フィールドの英語の値を自然で簡潔な日本語に翻訳し、フィールド名はそのまま保持してください。日本語の訳文を含む JSON オブジェクトのみを返してください。",
+    "example": "ユーザーは ZXQ00000QXZ と ZXQ00001QXZ を組み合わせて使用できます。",
+    "glossary": {
+      "agent": "エージェント",
+      "joint response": "共同応答",
+      "preference learning": "選好学習",
+      "reward model": "報酬モデル",
+      "homogeneous": "同種",
+      "heterogeneous": "異種"
+    }
+  },
+  "ko": {
+    "name": "한국어",
+    "languageCode": "ko-KR",
+    "target": "Korean",
+    "cjk": true,
+    "weight": 4,
+    "instruction": "각 JSON 필드의 영어 값을 자연스럽고 간결한 한국어로 번역하고 필드 이름은 그대로 유지하세요. 한국어 번역이 포함된 JSON 객체만 반환하세요.",
+    "example": "사용자는 ZXQ00000QXZ 와 ZXQ00001QXZ 를 함께 사용할 수 있습니다.",
+    "glossary": {
+      "agent": "에이전트",
+      "joint response": "공동 응답",
+      "preference learning": "선호 학습",
+      "reward model": "보상 모델",
+      "homogeneous": "동종",
+      "heterogeneous": "이종"
+    }
+  },
+  "es": {
+    "name": "Español",
+    "languageCode": "es-ES",
+    "target": "Spanish",
+    "cjk": false,
+    "weight": 5,
+    "instruction": "Traduce el valor en inglés de cada campo JSON a un español natural y conciso, sin cambiar los nombres de los campos. Devuelve únicamente un objeto JSON con las traducciones al español.",
+    "example": "Los usuarios pueden utilizar ZXQ00000QXZ junto con ZXQ00001QXZ.",
+    "glossary": {
+      "agent": "agente",
+      "joint response": "respuesta conjunta",
+      "preference learning": "aprendizaje de preferencias",
+      "reward model": "modelo de recompensa",
+      "homogeneous": "homogéneo",
+      "heterogeneous": "heterogéneo"
+    }
+  },
+  "fr": {
+    "name": "Français",
+    "languageCode": "fr-FR",
+    "target": "French",
+    "cjk": false,
+    "weight": 6,
+    "instruction": "Traduisez la valeur anglaise de chaque champ JSON en français naturel et concis, sans modifier les noms des champs. Renvoyez uniquement un object JSON contenant les traductions françaises.",
+    "example": "Les utilisateurs peuvent utiliser ZXQ00000QXZ avec ZXQ00001QXZ.",
+    "glossary": {
+      "agent": "agent",
+      "joint response": "réponse conjointe",
+      "preference learning": "apprentissage des préférences",
+      "reward model": "modèle de récompense",
+      "homogeneous": "homogène",
+      "heterogeneous": "hétérogène"
+    }
+  },
+  "de": {
+    "name": "Deutsch",
+    "languageCode": "de-DE",
+    "target": "German",
+    "cjk": false,
+    "weight": 7,
+    "instruction": "Übersetze den englischen Wert jedes JSON-Feldes in natürliches, prägnantes Deutsch und behalte die Feldnamen bei. Gib ausschließlich ein JSON-Objekt mit den deutschen Übersetzungen zurück.",
+    "example": "Benutzer können ZXQ00000QXZ zusammen mit ZXQ00001QXZ verwenden.",
+    "glossary": {
+      "agent": "Agent",
+      "joint response": "gemeinsame Antwort",
+      "preference learning": "Präferenzlernen",
+      "reward model": "Belohnungsmodell",
+      "homogeneous": "homogen",
+      "heterogeneous": "heterogen"
+    }
+  }
+}

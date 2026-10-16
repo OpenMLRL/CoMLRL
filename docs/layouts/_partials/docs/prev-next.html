@@ -13,11 +13,11 @@
   {{- end -}}
 {{- end -}}
 {{- if or $previous $next }}
-<nav class="docs-page-navigation flex flex-wrap justify-between" aria-label="Adjacent pages">
+<nav class="docs-page-navigation flex flex-wrap justify-between" aria-label="{{ i18n "docsAdjacentPages" }}">
   <span>
     {{ with $previous }}
       <a href="{{ .RelPermalink }}" class="flex align-center" rel="prev">
-        <img src="{{ partial "docs/icon" "backward" }}" class="book-icon" alt="Previous page" />
+        <img src="{{ partial "docs/icon" "backward" }}" class="book-icon" alt="{{ i18n "docsPreviousPage" }}" />
         <span>{{ partial "docs/title" . }}</span>
       </a>
     {{ end }}
@@ -26,7 +26,7 @@
     {{ with $next }}
       <a href="{{ .RelPermalink }}" class="flex align-center" rel="next">
         <span>{{ partial "docs/title" . }}</span>
-        <img src="{{ partial "docs/icon" "forward" }}" class="book-icon" alt="Next page" />
+        <img src="{{ partial "docs/icon" "forward" }}" class="book-icon" alt="{{ i18n "docsNextPage" }}" />
       </a>
     {{ end }}
   </span>

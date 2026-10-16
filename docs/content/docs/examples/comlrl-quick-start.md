@@ -5,13 +5,13 @@ weight: 1
 
 This tutorial demonstrates a simple two-agent training task with a length-ratio reward. Both agents receive the same prompt and generate independently; the second agent does not see the first agent's response. The reward encourages the second output to contain 2–3× as many characters as the first. It does not evaluate story quality or semantic collaboration.
 
-Run the example directly from an installed source checkout:
+Users can run the example from an installed source checkout:
 
 ```bash
 python examples/story-len-ratio.py
 ```
 
-Memory requirements depend on the model, number of agents, batch size, and response length. W&B logging is disabled by default. To enable it, add `--wandb` (and optionally `--wandb-project` or `--wandb-entity`) to the command above.
+Memory requirements depend on the model, number of agents, batch size, and response length. W&B logging is disabled by default. The `--wandb` flag enables it; `--wandb-project` and `--wandb-entity` are optional.
 
 ## Import Libraries
 
@@ -26,7 +26,7 @@ from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
 
 ## Dataset Preparation
 
-We first create a dataset of creative prompts for the agents to work on.
+The dataset contains creative prompts for both agents.
 
 ```python
 train_data = {
@@ -48,7 +48,7 @@ train_dataset = Dataset.from_dict(train_data)
 
 ## Agent Initialization
 
-We load a tokenizer to convert text into tokens that the model can process, and then initialize two separate model instances.
+The tokenizer converts text into model tokens. Each agent uses a separate model instance.
 
 ```python
 model_name = "Qwen/Qwen2.5-0.5B"
@@ -58,7 +58,7 @@ agents = [AutoModelForCausalLM.from_pretrained(model_name) for _ in range(2)]
 
 ## Define the Reward Function
 
-The reward function measures how well the agents collaborate. It gives the maximum reward (1.0) when the second agent's output is 2–3× longer than the first agent's. If the length ratio falls outside this range, the reward decays exponentially based on how far it deviates.
+The reward function evaluates the ratio of the agents' output lengths. It returns the maximum reward (1.0) when the second output contains 2–3× as many characters as the first. Outside this range, the reward decays exponentially with the distance from the nearest boundary.
 
 ```python
 def proper_length_ratio_reward(
@@ -91,7 +91,7 @@ def proper_length_ratio_reward(
 
 ## Configure Training
 
-We set up the training configuration with hyperparameters like learning rate, batch size, and the number of generations each agent produces per prompt.
+Users can configure training through `MAGRPOConfig`, including the learning rate, batch size, and number of generations per agent per prompt.
 
 ```python
 output_dir = "./magrpo_multi_reward_output"
@@ -107,7 +107,7 @@ config = MAGRPOConfig(
 
 ## Create the Trainer
 
-We instantiate the MAGRPO trainer with our agents, reward function, and configuration. `RewardProcessors.scale` multiplies task rewards by 100. With the default `advantage_normalization=True`, this positive scaling is largely canceled by normalization and should not be interpreted as a 100× stronger policy gradient.
+The following example initializes `MAGRPOTrainer` with the agents, reward function, and configuration defined above. `RewardProcessors.scale` multiplies task rewards by 100. With the default `advantage_normalization=True`, normalization largely cancels this positive scaling, so it does not imply a 100× stronger policy gradient.
 
 ```python
 configured_reward_func = partial(
@@ -126,7 +126,7 @@ trainer = MAGRPOTrainer(
 
 ## Run Training
 
-Finally, we start the training process. The trainer will optimize both agents to maximize the collaborative reward, then save the trained models.
+The following code trains both agents to maximize the shared reward and saves the trained models.
 
 ```python
 trainer.train()

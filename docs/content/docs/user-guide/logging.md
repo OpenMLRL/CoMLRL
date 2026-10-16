@@ -4,11 +4,11 @@ linkTitle: Logging Metric
 weight: 4
 ---
 
-Save evaluation results locally, record training curves in Weights & Biases, and add task-specific metrics. The examples below build on the trainer and held-out split in [Dataset Loading]({{< relref "docs/user-guide/datasets" >}}).
+CoMLRL supports local evaluation records, training curves in Weights & Biases, and task-specific metrics. The examples use the trainer and held-out split from [Dataset Loading]({{< relref "docs/user-guide/datasets" >}}).
 
 ## Local Metrics
 
-Evaluation returns a metrics dictionary even when W&B is disabled. Save it locally if you only need a record of a completed evaluation:
+Evaluation returns a metrics dictionary even when W&B is disabled. Users can save this dictionary locally to record a completed evaluation:
 
 ```python
 import json
@@ -21,7 +21,7 @@ Path("eval-metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
 
 ## Weights & Biases
 
-To record training curves in Weights & Biases, pass `wandb_config` when constructing the trainer:
+Users can record training curves in Weights & Biases by supplying `wandb_config` when creating the trainer:
 
 ```python
 wandb_config = {
@@ -38,11 +38,11 @@ wandb_config = {
 # wandb_config=wandb_config,
 ```
 
-Authenticate W&B in your environment before enabling it. Omit `wandb_config` or set it to `None` to disable W&B. The supported run settings include `project`, `entity`, `name` (or `run_name`), `tags`, and `dir`; `config_sections` adds your dataset and experiment settings to the recorded configuration. `config_sections.output.verbose` controls trainer progress output.
+Users can authenticate W&B in their environment before enabling logging. Omitting `wandb_config` or setting it to `None` disables W&B. Supported run settings include `project`, `entity`, `name` (or `run_name`), `tags`, and `dir`. The `config_sections` field adds dataset and experiment settings to the recorded configuration; `config_sections.output.verbose` controls trainer progress output.
 
 ## Training Metrics
 
-For the MARL trainers, logs use `env_step`, which counts joint-action reward evaluations. It is different from a dataset index or optimizer-update count, especially with multiple generations or turns. `logging_steps` sets the minimum gap in this counter between standard training metric logs, emitted when rollout buffers are processed. Evaluation follows `eval_interval` independently.
+MARL trainers log against `env_step`, the count of joint-action reward evaluations. This differs from the dataset index or optimizer-update count, especially with multiple generations or turns. Standard training metrics are logged when rollout buffers are processed, with `logging_steps` specifying the minimum `env_step` gap between logs. Evaluation follows `eval_interval` independently.
 
 | Metric | Meaning |
 | --- | --- |
@@ -55,9 +55,9 @@ Turn numbers start at 1. MAGRPO evaluation returns are undiscounted sums of rewa
 
 ## Custom Metrics
 
-MAGRPO accepts an `eval_logger` and an `eval_aggregator` together. The logger receives completions in `[agent][dataset item][turn]` order plus the original `batch_items` and raw `prompts`. The aggregator returns scalar metrics without the `eval/` prefix; the trainer adds it.
+Users can add custom evaluation metrics to MAGRPO by supplying an `eval_logger` and an `eval_aggregator` together. The logger receives completions in `[agent][dataset item][turn]` order plus the original `batch_items` and raw `prompts`. The aggregator returns scalar metrics without the `eval/` prefix; the trainer adds it.
 
-For example, measure the average response length across agents at each turn:
+The following example measures the average response length across agents at each turn:
 
 ```python
 def eval_logger(*, agent_completions_turns, batch_items, prompts):
@@ -83,7 +83,7 @@ def eval_aggregator(rows, *, num_turns):
 # eval_aggregator=eval_aggregator,
 ```
 
-The resulting dictionary includes `eval/turn_1/response_chars`. These callbacks also receive metadata fields, so you can compute task-specific accuracy or group metrics without placing reference answers in the prompts.
+The resulting dictionary includes `eval/turn_1/response_chars`. These callbacks also receive metadata fields, allowing task-specific accuracy or group metrics to be computed without reference answers in the prompts.
 
 IAC and MAAC instead accept `metrics_callback(rollouts)`, which returns a dictionary of numeric values. Each rollout sample provides fields such as `agent_idx`, `prompt`, `completion`, and `metadata`:
 

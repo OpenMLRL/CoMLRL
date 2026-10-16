@@ -10,7 +10,7 @@ Multi-Agent Preference Learning (MAPL) improves collaborating agents by comparin
 
 CoMLRL provides two approaches: **MADPO** directly optimizes the policies from preference pairs, while **MARLHF** first learns a joint reward model and then trains the policies with that reward. Their iterative variants refresh the preference data as training progresses. MAPL names this family of methods; the public trainer classes are `MADPOTrainer`, `MARLHFTrainer`, `MADPOIterTrainer`, and `MARLHFIterTrainer`.
 
-Start with the shared training framework, then the two learning approaches:
+The following pages cover the shared training framework and the two learning approaches:
 
 - [Training Framework]({{< relref "/docs/mapl/training-framework" >}}): Actor and comparator layouts, iterative training, comparator sources, and replay.
 - [MARLHF]({{< relref "/docs/mapl/marlhf" >}}): Two-stage learning with a joint reward model followed by policy optimization.
@@ -28,7 +28,7 @@ All four preference trainers currently require `num_turns=1` and aligned joint r
 
 ## MARLHF
 
-Multi-Agent Reinforcement Learning from Human Feedback uses two stages: first fit a joint reward model to preferred and rejected team responses, then optimize the policies with that learned reward. See [MARLHF]({{< relref "/docs/mapl/marlhf" >}}) for the reward objective and policy-training workflow.
+Multi-Agent Reinforcement Learning from Human Feedback first fits a joint reward model to preferred and rejected team responses, then optimizes the policies with the learned reward. The [MARLHF]({{< relref "/docs/mapl/marlhf" >}}) page describes the reward objective and policy-training workflow.
 
 <span id="api-marlhfconfig"></span>
 <span id="api-marlhftrainer"></span>
@@ -37,7 +37,7 @@ The [MARLHFConfig parameters]({{< relref "/docs/mapl/marlhf#api-marlhfconfig" >}
 
 ## MADPO
 
-Multi-Agent Direct Preference Optimization updates the policies directly from preferred and rejected joint responses. See [MADPO]({{< relref "/docs/mapl/madpo" >}}) for its joint preference loss and training workflow.
+Multi-Agent Direct Preference Optimization updates the policies directly from preferred and rejected joint responses. The [MADPO]({{< relref "/docs/mapl/madpo" >}}) page describes its joint preference loss and training workflow.
 
 <span id="api-madpoconfig"></span>
 <span id="api-madpotrainer"></span>
@@ -49,8 +49,8 @@ The [MADPOConfig parameters]({{< relref "/docs/mapl/madpo#api-madpoconfig" >}}) 
 <span id="api-madpoiterconfig"></span>
 <span id="api-marlhfiterconfig"></span>
 
-`MADPOIterTrainer` and `MARLHFIterTrainer` alternate preference collection with optimization. See [Training Framework]({{< relref "/docs/mapl/training-framework#iterative-training" >}}) for the training cycle, the [comparator]({{< relref "/docs/mapl/training-framework#comparator" >}}), and the [replay buffer]({{< relref "/docs/mapl/training-framework#replay-buffer" >}}).
+`MADPOIterTrainer` and `MARLHFIterTrainer` alternate preference collection with optimization. [Training Framework]({{< relref "/docs/mapl/training-framework#iterative-training" >}}) describes the training cycle, the [comparator]({{< relref "/docs/mapl/training-framework#comparator" >}}), and the [replay buffer]({{< relref "/docs/mapl/training-framework#replay-buffer" >}}).
 
 ## Collaboration Modes
 
-Preference training supports separate policies per role or one actor generating the complete joint response. See [Training Framework]({{< relref "/docs/mapl/training-framework#collaboration-modes" >}}) for the supported actor/comparator layouts and centralized adapters.
+Preference training supports separate policies per role or one actor generating the complete joint response. [Training Framework]({{< relref "/docs/mapl/training-framework#collaboration-modes" >}}) describes the supported actor/comparator layouts and centralized adapters.

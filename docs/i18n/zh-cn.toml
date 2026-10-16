@@ -1,0 +1,73 @@
+[docsHome]
+other = "CoMLRL 文档首页"
+[docsProjectLinks]
+other = "项目链接"
+[docsGitHubStars]
+other = "{{ .Count }} 个 GitHub 星标"
+[docsGitHubStarsUpdated]
+other = "{{ .Count }} 个星标 · 更新于 {{ .Updated }}"
+[docsColorTheme]
+other = "配色主题"
+[docsLightMode]
+other = "明亮模式"
+[docsDarkMode]
+other = "暗夜模式"
+[docsReadingMode]
+other = "护眼模式"
+[docsAreas]
+other = "文档栏目"
+[docsDocumentation]
+other = "文档"
+[docsExamples]
+other = "示例"
+[docsEnvironments]
+other = "环境"
+[docsOverview]
+other = "概览"
+[docsExampleOverview]
+other = "示例概览"
+[docsResearchOverview]
+other = "研究概览"
+[docsResearch]
+other = "研究"
+[docsPapers]
+other = "论文"
+[docsExamplePages]
+other = "示例页面"
+[docsResearchPages]
+other = "研究页面"
+[docsDocumentationPages]
+other = "文档页面"
+[docsMenu]
+other = "菜单"
+[docsOnThisPage]
+other = "本页内容"
+[docsPageSections]
+other = "页面章节"
+[docsLanguage]
+other = "语言"
+[docsAutomaticTranslation]
+other = "自动翻译"
+[docsEnglishOriginal]
+other = "英文原文"
+[docsSkipToContent]
+other = "跳至正文"
+[docsDocumentationNavigation]
+other = "文档导航"
+[Search]
+other = "搜索"
+["Edit this page"]
+other = "编辑本页"
+["Last modified by"]
+other = "最后修改者"
+[docsAdjacentPages]
+other = "相邻页面"
+[docsPreviousPage]
+other = "上一页"
+[docsNextPage]
+other = "下一页"
+
+[docsExternalFeedback]
+other = "外部反馈"
+[docsParameters]
+other = "参数"

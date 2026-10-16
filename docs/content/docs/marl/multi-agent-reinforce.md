@@ -7,7 +7,7 @@ math: true
 ---
 
 REINFORCE is a class of policy-gradient methods that optimize the policy directly using sampled returns.
-It has been widely used to fine-tune LLMs because of its simplicity and efficiency, e.g., [GRPO](https://arxiv.org/pdf/2402.03300), [Dr. GRPO](https://arxiv.org/abs/2503.20783), [RLOO](https://openreview.net/forum?id=r1lgTGL5DE), [ReMax](https://arxiv.org/abs/2310.10505), [TreeRPO](https://arxiv.org/abs/2506.05183), and [REINFORCE++](https://arxiv.org/abs/2501.03262).
+These methods are widely used for LLM fine-tuning because of their simplicity and efficiency. Examples include [GRPO](https://arxiv.org/pdf/2402.03300), [Dr. GRPO](https://arxiv.org/abs/2503.20783), [RLOO](https://openreview.net/forum?id=r1lgTGL5DE), [ReMax](https://arxiv.org/abs/2310.10505), [TreeRPO](https://arxiv.org/abs/2506.05183), and [REINFORCE++](https://arxiv.org/abs/2501.03262).
 REINFORCE can be extended to multi-agent settings, where multiple LLM agents respond at each turn and their joint responses receive a shared reward.
 
 ## MAREINFORCE
@@ -22,7 +22,7 @@ where {{< katex >}}R_t{{< /katex >}} is the return at turn {{< katex >}}t{{< /ka
 The expectation is taken over initial observations from the dataset {{< katex >}}\mathcal{D}{{< /katex >}} and the joint action history of all episodes following policy {{< katex >}}\boldsymbol{\pi}_{\boldsymbol{\theta}}{{< /katex >}}.
 
 REINFORCE methods do not use a critic model for value estimation. Their policy-gradient estimates can have high variance due to stochastic sampling and long-term credit assignment.
-Common ways to reduce this variance include using an action-independent baseline or averaging over more samples, e.g., {{< katex >}}K{{< /katex >}} samples at each joint history {{< katex >}}\mathbf{h}_t{{< /katex >}}.
+Common approaches to reducing this variance include using an action-independent baseline or averaging over more samples, such as {{< katex >}}K{{< /katex >}} samples at each joint history {{< katex >}}\mathbf{h}_t{{< /katex >}}.
 
 {{< katex display=true >}}
 J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t  \sim \boldsymbol{\pi}_{\boldsymbol{\theta}}}
@@ -48,17 +48,17 @@ MAGRPO and the variants below share one trainer loop. At each rollout node, ever
 {{< rollout-diagram diagram="reinforce-training" title="MAREINFORCE training step" description="Each agent samples K responses; index-aligned joint responses share one reward and return, a group baseline gives shared advantages, and each agent updates on its own log-probabilities." >}}
 
 {{% hint warning %}}
-The current `MAGRPOTrainer` loss slice omits the final completion token, so its implemented sequence score differs from the full sequence log-probability in the surrogate above. Use the canonical `joint_mode="cross"`: the accepted `"crossed"` alias generates Cartesian combinations but does not apply the same per-completion return aggregation.
+The current `MAGRPOTrainer` loss slice omits the final completion token, so its implemented sequence score differs from the full sequence log-probability in the surrogate above. The canonical setting is `joint_mode="cross"`; the accepted `"crossed"` alias generates Cartesian combinations but does not apply the same per-completion return aggregation.
 {{% /hint %}}
 
 {{% hint info %}}
 **MAGRPOConfig** parameters:
 
-- `num_agents`: Configured number of agents; keep this consistent with the trainer setup
+- `num_agents`: Configured number of agents, which should match the trainer setup
 - `num_turns`: Number of turns per episode
 - `num_train_epochs`: Number of training epochs
 - `agent_learning_rate`: Learning rate
-- `logging_steps`: Log every N steps
+- `logging_steps`: Logging interval in steps
 - `num_generations`: Number of generations to sample per prompt for each agent
 - `max_new_tokens`: Maximum number of new tokens to generate
 - `temperature`: Temperature for sampling
@@ -66,18 +66,18 @@ The current `MAGRPOTrainer` loss slice omits the final completion token, so its 
 - `top_k`: Top-k for sampling
 - `discount`: Retained configuration field; the current MAGRPO implementation computes undiscounted returns and does not use this value
 - `joint_mode`: Joint action composition (`aligned` for index-aligned, `cross` for Cartesian product)
-- `early_termination_threshold`: Stop expanding a training branch when its node's mean immediate reward exceeds this threshold (default `-0.2`; `None` disables early termination)
+- `early_termination_threshold`: A training branch stops expanding when its node's mean immediate reward exceeds this threshold (default `-0.2`; `None` disables early termination)
 - `rollout_buffer_size`: Number of node samples to buffer per agent before an update
 - `train_batch_size`: Number of node samples per optimizer step; defaults to `rollout_buffer_size`
-- `advantage_normalization`: Center and scale advantages within each node's generation group (default `True`)
-- `eval_interval`: Run evaluation at batch indices divisible by N, including the first batch of each epoch; `0` disables periodic evaluation
+- `advantage_normalization`: Whether to center and scale advantages within each node's generation group (default `True`)
+- `eval_interval`: Evaluation runs at batch indices divisible by N, including the first batch of each epoch; `0` disables periodic evaluation
 - `eval_num_samples`: Number of samples to evaluate per evaluation run
-- `eval_batch_size`: Eval dataloader batch size
-- `external_prompt_passthrough`: Use external prompts directly in multi-turn
+- `eval_batch_size`: Evaluation DataLoader batch size
+- `external_prompt_passthrough`: Whether to use external prompts directly in multi-turn training
 - `advantage_mode`: Baseline mode (`mean`, `max`, `rloo`, `raw`)
 - `parallel_training`: Agent execution mode (`none` or `mp`)
 - `agent_devices`: Agent device placement; required explicitly for `parallel_training="mp"`
-- `reference_kl_enabled`: Enable a frozen-reference KL penalty (default `False`)
+- `reference_kl_enabled`: Whether to enable a frozen-reference KL penalty (default `False`)
 - `reference_kl_coef`: Weight of the reference penalty (default `0.1`)
 - `reference_devices`: Optional device placement for the reference models
 {{% /hint %}}
@@ -85,19 +85,19 @@ The current `MAGRPOTrainer` loss slice omits the final completion token, so its 
 {{% hint info %}}
 **MAGRPOTrainer** setup:
 
-- `agent_model` or `agents`: Model identifier string for homogeneous agents, or a list of model identifiers or preloaded models; use `agents` for preloaded models
-- `num_agents`: Number of agents created from `agent_model` (default `2`); pass this explicitly even when it is set in `args`. When only `agents` is supplied, its length determines the agent count
+- `agent_model` or `agents`: Model identifier string for homogeneous agents, or a list of model identifiers or preloaded models; preloaded models are supplied through `agents`
+- `num_agents`: Number of agents created from `agent_model` (default `2`), configured independently of `args`. When only `agents` is supplied, its length determines the agent count
 - `tokenizer`: Shared tokenizer or one per agent; optional for model identifiers, required for preloaded models
 - `reward_func`: Callable that returns a list of floats (required)
 - `reward_processor`: Optional processor to apply to rewards (e.g., scaling)
-- `formatters`: Single callable or list of callables for each agent to format prompts
+- `formatters`: Single callable or list of per-agent callables for prompt formatting
 - `args`: Instance of `MAGRPOConfig` (optional)
 - `train_dataset`: Dataset required when calling `train()`
 - `eval_dataset`: Evaluation dataset (optional)
-- `model_config`: Model configuration dict (optional)
+- `model_config`: Model configuration dictionary (optional)
 - `wandb_config`: Configuration for Weights & Biases logging (optional)
 - `external_transition`: Function providing transitions between turns; required when `num_turns > 1` (the default is `2`)
-- `eval_logger`: Optional task-metrics callback, called as `eval_logger(agent_completions_turns=..., batch_items=..., prompts=...)`; returns one metrics dict per evaluated item. Used together with `eval_aggregator`
+- `eval_logger`: Optional task-metrics callback, called as `eval_logger(agent_completions_turns=..., batch_items=..., prompts=...)`; returns one metrics dictionary per evaluated item and is used with `eval_aggregator`
 - `eval_aggregator`: Optional callback, called as `eval_aggregator(metrics, num_turns=...)`; the returned `turn_k/...` metrics are logged under `eval/`. Both evaluation callbacks must be supplied for custom metrics
 {{% /hint %}}
 
@@ -136,5 +136,5 @@ The four trainers differ only in the baseline subtracted from the shared return.
 {{< rollout-diagram diagram="reinforce-baselines" title="Baselines across MAREINFORCE variants" description="Each row subtracts a different baseline from the same shared returns; shaded bars mark the advantages before normalization." >}}
 
 {{% hint warning %}}
-The variant formulas describe advantages **before normalization**. All variants inherit `advantage_normalization=True`, which re-centers even raw returns and max-baseline advantages. Except for the standard-deviation floor and numerical precision, the four modes then yield the same normalized advantages. Set `advantage_normalization=False` to retain the baseline differences shown above, including the raw-return MAREINFORCE estimator.
+The variant formulas describe advantages **before normalization**. All variants inherit `advantage_normalization=True`, which re-centers even raw returns and max-baseline advantages. Except for the standard-deviation floor and numerical precision, the four modes then yield the same normalized advantages. Users can retain the baseline differences shown above, including the raw-return MAREINFORCE estimator, by setting `advantage_normalization=False`.
 {{% /hint %}}

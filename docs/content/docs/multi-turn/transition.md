@@ -4,7 +4,9 @@ weight: 2
 math: true
 ---
 
-External feedback mechanisms control how environment observations are incorporated into prompts for subsequent turns; they are usually implemented in CoMLRL's downstream environments.
+External feedback mechanisms control how environment observations are incorporated into prompts for subsequent turns. These mechanisms are usually implemented in CoMLRL's downstream environments.
+
+{{< rollout-diagram diagram="environment-transition" animation="feedback" title="Feedback Loop" description="Agents combine their contributions into a response. Tool errors and user hints or new information are routed back to the corresponding agent for the next turn." >}}
 
 ## Custom External Feedback
 
@@ -13,21 +15,21 @@ Users can implement custom external feedback by defining a function with the fol
 {{% hint info %}}
 Custom External Feedback Interface:
 
-- `prompt`: Original task prompt/problem description (required)
+- `prompt`: Original task prompt or problem description (required)
 - `agent_completions`: List or tuple of completions from the previous turn, one per agent (required)
 - `num_agents`: Number of agents in the system (required)
-- `prompt_history_per_agent`: List of prompt histories for each agent, where each history is a list of prompts from previous turns (optional)
-- `response_history_per_agent`: List of response histories for each agent, where each history is a list of responses from previous turns (optional)
+- `prompt_history_per_agent`: List containing one list of previous prompts per agent (optional)
+- `response_history_per_agent`: List containing one list of previous responses per agent (optional)
 
 The function must return a list or tuple of prompts for the next turn, one for each agent.
-The trainer only passes the arguments above (no extra kwargs), so any mode-specific parameters should be captured via a closure or `functools.partial`.
+The trainer passes only the arguments above, with no additional keyword arguments. Users can configure mode-specific parameters through a closure or `functools.partial`.
 {{% /hint %}}
 
-By default, returned prompts are inserted as the new `prompt` field and then passed through each agent's formatter.
+By default, each returned prompt becomes the new `prompt` field and is passed through the corresponding agent's formatter.
 If `external_prompt_passthrough=true`, the returned prompts are used directly without reformatting.
-In MAGRPO, the external transition is called per rollout branch with that branch's histories.
+In MAGRPO, the external transition is called for each rollout branch with that branch's histories.
 
-For example:
+The following example constructs prompts for the next turn:
 
 ```python
 from typing import List, Optional
@@ -50,26 +52,18 @@ def custom_external(
 ```
 
 {{% hint warning %}}
-For IAC/MAAC multi-turn training, `num_generations` must be set to 1.
+IAC/MAAC multi-turn training requires `num_generations` to be set to 1.
 {{% /hint %}}
 
-## Example Modes (Expert, Diagnosis, and Self-Improvement)
+## Example Modes {#example-modes-expert-diagnosis-and-self-improvement}
 
 An [environment for code generation](https://github.com/OpenMLRL/LLM_Collab_Code_Generation) includes three example external transition modes:
 
 {{% hint success %}}
 
-- `external.mode=expert_edits`: Uses an external LLM (default: DeepSeek-Coder) to propose code edits. Follow-up prompts include edit suggestions with context from previous turns. It can be configured via `expert_model` for different experts (e.g., Claude, GPT) when API keys are available.
+- `external.mode=expert_edits`: An external LLM (default: DeepSeek-Coder) proposes code edits. Follow-up prompts include edit suggestions and context from previous turns. With the required API keys, users can select a different expert (e.g., Claude, GPT) through `expert_model`.
 
-- `external.mode=level_feedback`: Performs static AST checks and dynamically executes code to provide a diagnosis. By default, the sandbox includes only the first test; use `sandbox_slice` to include all tests (0, None, or 'all') or a specific number of tests (negative values enabled).
+- `external.mode=level_feedback`: Static AST checks and dynamic code execution provide a diagnosis. By default, the sandbox includes only the first test. The `sandbox_slice` parameter selects all tests (0, None, or 'all') or a specific number of tests (negative values are supported).
 
-- `external.mode=plain`: Self-improvement mode that just includes the prompts and responses from previous turns and a revision instruction.
-{{% /hint %}}
-
-<div id="centralized-preference-collaboration"></div>
-<div id="api-comparators"></div>
-
-{{% hint info %}}
-For actor/comparator layouts and centralized preference training, see [Training Framework]({{< relref "/docs/mapl/training-framework#centralized-preference-collaboration" >}}).
-Remote comparator configuration is covered in [API Comparators]({{< relref "/docs/mapl/training-framework#api-comparators" >}}).
+- `external.mode=plain`: This self-improvement mode includes only the prompts and responses from previous turns and a revision instruction.
 {{% /hint %}}

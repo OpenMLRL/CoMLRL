@@ -2,7 +2,7 @@
 title: Overview
 ---
 
-<p style="font-family: 'Futura', 'Futura PT', 'Avenir Next', 'Segoe UI', Arial, sans-serif; font-weight: 700; font-size: 1.7rem; letter-spacing: 0.em; line-height: 1; margin-top: 1.8em 0;">Welcome to CoMLRL's documentation &nbsp;👋</p>
+<h1 class="docs-welcome">Welcome to CoMLRL's documentation</h1>
 
 **Co**operative **M**ulti-**L**LM **R**einforcement **L**earning (**CoMLRL**) is an open-source library for training multiple LLMs to collaborate using Multi-Agent Reinforcement Learning (MARL). It provides implementations of various MARL algorithms for LLM collaboration and supports different environments and benchmarks.
 
@@ -14,34 +14,11 @@ title: Overview
 
 {{< tabs >}}
 
-{{% tab "Q&A" %}}
-
-<em style="font-weight: 600; color: var(--docs-accent); margin-bottom: -0.5rem; display: block;"> "What are the differences between CoMLRL and other multi-LLM training frameworks?"</em>
-
-Many works use role-conditioned, parameter-sharing approaches built on single-agent RL training frameworks to implement multi-agent training. Using truly distinct agents better models settings where highly heterogeneous LLMs possess fundamentally different capabilities, and it aligns better with the concept under study — "multi-agent."
-
-CoMLRL supports separate actors with decentralized execution, including training with a centralized critic. Its centralized collaboration mode instead uses one actor to generate the complete joint response. The available trainers include REINFORCE, Actor-Critic, and Multi-Agent Preference Learning; each method's page describes its implemented objective and constraints.
-
-<em style="font-weight: 600; color: var(--docs-accent); margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support single-agent fine-tuning?"</em>
-
-<strong>Yes!</strong> The simplest way is to set `num_agents=1` in your trainer. However, since we omit fancy optimizations to keep multi-agent training simple, you may not find the single-agent trainers optimal. <a href="https://github.com/hiyouga/LLaMA-Factory">LLaMA-Factory</a>, <a href="https://github.com/huggingface/trl">trl</a>, <a href="https://github.com/OpenRLHF/OpenRLHF">OpenRLHF</a>, and <a href="https://github.com/volcengine/verl">verl</a> are good choices for single-agent fine-tuning.
-
-<em style="font-weight: 600; color: var(--docs-accent); margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support self-play/self-improvement/self-evolution with MARL?"</em>
-
-<strong>Yes!</strong> Although we focus on LLM collaboration formalized as a <a href="https://www.fransoliehoek.net/docs/OliehoekAmato16book.pdf">Dec-POMDP</a>, users can still customize the interactions with the environment to implement pipelines such as self-play (<a href="https://github.com/spiral-rl/spiral">Spiral</a>) and self-improvement (<a href="https://github.com/vsubramaniam851/multiagent-ft/tree/main">MAFT</a>). Users can refer to our <a href="{{< relref "docs/multi-turn/algorithm" >}}">multi-turn training</a> documentation for more details.
-
-<em style="font-weight: 600; color: var(--docs-accent); margin-bottom: -0.5rem; display: block;"> "Does CoMLRL support distributed training?"</em>
-
-CoMLRL supports placing whole actor and critic models on multiple devices with `parallel_training="mp"` in one Python process. It does not provide multi-process data-parallel training or shard an individual model across devices. See [Training Parallelization]({{< relref "docs/user-guide/training-parallelization" >}}) for device configuration.
-
-{{% /tab %}}
-
 {{% tab "LLM Collaboration" %}}
 
 <em style="font-weight: 600; color: var(--docs-accent);"> "What is LLM collaboration?"</em>
 
-LLM collaboration refers to problems where LLM agents cooperatively solve tasks in multi-agent systems. The tasks are specified in language and provided to each agent as a prompt, and the agent generates a response synchronously based on its instructions. The set of all agents' responses jointly forms a solution. Users and systems may validate the solutions to provide additional requirements or suggestions for LLMs. These components form part
-of the environment for LLM collaboration, with states that may be updated based on the agents' outputs. The updates are embedded into prompts for subsequent turns. This process iterates until the task is completed or a turn limit is reached.
+LLM collaboration involves agents working together to solve tasks in multi-agent systems. Each agent receives a task prompt and generates a response synchronously according to its instructions. The agents' responses jointly form a solution. Users and systems may validate the solution and provide additional requirements or suggestions. These interactions form part of the environment, whose state may change based on the agents' outputs. State updates are included in prompts for subsequent turns until the task is complete or a turn limit is reached.
 
 {{% /tab %}}
 
@@ -49,7 +26,7 @@ of the environment for LLM collaboration, with states that may be updated based 
 
 <em style="font-weight: 600; color: var(--docs-accent);"> "Why should we fine-tune multi-LLM systems with MARL?"</em>
 
-Many studies have explored LLM-based multi-agent systems for completing tasks with multiple interacting agents. However, most of these models are pretrained separately and are not specifically optimized for coordination, which may limit their performance. In addition, designing effective prompts remains difficult and unclear. Cooperative MARL methods, which optimize a team of agents toward a shared objective, have been extensively studied for years. They naturally fit LLM collaboration and motivate us to bring advances from the well-established MARL community to LLM-based MAS.
+Many studies use LLM-based multi-agent systems to solve tasks through agent interaction. Most models are pretrained separately without optimization for coordination, which may limit performance. Effective prompt design also remains challenging. Cooperative MARL methods optimize teams of agents toward a shared objective. These established methods provide a natural foundation for training LLM-based multi-agent systems.
 
 {{% /tab %}}
 
@@ -57,7 +34,7 @@ Many studies have explored LLM-based multi-agent systems for completing tasks wi
 
 <em style="font-weight: 600; color: var(--docs-accent);"> "What are the benefits of decentralized reasoning?"</em>
 
-In decentralized execution, agents use their own prompts and policies, so independent generations can run concurrently when the device configuration allows it. This supports role-specific models and modular task decomposition. Latency, memory use, and task quality depend on model sizes, prompt lengths, communication, and hardware; decentralization alone does not guarantee a speedup or preserve all information available to a centralized model.
+During decentralized execution, agents use their own prompts and policies. Independent generations can run concurrently when the device configuration permits, supporting role-specific models and modular task decomposition. Latency, memory use, and task quality depend on model sizes, prompt lengths, communication, and devices. Decentralization alone does not guarantee a speedup or preserve all information available to a centralized model.
 
 {{% /tab %}}
 
@@ -65,7 +42,7 @@ In decentralized execution, agents use their own prompts and policies, so indepe
 
 ## Features
 
-- **Cooperative trainers for LLM collaboration:**
+- **Multi-agent learning methods for LLM collaboration:**
   - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFORCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/marloo.py), and [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/maremax.py).
     - Joint responses from aligned individual responses with `joint_mode='aligned'`.
     - Cartesian-product joint responses with `joint_mode='cross'`.
@@ -78,10 +55,10 @@ In decentralized execution, agents use their own prompts and policies, so indepe
 - **Environments that simulate real-world tasks for training and evaluating LLM collaboration:**
   - [**_Writing_**](https://github.com/OpenMLRL/LLM_Collab_Writing): Multiple LLM agents collaborate on processing articles.
     - [TLDR](https://huggingface.co/datasets/trl-lib/tldr) - Summarizing Reddit posts.
-    - [ArXiv](http://arxiv.org/abs/1905.00075) - Expanding abstracts into introductions.
-  - [**_Coding_**](https://github.com/OpenMLRL/LLM_Collab_Code_Generation): Generate code solutions for programming problems.
-    - [MBPP](https://arxiv.org/abs/2108.07732) - Mostly basic Python problems.
-    - [HumanEval](https://arxiv.org/abs/2107.03374) - Handwritten evaluation problems.
+    - [arXiv](https://arxiv.org/abs/1905.00075) - Expanding abstracts into introductions.
+  - [**_Coding_**](https://github.com/OpenMLRL/LLM_Collab_Code_Generation): Collaborative code generation for programming problems.
+    - [MBPP](https://github.com/google-research/google-research/tree/master/mbpp) - Mostly basic Python problems.
+    - [HumanEval](https://github.com/openai/human-eval) - Handwritten evaluation problems.
     - [CoopHumanEval](https://huggingface.co/datasets/OpenMLRL/CoopHumanEval) - HumanEval with a cooperative nature.
     - [ClassEval](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Completing class-level code based on attributes and docstrings.
   - [**_Minecraft_**](https://github.com/OpenMLRL/LLM_Collab_Minecraft): Collaborative building tasks in Minecraft.
@@ -89,5 +66,5 @@ In decentralized execution, agents use their own prompts and policies, so indepe
     - [HouseBuild](https://github.com/OpenMLRL/LLM_Collab_Minecraft/tree/main/house_build) - Constructing houses from given blueprints while defending against spider attacks.
   - [**_Travel_**](https://github.com/OpenMLRL/LLM_Collab_Travel): Collaborative travel planning under user constraints.
     - [TravelPlanner](https://huggingface.co/datasets/osunlp/TravelPlanner) - Planning multi-day trip itineraries.
-  - [**_BFCL v4_**](https://github.com/OpenMLRL/LLM_Collab_BFCL-v4): Collaborative function calling with tools.
+  - [**_Tool-Use_**](https://github.com/OpenMLRL/LLM_Collab_BFCL-v4): Collaborative function calling with tools using [BFCL v4](https://gorilla.cs.berkeley.edu/leaderboard.html).
     - [Native Parallel](https://huggingface.co/datasets/OpenMLRL/BFCL-V4-Parallel-Native) - Making parallel function calls.

@@ -1,10 +1,19 @@
 {{ if and (not .IsHome) (ne .Path "/docs/research") }}
   {{ $area := partial "docs/nav-area" . }}
   {{ with .Parent }}{{ if and (not .IsHome) .Title }}
-  <div class="docs-eyebrow">{{ if and (eq $area "example") (eq .Path "/docs") }}Examples{{ else if and (eq $area "research") (eq .Path "/docs") }}Research{{ else }}{{ .Title }}{{ end }}</div>
+  <div class="docs-eyebrow">{{ if and (eq $area "example") (eq .Path "/docs") }}{{ i18n "docsExamples" }}{{ else if and (eq $area "research") (eq .Path "/docs") }}{{ i18n "docsResearch" }}{{ else }}{{ .Title }}{{ end }}</div>
   {{ end }}{{ end }}
 {{ end }}
 {{/* Titles are presentation metadata; leave the Markdown body untouched. */}}
 {{ if not (findRE "<h1[ >]" .Content 1) }}
   <h1 class="docs-page-title">{{ partial "docs/title" . | default .Site.Title }}</h1>
+{{ end }}
+{{ if and (ne .Site.Language.Lang "en") .Params.translationSource }}
+  <p class="docs-translation-note">
+    <span>{{ i18n "docsAutomaticTranslation" }}</span>
+    {{ range where .AllTranslations "Language.Lang" "en" }}
+      <span aria-hidden="true">·</span>
+      <a href="{{ .RelPermalink }}" hreflang="en" data-language-link>{{ i18n "docsEnglishOriginal" }}</a>
+    {{ end }}
+  </p>
 {{ end }}

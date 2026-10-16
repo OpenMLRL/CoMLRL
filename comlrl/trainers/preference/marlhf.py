@@ -1,4 +1,6 @@
+import copy
 import gc
+import numbers
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, Union
@@ -7,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torch.overrides import TorchFunctionMode
 from tqdm import tqdm  # type: ignore
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
 
@@ -194,7 +197,35 @@ class MARLHFTrainer(MADPOTrainer):
         self._reward_model_active = False
         self._evaluating_with_task_reward = False
 
-    def train(self, **kwargs):
+    def train(
+        self,
+        resume_from_checkpoint=None,
+        checkpoint_dir=None,
+        checkpoint_interval=1,
+        checkpoint_total_limit=None,
+        **kwargs,
+    ):
+        if (
+            isinstance(checkpoint_interval, bool)
+            or not isinstance(checkpoint_interval, numbers.Integral)
+            or checkpoint_interval < 1
+        ):
+            raise ValueError("checkpoint_interval must be a positive integer.")
+        if (
+            resume_from_checkpoint is not None
+            or checkpoint_dir is not None
+            or checkpoint_interval != 1
+            or checkpoint_total_limit is not None
+        ):
+            with self._checkpoint_context(
+                resume_from_checkpoint=resume_from_checkpoint,
+                checkpoint_dir=checkpoint_dir,
+                checkpoint_interval=checkpoint_interval,
+                checkpoint_total_limit=checkpoint_total_limit,
+            ):
+                return self._train_marlhf_checkpointed(**kwargs)
+
+        self._checkpoint_untracked_preference = True
         if int(self.args.num_turns) != 1:
             raise ValueError("MARLHF currently supports num_turns=1 only.")
 
@@ -208,6 +239,303 @@ class MARLHFTrainer(MADPOTrainer):
         self._train_reward_model(preference_pairs)
         self._reward_model_active = True
         self._train_online_rl(**kwargs)
+
+    def _checkpoint_validate_progress(self, state):
+        from .checkpointing import validate_preference_progress
+
+        validate_preference_progress(self, state, "marlhf")
+
+    def _checkpoint_validate_extra_state(self, state, checkpoint_dir):
+        super()._checkpoint_validate_extra_state(state, checkpoint_dir)
+        child_state = state.get("actor_critic")
+        if child_state is None:
+            return
+        if self.args.rl_algorithm not in _ACTOR_CRITIC_ALGORITHMS:
+            raise ValueError("Unexpected MARLHF actor-critic checkpoint state.")
+
+        from comlrl.utils.checkpoint import (
+            _validate_state,
+            capture_rng_state,
+            restore_rng_state,
+        )
+
+        # AC constructors can move supplied models and attach heads. A meta
+        # probe checks their structure without allocating another set of LLM
+        # weights on a training device or changing the live parent.
+        rng = capture_rng_state()
+        try:
+            try:
+                child = self._checkpoint_actor_critic_probe("meta")
+            except (RuntimeError, NotImplementedError) as error:
+                # Custom factories may inspect tensor values during setup.
+                # Keep that extension working, but never use GPU copies here.
+                if "meta" not in str(error).lower():
+                    raise
+                restore_rng_state(rng)
+                child = self._checkpoint_actor_critic_probe("cpu")
+            _validate_state(child, child_state)
+            validator = getattr(child, "_checkpoint_validate_extra_state", None)
+            if callable(validator):
+                validator(child_state["extra"], checkpoint_dir)
+            validator = getattr(child, "_checkpoint_validate_assets", None)
+            if callable(validator) and "assets" in child_state:
+                validator(checkpoint_dir, child_state["assets"])
+            return {
+                "rng_devices": [
+                    {
+                        "saved": child_state.get("rng_devices"),
+                        "current": child._checkpoint_rng_devices_override,
+                    }
+                ]
+            }
+        finally:
+            restore_rng_state(rng)
+
+    def _checkpoint_actor_critic_probe(self, device):
+        probe = copy.copy(self)
+        fields = (
+            "args",
+            "agents",
+            "tokenizers",
+            "critic_sources",
+            "critic_model_source",
+            "model_config",
+            "agent_devices",
+            "wandb_config",
+        )
+        # Callbacks and datasets remain read-only constructor inputs. Their
+        # identities can matter, and they may own noncopyable locks/resources.
+        inputs = {name: getattr(self, name) for name in fields if hasattr(self, name)}
+        memo = {}
+
+        def isolate(value):
+            if isinstance(value, torch.nn.Module):
+                for tensor in (*value.parameters(), *value.buffers()):
+                    if id(tensor) in memo:
+                        continue
+                    if device == "meta":
+                        copied = torch.empty_like(tensor, device="meta")
+                    else:
+                        copied = tensor.detach().to(device="cpu", copy=True)
+                    if isinstance(tensor, torch.nn.Parameter):
+                        copied = torch.nn.Parameter(
+                            copied, requires_grad=tensor.requires_grad
+                        )
+                    memo[id(tensor)] = copied
+            elif isinstance(value, dict):
+                for item in value.values():
+                    isolate(item)
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    isolate(item)
+
+        isolate(inputs)
+        vars(probe).update(copy.deepcopy(inputs, memo))
+        probe._checkpoint_validation_device = device
+
+        class ProbeDeviceGuard(TorchFunctionMode):
+            def __torch_function__(self, func, types, args=(), kwargs=None):
+                kwargs = kwargs or {}
+                requested = kwargs.get("device")
+                name = getattr(func, "__name__", "")
+                if name in {"cuda", "mps", "xpu"}:
+                    raise ValueError("Checkpoint validation requires CPU/meta devices.")
+                if name == "to" and len(args) > 1:
+                    target = args[1]
+                    if isinstance(target, torch.Tensor):
+                        requested = target.device
+                    elif isinstance(target, (str, int, torch.device)):
+                        requested = target
+                if requested is not None and (
+                    isinstance(requested, int)
+                    or torch.device(requested).type not in {"cpu", "meta"}
+                ):
+                    raise ValueError("Checkpoint validation requires CPU/meta devices.")
+                return func(*args, **kwargs)
+
+        with torch.device(device), ProbeDeviceGuard():
+            if device == "meta":
+                probe._checkpoint_prepare_meta_critics()
+            child = probe._create_actor_critic_trainer()
+        planned_args = getattr(probe, "_checkpoint_planned_ac_args", None)
+        if planned_args is None:
+            planned_args = (
+                MAACConfig(**probe._build_actor_critic_common_config())
+                if self.args.rl_algorithm == "maac"
+                else probe._build_iac_config()
+            )
+        child._checkpoint_rng_devices_override = (
+            probe._checkpoint_actor_critic_device_plan(child, planned_args)
+        )
+        return child
+
+    def _checkpoint_prepare_meta_critics(self):
+        """Construct identifier-based critics from configuration, without weights."""
+        from transformers import AutoConfig, GenerationConfig
+        from ..actor_critic.iac import IACTrainer as BuiltinIACTrainer
+        from ..actor_critic.maac import MAACTrainer as BuiltinMAACTrainer
+        from comlrl.utils.model_loading import resolve_model_kwargs
+
+        # Replacement factories keep their original inputs and CPU fallback.
+        # The built-in factory accepts these same preloaded model objects.
+        if self.args.rl_algorithm == "maac":
+            if MAACTrainer is not BuiltinMAACTrainer:
+                return
+            count = 1
+        else:
+            if IACTrainer is not BuiltinIACTrainer or not self.args.use_separate_critic:
+                return
+            count = self._build_iac_config().num_agents
+        sources = self.critic_sources
+        if sources is None:
+            sources = [self._resolve_critic_model_source()] * count
+        config = self._build_actor_critic_model_config()
+        kwargs = resolve_model_kwargs(config, config.get("critic_model_kwargs", {}))
+        critics = []
+        for source in sources:
+            if isinstance(source, str):
+                model_config = AutoConfig.from_pretrained(source)
+                model = AutoModelForCausalLM.from_config(model_config, **kwargs)
+                try:
+                    model.generation_config = GenerationConfig.from_pretrained(source)
+                except OSError:
+                    # from_pretrained also derives generation defaults when
+                    # the optional generation_config.json is absent.
+                    pass
+                model.eval()
+                critics.append(model)
+            else:
+                critics.append(source)
+        self.critic_sources = critics
+
+    def _checkpoint_actor_critic_device_plan(self, child, args):
+        """Resolve the online child's real placement, not its probe devices."""
+        from comlrl.schedulers import DeviceScheduler
+        from comlrl.schedulers.device_scheduler import normalize_parallel_training
+
+        if normalize_parallel_training(args.parallel_training) == "mp":
+            if self.args.rl_algorithm == "maac":
+                agent_devices = DeviceScheduler.resolve_devices(
+                    args.agent_devices, args.num_agents, kind="agent_devices"
+                )
+                critic_devices = [
+                    DeviceScheduler.assign_shared_critic_device(
+                        agent_devices, args.critic_devices
+                    )
+                ]
+            else:
+                agent_devices, critic_devices = DeviceScheduler.assign_devices(
+                    args.num_agents,
+                    args.agent_devices,
+                    args.critic_devices,
+                    use_separate_critic=args.use_separate_critic,
+                )
+        else:
+            device = DeviceScheduler.resolve_single_device(
+                args.agent_devices, args.critic_devices
+            )
+            agent_devices = [device] * args.num_agents
+            critic_devices = [device] * args.num_agents
+
+        def canonical(device):
+            device = torch.device(device)
+            if device.type == "cuda" and device.index is None:
+                device = torch.device("cuda", torch.cuda.current_device())
+            return str(device)
+
+        return {
+            f"{name}.{index}": canonical(devices[index])
+            for name, devices in (
+                ("agents", agent_devices),
+                ("critics", critic_devices),
+            )
+            for index in range(len(getattr(child, name, [])))
+        }
+
+    def _train_marlhf_checkpointed(self, **kwargs):
+        """Resume after reward training or a complete online-RL epoch."""
+        if int(self.args.num_turns) != 1:
+            raise ValueError("MARLHF currently supports num_turns=1 only.")
+        saved = getattr(self, "_checkpoint_progress", {})
+        if not isinstance(saved, dict):
+            raise ValueError("MARLHF checkpoint progress must be a dictionary.")
+        progress = dict(saved)
+        if progress and (
+            progress.get("kind") != "marlhf"
+            or progress.get("phase") not in ("online_rl", "complete")
+            or (progress["phase"] == "online_rl" and "rl" not in progress)
+        ):
+            raise ValueError(
+                "The checkpoint does not contain MARLHF training progress."
+            )
+        rl = progress.get("rl", {})
+        expected_kind = (
+            "magrpo"
+            if self.args.rl_algorithm in _MAGRPO_ADVANTAGE_MODES
+            else "actor_critic"
+        )
+        if not isinstance(rl, dict) or (
+            rl
+            and (
+                rl.get("kind") != expected_kind
+                or type(rl.get("epoch")) is not int
+                or not 0 <= rl["epoch"] <= int(self.args.num_train_epochs)
+            )
+        ):
+            raise ValueError("Invalid MARLHF online-RL checkpoint cursor.")
+        if progress.get("phase") == "complete":
+            if not rl or rl["epoch"] == int(self.args.num_train_epochs):
+                return
+            progress["phase"] = "online_rl"
+        if progress.get("phase") not in (None, "online_rl"):
+            raise ValueError("Invalid MARLHF checkpoint phase.")
+        self._checkpoint_init_wandb()
+        if not progress:
+            pairs = self._build_preference_dataset(**kwargs)
+            if not pairs:
+                if self.verbose:
+                    print("MARLHF: no non-tied preference pairs were generated.")
+                self._checkpoint_commit(
+                    {"kind": "marlhf", "phase": "complete"}, force=True
+                )
+                return
+            self._init_reward_model()
+            self._train_reward_model(pairs)
+            self._reward_model_active = True
+            progress = {"kind": "marlhf", "phase": "online_rl", "rl": {}}
+            self._checkpoint_commit(progress, force=True)
+        if self.reward_model is None:
+            raise ValueError("MARLHF online-RL checkpoint is missing its reward model.")
+        self._reward_model_active = True
+
+        def commit_rl(rl_progress, force=False):
+            self._checkpoint_commit(
+                {"kind": "marlhf", "phase": "online_rl", "rl": rl_progress},
+                force=force,
+            )
+
+        if self.args.rl_algorithm in _MAGRPO_ADVANTAGE_MODES:
+            _apply_magrpo_family_args(self.args)
+            self.advantage_mode = self.args.advantage_mode
+            MAGRPOTrainer._train_checkpoint_epochs(
+                self, progress.get("rl", {}), commit_rl, **kwargs
+            )
+        elif self.args.rl_algorithm in _ACTOR_CRITIC_ALGORITHMS:
+            self._train_actor_critic_rl(
+                _checkpoint_progress=progress.get("rl", {}),
+                _checkpoint_commit=commit_rl,
+                **kwargs,
+            )
+        else:
+            raise ValueError(f"Unsupported rl_algorithm: {self.args.rl_algorithm}")
+        self._checkpoint_commit(
+            {
+                "kind": "marlhf",
+                "phase": "complete",
+                "rl": self._checkpoint_progress.get("rl", {}),
+            },
+            force=True,
+        )
 
     def _train_online_rl(self, **kwargs) -> None:
         if self.args.rl_algorithm in _MAGRPO_ADVANTAGE_MODES:
@@ -259,7 +587,58 @@ class MARLHFTrainer(MADPOTrainer):
             sequence_log_prob=partial(self._sequence_log_prob, 0),
         )
 
-    def _train_actor_critic_rl(self, **kwargs) -> None:
+    def _train_actor_critic_rl(
+        self, _checkpoint_progress=None, _checkpoint_commit=None, **kwargs
+    ) -> None:
+        restoring_child = (
+            _checkpoint_commit is not None
+            and getattr(self, "_checkpoint_pending_ac_state", None) is not None
+        )
+        if restoring_child:
+            from comlrl.utils.checkpoint import capture_rng_state, restore_rng_state
+
+            rng_before_init = capture_rng_state()
+        ac_trainer = self._create_actor_critic_trainer()
+        if _checkpoint_commit is None:
+            ac_trainer.train()
+        else:
+            self._checkpoint_ac_trainer = ac_trainer
+            if restoring_child:
+                from comlrl.utils.checkpoint import restore_trainer_state
+
+                restore_trainer_state(
+                    ac_trainer,
+                    self._checkpoint_pending_ac_state,
+                    self._checkpoint_loaded_from,
+                    restore_rng=False,
+                )
+                self._checkpoint_pending_ac_state = None
+                restore_rng_state(rng_before_init)
+
+            def commit_child(child_progress, force=False):
+                self.env_step = int(ac_trainer.env_step)
+                ac_trainer._checkpoint_progress = child_progress
+                _checkpoint_commit(child_progress, force=force)
+
+            ac_trainer._train_checkpoint_epochs(
+                _checkpoint_progress or {}, commit_child
+            )
+        self.env_step = int(getattr(ac_trainer, "env_step", self.env_step))
+        self.agents = [agent.model for agent in ac_trainer.agents]
+
+    def _create_actor_critic_trainer(self):
+        def prepare_args(args):
+            device = getattr(self, "_checkpoint_validation_device", None)
+            if device is not None:
+                self._checkpoint_planned_ac_args = copy.deepcopy(args)
+                args.agent_devices = device
+                args.critic_devices = device
+                args.reference_devices = device
+            return args
+
+        def prepare_model_config():
+            return self._build_actor_critic_model_config()
+
         trainer_ref: Dict[str, Any] = {"trainer": None}
 
         def reward_model_reward_func(
@@ -286,7 +665,9 @@ class MARLHFTrainer(MADPOTrainer):
             )
 
         if self.args.rl_algorithm == "maac":
-            ac_args = MAACConfig(**self._build_actor_critic_common_config())
+            ac_args = prepare_args(
+                MAACConfig(**self._build_actor_critic_common_config())
+            )
             ac_trainer = MAACTrainer(
                 agent_model=None,
                 agents=self.agents,
@@ -299,13 +680,13 @@ class MARLHFTrainer(MADPOTrainer):
                 args=ac_args,
                 train_dataset=self.train_dataset,
                 eval_dataset=self.eval_dataset,
-                model_config=self._build_actor_critic_model_config(),
+                model_config=prepare_model_config(),
                 wandb_config=None,
                 critic_model=self._resolve_critic_model_source(),
                 critics=self.critic_sources,
             )
         else:
-            ac_args = self._build_iac_config()
+            ac_args = prepare_args(self._build_iac_config())
             ac_trainer = IACTrainer(
                 agent_model=None,
                 agents=self.agents,
@@ -318,7 +699,7 @@ class MARLHFTrainer(MADPOTrainer):
                 args=ac_args,
                 train_dataset=self.train_dataset,
                 eval_dataset=self.eval_dataset,
-                model_config=self._build_actor_critic_model_config(),
+                model_config=prepare_model_config(),
                 wandb_config=None,
                 critic_model=(
                     self._resolve_critic_model_source()
@@ -336,9 +717,7 @@ class MARLHFTrainer(MADPOTrainer):
         ac_trainer.verbose = self.verbose
         if self.centralized_collaboration is not None:
             ac_trainer.env_step = self.env_step
-        ac_trainer.train()
-        self.env_step = int(getattr(ac_trainer, "env_step", self.env_step))
-        self.agents = [agent.model for agent in ac_trainer.agents]
+        return ac_trainer
 
     def _normalize_ac_completions(self, agent_completions) -> List[List[str]]:
         completion_lists = [list(completions) for completions in agent_completions]

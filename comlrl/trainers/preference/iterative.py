@@ -2,10 +2,11 @@ import copy
 import gc
 import inspect
 import json
+import numbers
 import os
 import random
 import threading
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 from urllib import error as urlerror
@@ -34,6 +35,7 @@ from .madpo import (
 )
 from .centralized import CentralizedComparatorAdapter
 from .marlhf import MARLHFConfig, MARLHFTrainer
+from .output_paths import resolve_output_path
 
 
 _REWARD_DISTRIBUTION_BINS = 16
@@ -345,6 +347,11 @@ class MADPOIterTrainer(MADPOTrainer):
     default_config_cls = MADPOIterConfig
     algorithm_name = "MADPOIter"
 
+    def _checkpoint_validate_progress(self, state):
+        from .checkpointing import validate_preference_progress
+
+        validate_preference_progress(self, state, "madpo_iter")
+
     def __init__(
         self,
         *args,
@@ -368,11 +375,158 @@ class MADPOIterTrainer(MADPOTrainer):
         self.target_seed = target_seed
         self.comparator_seed = -target_seed if target_seed != 0 else 1
         self._comparator_rng_states: Dict[str, torch.Tensor] = {}
+        self._comparator_rng_streams: Optional[Dict[str, Dict[str, str]]] = None
         self._comparator_rng_locks: Dict[str, Any] = {}
         self._comparator_rng_registry_lock = threading.Lock()
 
+    def _checkpoint_comparator_devices(self) -> Dict[str, torch.device]:
+        """Resolve comparator slots without loading transient policy models."""
+        if getattr(self.args, "comparator_policy", "current") == "api":
+            return {}
+        indices = range(self.num_agents)
+        if (
+            getattr(self.args, "comparator_generation_mode", "decentralized")
+            == "centralized"
+        ):
+            indices = [self._centralized_comparator_agent_index()]
+        if getattr(self.args, "comparator_policy", "current") == "current":
+            devices = [
+                next(unwrap_model(agent).parameters()).device for agent in self.agents
+            ]
+        else:
+            devices = self._resolve_comparator_devices()
+        result = {}
+        for index in indices:
+            device = torch.device(devices[index])
+            if device.type == "cuda" and device.index is None:
+                device = torch.device("cuda", torch.cuda.current_device())
+            elif device.type == "cpu":
+                device = torch.device("cpu")
+            result[str(index)] = device
+        return result
+
+    def _checkpoint_validate_comparator_rng(self, states, streams) -> None:
+        """Reject incompatible streams before checkpoint restoration mutates state."""
+        devices = self._checkpoint_comparator_devices()
+        if any(device.type not in {"cpu", "cuda"} for device in devices.values()):
+            raise ValueError("Comparator RNG checkpoints require CPU or CUDA.")
+        if not isinstance(states, dict):
+            raise ValueError("Invalid comparator RNG states.")
+        if streams is None:
+            expected = {str(device) for device in devices.values()}
+            if states and set(states) != expected:
+                raise ValueError(
+                    "Legacy comparator RNG device groups differ from this run. "
+                    "Resume on the original devices and save a new checkpoint "
+                    "before changing comparator devices."
+                )
+            state_devices = {str(device): device for device in devices.values()}
+        else:
+            if not isinstance(streams, dict) or set(streams) != set(devices):
+                raise ValueError("Comparator RNG stream slots do not match this run.")
+            state_devices = {}
+            for index, record in streams.items():
+                if (
+                    not isinstance(record, dict)
+                    or set(record) != {"id", "backend"}
+                    or not isinstance(record["id"], str)
+                    or not record["id"].startswith("comparator-")
+                    or not record["id"][len("comparator-") :].isdigit()
+                    or not isinstance(record["backend"], str)
+                    or record["backend"] not in {"cpu", "cuda"}
+                ):
+                    raise ValueError("Invalid comparator RNG stream metadata.")
+                device = devices[index]
+                if device.type != record["backend"]:
+                    raise ValueError(
+                        "Comparator RNG backend changed; CPU and CUDA states "
+                        "cannot be resumed across backends."
+                    )
+                previous = state_devices.setdefault(record["id"], device)
+                if previous.type != device.type:
+                    raise ValueError(
+                        "A comparator RNG stream has conflicting backends."
+                    )
+            if set(states) != set(state_devices):
+                raise ValueError("Comparator RNG states do not match logical streams.")
+        for key, state in states.items():
+            device = state_devices[key]
+            if device.type not in {"cpu", "cuda"}:
+                raise ValueError("Comparator RNG checkpoints require CPU or CUDA.")
+            if (
+                not isinstance(state, torch.Tensor)
+                or state.dtype != torch.uint8
+                or state.ndim != 1
+            ):
+                raise ValueError("Invalid comparator RNG state tensor.")
+            try:
+                torch.Generator(device=device).set_state(state.cpu())
+            except (RuntimeError, TypeError) as error:
+                raise ValueError(
+                    f"Comparator RNG state is incompatible with backend {device.type}."
+                ) from error
+
+    def _checkpoint_prepare_training(self) -> None:
+        """Give checkpointed comparator streams stable IDs, preserving sharing."""
+        states = self._comparator_rng_states
+        streams = getattr(self, "_comparator_rng_streams", None)
+        self._checkpoint_validate_comparator_rng(states, streams)
+        if streams is not None:
+            return
+        groups = {}
+        streams = {}
+        portable_states = {}
+        for index, device in self._checkpoint_comparator_devices().items():
+            device_key = str(device)
+            stream = groups.setdefault(device_key, f"comparator-{index}")
+            streams[index] = {"id": stream, "backend": device.type}
+            if stream not in portable_states:
+                state = states.get(device_key)
+                if state is None:
+                    generator = torch.Generator(device=device)
+                    generator.manual_seed(self.comparator_seed)
+                    state = generator.get_state()
+                portable_states[stream] = state.clone()
+        self._comparator_rng_states = portable_states
+        self._comparator_rng_streams = streams
+        self._comparator_rng_locks = {}
+
+    def _comparator_stream_index(self, agent: Any, device: torch.device) -> str:
+        """Keep the one-argument private RNG API usable for identifiable policies."""
+        streams = self._comparator_rng_streams
+        matches = []
+        agent_module = unwrap_model(agent)
+        for name in ("agents", "_comparator_agents", "_current_copy_comparator_agents"):
+            for index, candidate in enumerate(getattr(self, name, None) or []):
+                if (
+                    candidate is not None
+                    and unwrap_model(candidate) is agent_module
+                    and str(index) in streams
+                ):
+                    matches.append(str(index))
+        if (
+            not matches
+            and getattr(self.args, "comparator_generation_mode", "decentralized")
+            == "centralized"
+        ):
+            matches = [str(self._centralized_comparator_agent_index())]
+        if not matches:
+            matches = [
+                index
+                for index, target in self._checkpoint_comparator_devices().items()
+                if target == device
+            ]
+        if matches and len({streams[index]["id"] for index in matches}) == 1:
+            return matches[0]
+        raise ValueError(
+            "Comparator RNG slot is ambiguous; pass agent_idx when using a "
+            "transient policy with multiple logical streams on the same device."
+        )
+
     @contextmanager
-    def _comparator_rng(self, agent: Any) -> Iterator[None]:
+    def _comparator_rng(
+        self, agent: Any, agent_idx: Optional[int] = None
+    ) -> Iterator[None]:
         """Use a persistent comparator-only RNG stream on the agent device."""
         agent_module = unwrap_model(agent)
         try:
@@ -383,15 +537,39 @@ class MADPOIterTrainer(MADPOTrainer):
 
         device = torch.device(device)
         device_key = str(device)
-        with self._comparator_rng_registry_lock:
-            lock = self._comparator_rng_locks.setdefault(
-                device_key,
-                threading.RLock(),
+        streams = getattr(self, "_comparator_rng_streams", None)
+        state_key = device_key
+        lock_keys = [device_key]
+        if streams is not None:
+            index = (
+                str(agent_idx)
+                if agent_idx is not None
+                else self._comparator_stream_index(agent, device)
             )
+            if index not in streams:
+                raise ValueError(f"Comparator RNG slot {index} is not configured.")
+            record = streams[index]
+            if record["backend"] != device.type:
+                raise ValueError(
+                    "Comparator RNG backend changed; CPU/CUDA streams are incompatible."
+                )
+            state_key = record["id"]
+            lock_keys = ["stream:" + state_key, "device:" + device_key]
+        with self._comparator_rng_registry_lock:
+            locks = [
+                self._comparator_rng_locks.setdefault(key, threading.RLock())
+                for key in lock_keys
+            ]
 
-        with lock:
-            comparator_state = self._comparator_rng_states.get(device_key)
+        with ExitStack() as stack:
+            for lock in locks:
+                stack.enter_context(lock)
+            comparator_state = self._comparator_rng_states.get(state_key)
             if comparator_state is None:
+                if streams is not None:
+                    raise ValueError(
+                        "Missing logical comparator RNG state; refusing to reseed."
+                    )
                 generator = torch.Generator(device=device)
                 generator.manual_seed(self.comparator_seed)
                 comparator_state = generator.get_state()
@@ -402,7 +580,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 try:
                     yield
                 finally:
-                    self._comparator_rng_states[device_key] = torch.cuda.get_rng_state(
+                    self._comparator_rng_states[state_key] = torch.cuda.get_rng_state(
                         device
                     )
                     torch.cuda.set_rng_state(original_state, device)
@@ -414,7 +592,7 @@ class MADPOIterTrainer(MADPOTrainer):
                 try:
                     yield
                 finally:
-                    self._comparator_rng_states[device_key] = (
+                    self._comparator_rng_states[state_key] = (
                         torch.random.get_rng_state()
                     )
                     torch.random.set_rng_state(original_state)
@@ -425,7 +603,37 @@ class MADPOIterTrainer(MADPOTrainer):
                 f"got {device}."
             )
 
-    def train(self, **kwargs):
+    def train(
+        self,
+        resume_from_checkpoint=None,
+        checkpoint_dir=None,
+        checkpoint_interval=1,
+        checkpoint_total_limit=None,
+        **kwargs,
+    ):
+        if (
+            isinstance(checkpoint_interval, bool)
+            or not isinstance(checkpoint_interval, numbers.Integral)
+            or checkpoint_interval < 1
+        ):
+            raise ValueError("checkpoint_interval must be a positive integer.")
+        if (
+            resume_from_checkpoint is not None
+            or checkpoint_dir is not None
+            or checkpoint_interval != 1
+            or checkpoint_total_limit is not None
+        ):
+            from .checkpointing import train_iterations_checkpointed
+
+            with self._checkpoint_context(
+                resume_from_checkpoint=resume_from_checkpoint,
+                checkpoint_dir=checkpoint_dir,
+                checkpoint_interval=checkpoint_interval,
+                checkpoint_total_limit=checkpoint_total_limit,
+            ):
+                return train_iterations_checkpointed(self, reward_model=False, **kwargs)
+
+        self._checkpoint_untracked_preference = True
         if int(self.args.num_turns) != 1:
             raise ValueError("MADPOIter currently supports num_turns=1 only.")
 
@@ -1064,26 +1272,14 @@ class MADPOIterTrainer(MADPOTrainer):
         if cached:
             return cached
 
-        path = getattr(self.args, config_attribute, None) if config_attribute else None
-        if not path and isinstance(self.wandb_config, dict):
-            output_dir = self.wandb_config.get("output_dir")
-            if output_dir:
-                path = os.path.join(str(output_dir), directory)
-            else:
-                sections = self.wandb_config.get("config_sections") or {}
-                output_section = (
-                    sections.get("output") if isinstance(sections, dict) else {}
-                )
-                base_dir = None
-                if isinstance(output_section, dict):
-                    base_dir = output_section.get("base_dir")
-                base_dir = base_dir or self.wandb_config.get("dir")
-                if base_dir:
-                    path = os.path.join(str(base_dir), directory)
-        if not path:
-            path = os.path.join(os.getcwd(), directory)
-
-        path = os.path.abspath(str(path))
+        path = resolve_output_path(
+            directory,
+            configured=(
+                getattr(self.args, config_attribute, None) if config_attribute else None
+            ),
+            wandb_config=self.wandb_config,
+            default_base=os.getcwd(),
+        )
         os.makedirs(path, exist_ok=True)
         setattr(self, cache_attribute, path)
         return path
@@ -1594,7 +1790,12 @@ class MADPOIterTrainer(MADPOTrainer):
         def _generate_agent(agent_idx: int) -> Dict[str, Any]:
             agent = policy_agents[agent_idx]
             if use_comparator_rng:
-                with self._comparator_rng(agent):
+                rng_kwargs = (
+                    {"agent_idx": agent_idx}
+                    if getattr(self, "_comparator_rng_streams", None) is not None
+                    else {}
+                )
+                with self._comparator_rng(agent, **rng_kwargs):
                     return self._generate_completions_with_external_prompts(
                         agent,
                         [batch_item],
@@ -1688,7 +1889,12 @@ class MADPOIterTrainer(MADPOTrainer):
         **kwargs,
     ) -> List[Dict[str, Any]]:
         agent_idx = self._centralized_comparator_agent_index()
-        with self._comparator_rng(policy_agent):
+        rng_kwargs = (
+            {"agent_idx": agent_idx}
+            if getattr(self, "_comparator_rng_streams", None) is not None
+            else {}
+        )
+        with self._comparator_rng(policy_agent, **rng_kwargs):
             generation_output = self._generate_completions(
                 policy_agent,
                 [batch_item],
@@ -2613,7 +2819,8 @@ class MADPOIterTrainer(MADPOTrainer):
 
     def _resolve_comparator_devices(self) -> List[torch.device]:
         return DeviceScheduler.resolve_devices(
-            self.args.comparator_devices or getattr(self.args, "agent_devices", None),
+            getattr(self.args, "comparator_devices", None)
+            or getattr(self.args, "agent_devices", None),
             self.num_agents,
             kind="comparator_devices",
         )
@@ -2652,6 +2859,11 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
     default_config_cls = MARLHFIterConfig
     algorithm_name = "MARLHFIter"
 
+    def _checkpoint_validate_progress(self, state):
+        from .checkpointing import validate_preference_progress
+
+        validate_preference_progress(self, state, "marlhf_iter")
+
     def _preference_scoring_raw_and_processed_rewards(
         self,
         prompts: Sequence[str],
@@ -2674,7 +2886,37 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
         )
         return list(scores), list(scores)
 
-    def train(self, **kwargs):
+    def train(
+        self,
+        resume_from_checkpoint=None,
+        checkpoint_dir=None,
+        checkpoint_interval=1,
+        checkpoint_total_limit=None,
+        **kwargs,
+    ):
+        if (
+            isinstance(checkpoint_interval, bool)
+            or not isinstance(checkpoint_interval, numbers.Integral)
+            or checkpoint_interval < 1
+        ):
+            raise ValueError("checkpoint_interval must be a positive integer.")
+        if (
+            resume_from_checkpoint is not None
+            or checkpoint_dir is not None
+            or checkpoint_interval != 1
+            or checkpoint_total_limit is not None
+        ):
+            from .checkpointing import train_iterations_checkpointed
+
+            with self._checkpoint_context(
+                resume_from_checkpoint=resume_from_checkpoint,
+                checkpoint_dir=checkpoint_dir,
+                checkpoint_interval=checkpoint_interval,
+                checkpoint_total_limit=checkpoint_total_limit,
+            ):
+                return train_iterations_checkpointed(self, reward_model=True, **kwargs)
+
+        self._checkpoint_untracked_preference = True
         if int(self.args.num_turns) != 1:
             raise ValueError("MARLHFIter currently supports num_turns=1 only.")
 

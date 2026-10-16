@@ -27,8 +27,10 @@ from .tokenizer_utils import (
     ensure_tokenizer,
     resolve_tokenizers,
 )
+from .checkpoint import read_checkpoint_metadata
 
 __all__ = [
+    "read_checkpoint_metadata",
     "build_formatters",
     "ensure_pad_token",
     "ensure_tokenizer",

@@ -10,6 +10,7 @@
 
     document.querySelectorAll('figure.docs-rollout[data-rollout]').forEach(function (figure) {
       var svg = figure.querySelector('svg');
+      var simple = svg && svg.classList.contains('algorithm-flow');
       var playButton = figure.querySelector('[data-rollout-play]');
       var replayButton = figure.querySelector('[data-rollout-replay]');
       var status = figure.querySelector('[data-rollout-status]');
@@ -34,10 +35,17 @@
       var elements = Array.from(svg.querySelectorAll('[data-rollout-stage]')).map(function (element) {
         var edge = element.dataset.rolloutKind === 'edge';
         var paths = edge ? (element.matches('path') ? [element] : Array.from(element.querySelectorAll('path'))) : [];
+        var dot = edge ? element.querySelector('.af-dot') : null;
+        if (simple && dot) {
+          // Motion paths provide absolute coordinates within the edge group.
+          dot.setAttribute('cx', '0');
+          dot.setAttribute('cy', '0');
+        }
         return {
           element: element,
           stage: Number(element.dataset.rolloutStage),
           edge: edge,
+          dot: dot,
           opacity: originalProperty(element, 'opacity'),
           paths: paths.map(function (path) {
             var length = 0;
@@ -55,7 +63,7 @@
       if (!stages.length) return;
       elements.forEach(function (item) { item.index = stages.indexOf(item.stage); });
 
-      var duration = (stages.length - 1) * STEP_DURATION;
+      var duration = (stages.length - (simple ? 0 : 1)) * STEP_DURATION;
       var elapsed = 0;
       var previousTime = null;
       var frame = 0;
@@ -86,6 +94,28 @@
       }
 
       function renderTimeline(time) {
+        if (simple) {
+          // Keep the complete workflow visible; highlight only the current step.
+          var current = Math.floor(time / STEP_DURATION);
+          figure.dataset.phase = time >= duration ? 'complete' : String(current);
+          elements.forEach(function (item) {
+            var active = time < duration && item.index === current;
+            item.element.classList.toggle('is-active', active);
+            if (!item.dot) return;
+            var path = item.paths[0];
+            var amount = (time % STEP_DURATION) / STEP_DURATION;
+            if (!active || !path || !path.length) {
+              item.dot.style.opacity = '0';
+              return;
+            }
+            var point = path.element.getPointAtLength(path.length * amount);
+            item.dot.setAttribute('transform', 'translate(' + point.x + ' ' + point.y + ')');
+            item.dot.style.opacity = String(Math.min(1, amount * 8, (1 - amount) * 8));
+          });
+          progress.max = Math.max(1, duration);
+          progress.value = time;
+          return;
+        }
         elements.forEach(function (item) {
           if (item.index === 0 || time >= duration) {
             restoreEdge(item);
@@ -129,7 +159,7 @@
         playButton.disabled = reducedMotion.matches || duration === 0;
         replayButton.disabled = reducedMotion.matches || duration === 0;
 
-        var step = !started || elapsed === 0 ? 1 : Math.min(stages.length, Math.floor(elapsed / STEP_DURATION) + 2);
+        var step = !started || elapsed === 0 ? 1 : Math.min(stages.length, Math.floor(elapsed / STEP_DURATION) + (simple ? 1 : 2));
         var message = reducedMotion.matches ? 'Static diagram · reduced motion' : 'Step ' + step + ' of ' + stages.length;
         if (!reducedMotion.matches && state === 'complete') message += ' · Complete';
         else if (!reducedMotion.matches && state === 'paused') message += ' · Paused';

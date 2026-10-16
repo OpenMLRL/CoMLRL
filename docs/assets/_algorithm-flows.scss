@@ -1,0 +1,65 @@
+// Compact algorithm overviews share the visual scale of the feedback loop.
+.book-article.markdown .docs-rollout[data-algorithm-flow] {
+  --af-purple: #8261b5;
+  --af-teal: #278b85;
+  --af-amber: #b47b32;
+  --af-muted: var(--docs-muted);
+  --af-paper: var(--docs-surface);
+  &:not(.is-expanded) { max-width: 36rem; margin-block: 1.25rem 1.5rem; }
+  .docs-rollout-caption { padding: .7rem 3rem 0 .9rem; }
+  .docs-rollout-stage { padding: .35rem .7rem .55rem; }
+  .docs-rollout-stage > svg { min-width: 28rem; overflow: visible; }
+  .af-purple { color: var(--af-purple); }
+  .af-teal { color: var(--af-teal); }
+  .af-amber { color: var(--af-amber); }
+  .af-neutral { color: var(--af-muted); }
+  svg.algorithm-flow { color: var(--af-muted); }
+  .af-label, .af-small {
+    fill: currentColor;
+    font-family: "Inter", sans-serif;
+    text-anchor: middle;
+    letter-spacing: -.02em;
+  }
+  .af-label { font-size: 18px; font-weight: 550; }
+  .af-small { font-size: 16px; font-weight: 450; }
+  .af-heading { fill: var(--docs-heading); }
+  .af-card {
+    fill: var(--af-paper);
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-opacity: .35;
+    transition: stroke-opacity .25s ease;
+  }
+  .af-node.is-active .af-card { stroke-opacity: 1; }
+  .af-icon, use {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .af-chip { fill: currentColor; fill-opacity: .1; stroke: currentColor; stroke-opacity: .45; stroke-width: 1.2; }
+  .af-bar { fill-opacity: .45; stroke-opacity: .7; }
+  .af-edge {
+    path { fill: none; stroke: currentColor; stroke-width: 1.5; opacity: .55; transition: opacity .25s ease; }
+    &.is-active path { opacity: .9; }
+  }
+  .af-dot { fill: currentColor; stroke: var(--af-paper); stroke-width: 1.5; opacity: 0; }
+}
+html[data-theme="dark"] .book-article.markdown .docs-rollout[data-algorithm-flow] {
+  --af-purple: #c6a5ed;
+  --af-teal: #75c8bc;
+  --af-amber: #e2b36a;
+}
+html[data-theme="reading"] .book-article.markdown .docs-rollout[data-algorithm-flow] {
+  --af-purple: #8565a2;
+  --af-teal: #3d8277;
+  --af-amber: #a47636;
+}
+@media (prefers-reduced-motion: reduce) {
+  .docs-rollout[data-algorithm-flow] * { transition: none !important; }
+}
+@media print {
+  .docs-rollout[data-algorithm-flow] .af-dot { display: none; }
+  .docs-rollout[data-algorithm-flow] .af-edge path { opacity: .65; }
+}

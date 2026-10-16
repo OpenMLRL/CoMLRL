@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="280" viewBox="0 0 720 280">
+  <defs>
+    <marker id="arrow-one" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="m2 2 5 3-5 3" fill="none" stroke="var(--flow-one)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="arrow-two" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="m2 2 5 3-5 3" fill="none" stroke="var(--flow-two)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="arrow-three" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="m2 2 5 3-5 3" fill="none" stroke="var(--flow-three)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="arrow-neutral" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="m2 2 5 3-5 3" fill="none" stroke="var(--flow-muted)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <g id="agent-icon" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M0-10v-4"/><circle cy="-16" r="1.8"/>
+      <rect x="-13" y="-10" width="26" height="22" rx="6"/>
+      <path d="M-13-3h-3v8h3m26-8h3v8h-3M-4 7h8"/>
+      <circle cx="-5" cy="-2" r="1.4" fill="currentColor" stroke="none"/><circle cx="5" cy="-2" r="1.4" fill="currentColor" stroke="none"/>
+    </g>
+  </defs>
+
+  <!-- Contributions move left to right; matching feedback returns along the lower lanes. -->
+  <g class="flow-edge flow-one" data-flow-edge="compose">
+    <path d="M168 62C204 62 198 106 234 106" marker-end="url(#arrow-one)"/><circle r="3.5"/>
+  </g>
+  <g class="flow-edge flow-two" data-flow-edge="compose">
+    <path d="M168 126H234" marker-end="url(#arrow-two)"/><circle r="3.5"/>
+  </g>
+  <g class="flow-edge flow-three" data-flow-edge="compose">
+    <path d="M168 190C204 190 198 146 234 146" marker-end="url(#arrow-three)"/><circle r="3.5"/>
+  </g>
+  <g class="flow-edge flow-neutral" data-flow-edge="respond">
+    <path d="M340 108C370 108 370 73 400 73" marker-end="url(#arrow-neutral)"/><circle r="3.5"/>
+  </g>
+  <g class="flow-edge flow-neutral" data-flow-edge="respond">
+    <path d="M340 144C370 144 370 179 400 179" marker-end="url(#arrow-neutral)"/><circle r="3.5"/>
+  </g>
+  <g class="flow-edge flow-neutral" data-flow-edge="respond" data-flow-delay="0.45">
+    <path d="M542 73C574 73 572 113 604 113" marker-end="url(#arrow-neutral)"/><circle r="3.5"/>
+  </g>
+  <g class="flow-edge flow-neutral" data-flow-edge="respond" data-flow-delay="0.45">
+    <path d="M542 179C574 179 572 139 604 139" marker-end="url(#arrow-neutral)"/><circle r="3.5"/>
+  </g>
+  <g class="flow-edge flow-return flow-one" data-flow-edge="route">
+    <path d="M625 142V224Q625 236 613 236H26Q14 236 14 224V74Q14 62 26 62H50" marker-end="url(#arrow-one)"/><circle r="3.5"/>
+  </g>
+  <g class="flow-edge flow-return flow-two" data-flow-edge="route">
+    <path d="M649 142V238Q649 250 637 250H38Q26 250 26 238V138Q26 126 38 126H50" marker-end="url(#arrow-two)"/><circle r="3.5"/>
+  </g>
+  <g class="flow-edge flow-return flow-three" data-flow-edge="route">
+    <path d="M673 142V252Q673 264 661 264H50Q38 264 38 252V202Q38 190 50 190" marker-end="url(#arrow-three)"/><circle r="3.5"/>
+  </g>
+
+  <g class="flow-agent flow-one" data-flow-node="agents">
+    <rect class="flow-card" x="50" y="40" width="118" height="44" rx="12"/>
+    <use href="#agent-icon" x="73" y="63"/>
+    <text class="flow-label" x="130" y="68">Agent 1</text>
+    <circle class="flow-port" cx="168" cy="62" r="2.5"/>
+  </g>
+  <g class="flow-agent flow-two" data-flow-node="agents">
+    <rect class="flow-card" x="50" y="104" width="118" height="44" rx="12"/>
+    <use href="#agent-icon" x="73" y="127"/>
+    <text class="flow-label" x="130" y="132">Agent 2</text>
+    <circle class="flow-port" cx="168" cy="126" r="2.5"/>
+  </g>
+  <g class="flow-agent flow-three" data-flow-node="agents">
+    <rect class="flow-card" x="50" y="168" width="118" height="44" rx="12"/>
+    <use href="#agent-icon" x="73" y="191"/>
+    <text class="flow-label" x="130" y="196">Agent 3</text>
+    <circle class="flow-port" cx="168" cy="190" r="2.5"/>
+  </g>
+
+  <g class="flow-response" data-flow-node="response">
+    <rect class="flow-card" x="234" y="84" width="106" height="84" rx="14"/>
+    <path class="flow-icon" d="M272 98h20l10 10v29h-30zm20 0v10h10"/>
+    <g class="flow-part flow-one"><circle cx="278" cy="114" r="1.6"/><path d="M284 114h11"/></g>
+    <g class="flow-part flow-two"><circle cx="278" cy="122" r="1.6"/><path d="M284 122h11"/></g>
+    <g class="flow-part flow-three"><circle cx="278" cy="130" r="1.6"/><path d="M284 130h11"/></g>
+    <text class="flow-label flow-heading" x="287" y="156">Response</text>
+  </g>
+
+  <g class="flow-toolkit" data-flow-node="toolkit">
+    <rect class="flow-card" x="400" y="36" width="142" height="74" rx="14"/>
+    <g class="flow-icon">
+      <rect x="416" y="51" width="29" height="23" rx="4"/>
+      <path d="m422 57 5 5-5 5m9 0h7M425 78h11"/>
+    </g>
+    <text class="flow-label flow-heading" x="491" y="69">Toolkit</text>
+    <g class="flow-notice flow-error" data-flow-phase="respond route hold">
+      <path class="flow-notice-icon" d="m450 84 6 10h-12zm0 4v2"/><circle cx="450" cy="92" r=".6" fill="currentColor"/>
+      <text class="flow-small" x="484" y="95">Error</text>
+    </g>
+  </g>
+  <g class="flow-user" data-flow-node="user">
+    <rect class="flow-card" x="400" y="142" width="142" height="74" rx="14"/>
+    <g class="flow-icon">
+      <circle cx="426" cy="163" r="6"/><path d="M415 181v-3c0-9 22-9 22 0v3"/>
+      <path d="M439 157h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-4l-5 4v-4a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3Z"/>
+      <path d="M440 164h7m-3.5-3.5v7"/>
+    </g>
+    <text class="flow-label flow-heading" x="491" y="175">User</text>
+    <g class="flow-notice flow-info" data-flow-phase="respond route hold">
+      <text class="flow-small" x="471" y="201">Hint · Info</text>
+    </g>
+  </g>
+
+  <g class="flow-feedback" data-flow-node="feedback">
+    <text class="flow-label flow-heading" x="649" y="83">Feedback</text>
+    <rect class="flow-card" x="604" y="99" width="90" height="54" rx="14"/>
+    <g class="flow-one"><rect class="flow-chip" x="615" y="113" width="20" height="26" rx="6"/><text class="flow-number" x="625" y="132">1</text></g>
+    <g class="flow-two"><rect class="flow-chip" x="639" y="113" width="20" height="26" rx="6"/><text class="flow-number" x="649" y="132">2</text></g>
+    <g class="flow-three"><rect class="flow-chip" x="663" y="113" width="20" height="26" rx="6"/><text class="flow-number" x="673" y="132">3</text></g>
+  </g>
+</svg>

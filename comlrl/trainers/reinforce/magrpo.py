@@ -1,4 +1,5 @@
 import inspect
+import numbers
 import os
 import random
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from comlrl.schedulers import DeviceScheduler
 from comlrl.schedulers.device_scheduler import normalize_parallel_training
+from comlrl.utils.checkpoint import TrainingCheckpointMixin
 from comlrl.utils.distributed import local_context, unwrap_model
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import (
@@ -126,7 +128,7 @@ class NodeSample:
     node_env_step: int
 
 
-class MAGRPOTrainer:
+class MAGRPOTrainer(TrainingCheckpointMixin):
     """
     Multi-Agent Group Relative Policy Optimization Trainer (MAGRPO).
     Supports both single-turn and multi-turn training with external transitions.
@@ -450,7 +452,11 @@ class MAGRPOTrainer:
                 if hasattr(self.args, "comparator_generation_mode"):
                     config_dict["comparator_generation_mode"] = "centralized"
 
-            wandb.init(**wandb_init_kwargs(self.wandb_config, config_dict))
+            previous_run = wandb.run
+            self._checkpoint_record_wandb_run(
+                wandb.init(**wandb_init_kwargs(self.wandb_config, config_dict)),
+                previous_run=previous_run,
+            )
             self.wandb_initialized = True
 
     def get_train_dataloader(self) -> DataLoader:
@@ -688,10 +694,46 @@ class MAGRPOTrainer:
 
         return eval_metrics
 
-    def train(self, **kwargs):
+    def train(
+        self,
+        resume_from_checkpoint=None,
+        checkpoint_dir=None,
+        checkpoint_interval=1,
+        checkpoint_total_limit=None,
+        **kwargs,
+    ):
         """
         Unified train method that supports both single-turn and multi-turn training.
+
+        Checkpoints are written after complete epochs, once rollout buffers and
+        their logs have been processed. The configured epoch count is the total
+        for the run, including epochs already completed in a resumed checkpoint.
         """
+        if (
+            isinstance(checkpoint_interval, bool)
+            or not isinstance(checkpoint_interval, numbers.Integral)
+            or checkpoint_interval < 1
+        ):
+            raise ValueError("checkpoint_interval must be a positive integer.")
+        if (
+            resume_from_checkpoint is not None
+            or checkpoint_dir is not None
+            or checkpoint_interval != 1
+            or checkpoint_total_limit is not None
+        ):
+            with self._checkpoint_context(
+                resume_from_checkpoint=resume_from_checkpoint,
+                checkpoint_dir=checkpoint_dir,
+                checkpoint_interval=checkpoint_interval,
+                checkpoint_total_limit=checkpoint_total_limit,
+            ):
+                return self._train_checkpoint_epochs(
+                    self._checkpoint_progress, self._checkpoint_commit, **kwargs
+                )
+
+        if not getattr(self, "_checkpoint_context_active", False):
+            self._checkpoint_save_blocked = True
+
         if self.wandb_config is not None and not self.wandb_initialized:
             self._init_wandb()
 
@@ -727,6 +769,95 @@ class MAGRPOTrainer:
                 if buffer
             ]
             self._drain_ready_buffers(ready_agents)
+
+        if not getattr(self, "_checkpoint_context_active", False):
+            self._checkpoint_progress = {
+                "kind": "magrpo",
+                "epoch": int(self.args.num_train_epochs),
+            }
+            self._checkpoint_save_blocked = False
+
+    def _checkpoint_validate_progress(self, state):
+        """Reject incompatible saved RL cursors before restoring trainer state."""
+        progress = state["progress"]
+        total_epochs = int(self.args.num_train_epochs)
+        if not isinstance(progress, dict):
+            raise ValueError("MAGRPO checkpoint progress must be a dictionary.")
+        if progress and (progress.get("kind") != "magrpo" or "epoch" not in progress):
+            raise ValueError("Checkpoint does not contain a MAGRPO epoch cursor.")
+        start_epoch = progress.get("epoch", 0)
+        if (
+            type(start_epoch) is not int
+            or start_epoch < 0
+            or start_epoch > total_epochs
+        ):
+            raise ValueError(
+                "MAGRPO checkpoint epoch must be between 0 and num_train_epochs."
+            )
+        if progress and any(state["runtime"].get("rollout_buffers", [])):
+            raise ValueError(
+                "MAGRPO resume requires an epoch boundary with empty rollout buffers."
+            )
+        return start_epoch
+
+    def _on_checkpoint_train_start(self, start_epoch: int, total_epochs: int) -> None:
+        """Align subclass state before a checkpoint-aware epoch loop starts.
+
+        Called once after cursor validation and before any dataloader is built,
+        including when all configured epochs have already been completed.
+        ``start_epoch`` is the number of completed epochs, or zero for a new run.
+        """
+
+    def _train_checkpoint_epochs(self, progress, commit, **kwargs):
+        """Run complete RL epochs, optionally inside a parent trainer's context."""
+        total_epochs = int(self.args.num_train_epochs)
+        # Preference subclasses have an outer cursor validator; this loop uses RL epochs.
+        start_epoch = MAGRPOTrainer._checkpoint_validate_progress(
+            self,
+            {
+                "progress": progress,
+                "runtime": {"rollout_buffers": self.rollout_buffers},
+            },
+        )
+        self._on_checkpoint_train_start(start_epoch, total_epochs)
+
+        self._checkpoint_init_wandb()
+
+        for agent_idx, agent in enumerate(self.agents):
+            agent.to(self.agent_devices[agent_idx])
+            agent.train()
+
+        for epoch in range(start_epoch, total_epochs):
+            dl = self.get_train_dataloader()
+            if getattr(self, "verbose", True):
+                it = enumerate(
+                    tqdm(
+                        dl,
+                        total=len(dl),
+                        desc=f"Epoch {epoch+1}/{total_epochs}",
+                    )
+                )
+            else:
+                it = enumerate(dl)
+            for batch_idx, batch in it:
+                if int(self.args.eval_interval) > 0 and (
+                    batch_idx % int(self.args.eval_interval) == 0
+                ):
+                    _ = self.evaluate(num_eval_samples=int(self.args.eval_num_samples))
+
+                batch_item = batch[0]
+                self._train_step_returns(batch_item, **kwargs)
+
+            ready_agents = [
+                agent_idx
+                for agent_idx, buffer in enumerate(self.rollout_buffers)
+                if buffer
+            ]
+            self._drain_ready_buffers(ready_agents)
+            commit(
+                {"kind": "magrpo", "epoch": epoch + 1},
+                force=epoch + 1 == total_epochs,
+            )
 
     def _train_step_returns(
         self,

@@ -1,0 +1,73 @@
+[docsHome]
+other = "Inicio de la documentación de CoMLRL"
+[docsProjectLinks]
+other = "Enlaces del proyecto"
+[docsGitHubStars]
+other = "{{ .Count }} estrellas de GitHub"
+[docsGitHubStarsUpdated]
+other = "{{ .Count }} estrellas · comprobado el {{ .Updated }}"
+[docsColorTheme]
+other = "Tema de color"
+[docsLightMode]
+other = "Modo claro"
+[docsDarkMode]
+other = "Modo oscuro"
+[docsReadingMode]
+other = "Modo de lectura"
+[docsAreas]
+other = "Secciones de la documentación"
+[docsDocumentation]
+other = "Documentación"
+[docsExamples]
+other = "Ejemplos"
+[docsEnvironments]
+other = "Entornos"
+[docsOverview]
+other = "Resumen"
+[docsExampleOverview]
+other = "Resumen de los ejemplos"
+[docsResearchOverview]
+other = "Resumen de la investigación"
+[docsResearch]
+other = "Investigación"
+[docsPapers]
+other = "Artículos"
+[docsExamplePages]
+other = "Páginas de ejemplos"
+[docsResearchPages]
+other = "Páginas de investigación"
+[docsDocumentationPages]
+other = "Páginas de documentación"
+[docsMenu]
+other = "Menú"
+[docsOnThisPage]
+other = "En esta página"
+[docsPageSections]
+other = "Secciones de la página"
+[docsLanguage]
+other = "Idioma"
+[docsAutomaticTranslation]
+other = "Traducido automáticamente"
+[docsEnglishOriginal]
+other = "Original en inglés"
+[docsSkipToContent]
+other = "Ir al contenido"
+[docsDocumentationNavigation]
+other = "Navegación de la documentación"
+[docsAdjacentPages]
+other = "Páginas anterior y siguiente"
+[docsPreviousPage]
+other = "Página anterior"
+[docsNextPage]
+other = "Página siguiente"
+[Search]
+other = "Buscar"
+["Edit this page"]
+other = "Editar esta página"
+["Last modified by"]
+other = "Última modificación por"
+
+[docsExternalFeedback]
+other = "Retroalimentación externa"
+[docsParameters]
+other = "Parámetros"

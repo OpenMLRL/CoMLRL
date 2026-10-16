@@ -1,28 +1,28 @@
 {{- $current := . -}}
 {{- $area := partial "docs/nav-area" . -}}
 {{- $home := .Site.Home -}}
-{{- $homeTitle := "Overview" -}}
+{{- $homeTitle := i18n "docsOverview" -}}
 {{- $groups := slice -}}
 {{- $pages := slice -}}
 
 {{- if eq $area "example" -}}
   {{- with .Site.GetPage "/docs/examples" -}}
     {{- $home = . -}}
-    {{- $homeTitle = "Example Overview" -}}
+    {{- $homeTitle = i18n "docsExampleOverview" -}}
     {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
-    {{- $groups = $groups | append (dict "Title" "Examples" "Page" . "Linked" false "Children" $children) -}}
+    {{- $groups = $groups | append (dict "Title" (i18n "docsExamples") "Page" . "Linked" false "Children" $children) -}}
   {{- end -}}
   {{- with .Site.GetPage "/docs/env" -}}
     {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
-    {{- $groups = $groups | append (dict "Title" "Environments" "Page" . "Linked" true "Children" $children) -}}
+    {{- $groups = $groups | append (dict "Title" (i18n "docsEnvironments") "Page" . "Linked" true "Children" $children) -}}
   {{- end -}}
 {{- else if eq $area "research" -}}
   {{- with .Site.GetPage "/docs/research" -}}
     {{- $home = . -}}
-    {{- $homeTitle = "Research Overview" -}}
+    {{- $homeTitle = i18n "docsResearchOverview" -}}
     {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
     {{- if $children -}}
-      {{- $groups = $groups | append (dict "Title" "Papers" "Page" . "Linked" false "Children" $children) -}}
+      {{- $groups = $groups | append (dict "Title" (i18n "docsPapers") "Page" . "Linked" false "Children" $children) -}}
     {{- end -}}
   {{- end -}}
 {{- else -}}

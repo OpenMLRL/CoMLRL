@@ -6,6 +6,89 @@
     var search = document.getElementById('book-search-input');
     var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
     var isMac = /Mac|iPhone|iPad|iPod/i.test(platform);
+    var pageLanguage = document.documentElement.lang.toLowerCase();
+    var labelLanguage = pageLanguage.startsWith('zh') ? 'zh-cn' : pageLanguage.split('-')[0];
+    var copyLabelsByLanguage = {
+      en: {
+        default: 'Copy code to clipboard', copied: 'Code copied to clipboard',
+        error: 'Copy failed. Select the code and copy it manually.'
+      },
+      'zh-cn': {
+        default: '复制代码', copied: '代码已复制', error: '复制失败，请选中代码手动复制。'
+      },
+      ja: {
+        default: 'コードをコピー', copied: 'コードをコピーしました',
+        error: 'コピーできませんでした。コードを選択して手動でコピーしてください。'
+      },
+      ko: {
+        default: '코드 복사', copied: '코드를 복사했습니다',
+        error: '복사하지 못했습니다. 코드를 선택한 뒤 직접 복사하세요.'
+      },
+      es: {
+        default: 'Copiar código', copied: 'Código copiado',
+        error: 'No se pudo copiar. Selecciona el código y cópialo manualmente.'
+      },
+      fr: {
+        default: 'Copier le code', copied: 'Code copié',
+        error: 'Échec de la copie. Sélectionnez le code et copiez-le manuellement.' // codespell:ignore copie
+      },
+      de: {
+        default: 'Code kopieren', copied: 'Code kopiert',
+        error: 'Kopieren fehlgeschlagen. Wählen Sie den Code aus und kopieren Sie ihn manuell.' // codespell:ignore sie,manuell
+      }
+    };
+    var copyLabels = copyLabelsByLanguage[labelLanguage] || copyLabelsByLanguage.en;
+
+    // Headings keep their English anchors across generated translations.
+    function updateLanguageLinks() {
+      document.querySelectorAll('[data-language-link]').forEach(function (link) {
+        var url = new URL(link.href, window.location.href);
+        url.hash = window.location.hash;
+        link.href = url.href;
+      });
+    }
+    updateLanguageLinks();
+    window.addEventListener('hashchange', updateLanguageLinks);
+
+    var languageMenus = Array.from(document.querySelectorAll('[data-language-menu]'));
+
+    function closeLanguageMenus(restoreFocus) {
+      var wasOpen = false;
+      languageMenus.forEach(function (menu) {
+        if (!menu.open) return;
+        wasOpen = true;
+        var hadFocus = menu.contains(document.activeElement);
+        menu.open = false;
+        if (restoreFocus && hadFocus) menu.querySelector('summary').focus({ preventScroll: true });
+      });
+      return wasOpen;
+    }
+
+    languageMenus.forEach(function (menu) {
+      menu.addEventListener('toggle', function () {
+        if (!menu.open) return;
+        closePanels(false);
+        languageMenus.forEach(function (other) {
+          if (other !== menu) other.open = false;
+        });
+      });
+      menu.addEventListener('click', function (event) {
+        if (event.target instanceof Element && event.target.closest('[data-language-link]')) {
+          closeLanguageMenus(false);
+        }
+      });
+    });
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && closeLanguageMenus(true)) event.preventDefault();
+    });
+    ['click', 'focusin'].forEach(function (eventName) {
+      document.addEventListener(eventName, function (event) {
+        languageMenus.forEach(function (menu) {
+          if (menu.open && !menu.contains(event.target)) menu.open = false;
+        });
+      });
+    });
 
     document.querySelectorAll('[data-search-shortcut]').forEach(function (hint) {
       hint.textContent = isMac ? '⌘ K' : 'Ctrl K';
@@ -145,7 +228,7 @@
         button.classList.toggle('is-error', state === 'error');
         status.textContent = state === 'default' ? '' : label;
       }
-      setCopyState('default', 'Copy code to clipboard');
+      setCopyState('default', copyLabels.default);
 
       button.addEventListener('click', function (event) {
         // The theme focuses the pre on click; retain focus on this button.
@@ -155,13 +238,13 @@
         window.clearTimeout(resetTimer);
         status.textContent = '';
         copyText(code.textContent).then(function () {
-          setCopyState('copied', 'Code copied to clipboard');
+          setCopyState('copied', copyLabels.copied);
         }).catch(function () {
-          setCopyState('error', 'Copy failed. Select the code and copy it manually.');
+          setCopyState('error', copyLabels.error);
         }).finally(function () {
           copying = false;
           resetTimer = window.setTimeout(function () {
-            setCopyState('default', 'Copy code to clipboard');
+            setCopyState('default', copyLabels.default);
           }, 3000);
         });
       });

@@ -1,3 +1,4 @@
+import numbers
 import random
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -250,7 +251,35 @@ class MADPOTrainer(MAGRPOTrainer):
             )
         return super()._log_eval_metrics(all_agent_completions_turns, *args, **kwargs)
 
-    def train(self, **kwargs):
+    def train(
+        self,
+        resume_from_checkpoint=None,
+        checkpoint_dir=None,
+        checkpoint_interval=1,
+        checkpoint_total_limit=None,
+        **kwargs,
+    ):
+        if (
+            isinstance(checkpoint_interval, bool)
+            or not isinstance(checkpoint_interval, numbers.Integral)
+            or checkpoint_interval < 1
+        ):
+            raise ValueError("checkpoint_interval must be a positive integer.")
+        if (
+            resume_from_checkpoint is not None
+            or checkpoint_dir is not None
+            or checkpoint_interval != 1
+            or checkpoint_total_limit is not None
+        ):
+            with self._checkpoint_context(
+                resume_from_checkpoint=resume_from_checkpoint,
+                checkpoint_dir=checkpoint_dir,
+                checkpoint_interval=checkpoint_interval,
+                checkpoint_total_limit=checkpoint_total_limit,
+            ):
+                return self._train_madpo_checkpointed(**kwargs)
+
+        self._checkpoint_untracked_preference = True
         if int(self.args.num_turns) != 1:
             raise ValueError("MADPO currently supports num_turns=1 only.")
 
@@ -269,14 +298,135 @@ class MADPOTrainer(MAGRPOTrainer):
 
         self._train_preference_pairs(preference_pairs)
 
+    def _train_madpo_checkpointed(self, **kwargs):
+        """Resume after pair generation or complete preference-training epochs."""
+        if int(self.args.num_turns) != 1:
+            raise ValueError("MADPO currently supports num_turns=1 only.")
+        saved = getattr(self, "_checkpoint_progress", {})
+        if not isinstance(saved, dict):
+            raise ValueError("MADPO checkpoint progress must be a dictionary.")
+        progress = dict(saved)
+        required = {"kind", "epoch", "updates_seen", "preference_pairs", "complete"}
+        if progress and (
+            progress.get("kind") != "madpo" or not required.issubset(progress)
+        ):
+            raise ValueError("The checkpoint does not contain MADPO training progress.")
+        start_epoch = progress.get("epoch", 0)
+        updates_seen = progress.get("updates_seen", 0)
+        if type(start_epoch) is not int or not 0 <= start_epoch <= int(
+            self.args.num_train_epochs
+        ):
+            raise ValueError("Invalid MADPO checkpoint epoch.")
+        if type(updates_seen) is not int or updates_seen < 0:
+            raise ValueError("Invalid MADPO checkpoint update count.")
+        if progress and (
+            type(progress["complete"]) is not bool
+            or not isinstance(progress["preference_pairs"], list)
+            or not all(
+                isinstance(pair, PreferencePair)
+                for pair in progress["preference_pairs"]
+            )
+        ):
+            raise ValueError("Invalid MADPO checkpoint preference data.")
+        if progress.get("complete") and (
+            not progress["preference_pairs"]
+            or start_epoch == int(self.args.num_train_epochs)
+        ):
+            return
+        self._checkpoint_init_wandb()
+        for agent_idx, agent in enumerate(self.agents):
+            agent.to(self.agent_devices[agent_idx])
+            agent.train()
+        pairs = progress.get("preference_pairs")
+        generated = pairs is None
+        if generated:
+            pairs = self._build_preference_dataset(**kwargs)
+
+        def commit_epoch(next_epoch, updates_seen, *, force=False):
+            complete = next_epoch == int(self.args.num_train_epochs)
+            self._checkpoint_commit(
+                {
+                    "kind": "madpo",
+                    "epoch": next_epoch,
+                    "updates_seen": updates_seen,
+                    "preference_pairs": pairs,
+                    "complete": complete,
+                },
+                force=force or complete,
+            )
+
+        if not pairs:
+            if self.verbose:
+                print("MADPO: no non-tied preference pairs were generated.")
+            self._checkpoint_commit(
+                {
+                    "kind": "madpo",
+                    "epoch": 0,
+                    "updates_seen": 0,
+                    "complete": True,
+                    "preference_pairs": [],
+                },
+                force=True,
+            )
+            return
+        if generated:
+            # Preserve expensive sampling before the first optimizer update, even
+            # when the requested epoch checkpoint interval is greater than one.
+            commit_epoch(0, updates_seen, force=True)
+        self._train_preference_pairs(
+            pairs,
+            updates_seen=updates_seen,
+            start_epoch=start_epoch,
+            epoch_callback=commit_epoch,
+        )
+        if not generated and start_epoch == int(self.args.num_train_epochs):
+            commit_epoch(start_epoch, updates_seen)
+
+    def _checkpoint_extra_state(self):
+        from .checkpointing import preference_extra_state
+
+        return preference_extra_state(self)
+
+    def _restore_checkpoint_extra_state(self, state, checkpoint_dir):
+        from .checkpointing import restore_preference_extra_state
+
+        restore_preference_extra_state(self, state, checkpoint_dir)
+
+    def _checkpoint_save_assets(self, checkpoint_dir):
+        from .checkpointing import save_preference_assets
+
+        return save_preference_assets(self, checkpoint_dir)
+
+    def _checkpoint_load_assets(self, checkpoint_dir, assets):
+        from .checkpointing import load_preference_assets
+
+        load_preference_assets(self, checkpoint_dir, assets)
+
+    def _checkpoint_validate_assets(self, checkpoint_dir, assets):
+        from .checkpointing import validate_preference_assets
+
+        validate_preference_assets(self, checkpoint_dir, assets)
+
+    def _checkpoint_validate_extra_state(self, state, checkpoint_dir):
+        from .checkpointing import validate_preference_extra_state
+
+        validate_preference_extra_state(state)
+
+    def _checkpoint_validate_progress(self, state):
+        from .checkpointing import validate_preference_progress
+
+        validate_preference_progress(self, state, "madpo")
+
     def _train_preference_pairs(
         self,
         preference_pairs: List[PreferencePair],
         *,
         updates_seen: int = 0,
         desc: str = "MADPO",
+        start_epoch: int = 0,
+        epoch_callback=None,
     ) -> int:
-        for epoch in range(int(self.args.num_train_epochs)):
+        for epoch in range(start_epoch, int(self.args.num_train_epochs)):
             random.shuffle(preference_pairs)
             batch_size = int(self.args.train_batch_size)
             batches = [
@@ -307,6 +457,8 @@ class MADPOTrainer(MAGRPOTrainer):
                 if self.wandb_initialized and wandb.run is not None:
                     if self._should_log_train(int(self.env_step)):
                         wandb.log(metrics, step=int(self.env_step))
+            if epoch_callback is not None:
+                epoch_callback(epoch + 1, updates_seen)
         return updates_seen
 
     def _build_preference_dataset(self, **kwargs) -> List[PreferencePair]:

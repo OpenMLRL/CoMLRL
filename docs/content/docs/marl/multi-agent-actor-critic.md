@@ -6,15 +6,15 @@ aliases:
 math: true
 ---
 
-Actor-Critic (AC) methods are widely used policy gradient methods that employ critics to facilitate training.
+Actor-Critic (AC) methods are widely used policy gradient methods that use critics to support training.
 AC methods can achieve lower variance and better sample efficiency than REINFORCE, but this requires careful design and tuning of the critic to ensure stable training.
-In Multi-Agent Reinforcement Learning (MARL), Actor-Critic methods can be instantiated as Multi-Agent Actor-Critic (MAAC) and Independent Actor-Critic (IAC).
+In Multi-Agent Reinforcement Learning (MARL), Actor-Critic methods include Multi-Agent Actor-Critic (MAAC) and Independent Actor-Critic (IAC).
 
 ## MAAC
 
-Multi-Agent Actor-Critic (MAAC) uses one Centralized Critic (CC) across agents to evaluate joint histories with `critic_type="v"`, or joint history-action pairs with `critic_type="q"`. The critic receives the agents' prompts joined into one text; Q mode also includes their generated completions.
+Multi-Agent Actor-Critic (MAAC) uses one Centralized Critic (CC) across agents to evaluate joint histories with `critic_type="v"`, or joint history-action pairs with `critic_type="q"`. The critic receives the agents' prompts joined into a single text sequence; Q mode also includes their generated completions.
 
-Write the critic prediction as {{< katex >}}C_{\boldsymbol{\phi}}(x_t){{< /katex >}}, where {{< katex >}}x_t=\mathbf{h}_t{{< /katex >}} in V mode and {{< katex >}}x_t=(\mathbf{h}_t,\mathbf{a}_t){{< /katex >}} in Q mode. CoMLRL forms a one-step target and a TD residual for each agent:
+The critic prediction is denoted by {{< katex >}}C_{\boldsymbol{\phi}}(x_t){{< /katex >}}, where {{< katex >}}x_t=\mathbf{h}_t{{< /katex >}} in V mode and {{< katex >}}x_t=(\mathbf{h}_t,\mathbf{a}_t){{< /katex >}} in Q mode. CoMLRL forms a one-step target and a TD residual for each agent:
 
 {{< katex display=true >}}
 y_{i,t}=\tilde r_{i,t}+\gamma m_t\bar C(x_{t+1}),
@@ -33,7 +33,7 @@ The actor and critic minimize the following losses over each agent's mini-batch 
 
 Here {{< katex >}}\widehat A{{< /katex >}} is the optionally normalized residual and {{< katex >}}\operatorname{sg}{{< /katex >}} means stop-gradient. The completion log-probability is the sum of generated-token log-probabilities; prompt and trailing padding tokens are excluded. The loss then averages across samples. Buffers are grouped by agent and turn before updating, and `advantage_normalization` normalizes the residuals within each such group. Targets and advantages remain fixed during the update. The shared critic is updated sequentially with each agent's batch, and `value_loss_coef` scales its loss.
 
-The animation below follows one MAAC turn from sampling to update for two agents. Both actors take their residuals from the same centralized critic, which is then regressed toward the TD targets with each agent's batch in turn; IAC instead gives each agent its own critic.
+The animation below follows one MAAC turn from sampling through the update for two agents. Both actors use residuals from the same centralized critic, which is then trained against the TD targets using each agent's batch in turn; IAC instead gives each agent its own critic.
 
 {{< rollout-diagram diagram="ac-training" title="MAAC training step" description="Each agent samples one response per turn; the centralized critic turns the reward and next history into TD targets and residuals that weight each actor's loss and regress the critic." >}}
 
@@ -56,16 +56,16 @@ In Q mode, the implementation uses the same TD-residual actor weight, with a sam
 - `top_p`: Top-p for nucleus sampling
 - `top_k`: Top-k for sampling
 - `num_generations`: Number of generations per prompt per agent
-- `external_prompt_passthrough`: Use external prompts directly in multi-turn
+- `external_prompt_passthrough`: Whether to use external prompts directly in multi-turn training
 - `discount`: Discount factor for the next-turn critic prediction in TD targets; logged `expected_return` uses undiscounted reward sums
-- `early_termination_threshold`: Stop after a turn when its mean processed reward exceeds this threshold; `None` disables early stopping
+- `early_termination_threshold`: A rollout ends after a turn whose mean processed reward exceeds this threshold; `None` disables early stopping
 - `eval_interval`: Evaluation interval (in training batches)
 - `eval_num_samples`: Number of evaluation samples per interval
-- `eval_batch_size`: Eval dataloader batch size
+- `eval_batch_size`: Evaluation DataLoader batch size
 - `logging_steps`: Minimum number of joint-action reward evaluations between training metric logs
 - `parallel_training`: `none` for one device or `mp` for explicit agent/critic device placement
 - `agent_devices`, `critic_devices`: Device assignments, required in `mp` mode
-- `reference_kl_enabled`, `reference_kl_coef`: Enable and weight the frozen-reference KL reward penalty (disabled by default)
+- `reference_kl_enabled`, `reference_kl_coef`: Whether the frozen-reference KL reward penalty is enabled, and its weight (disabled by default)
 - `reference_devices`: Optional device placement for reference models
 {{% /hint %}}
 
@@ -82,7 +82,7 @@ In Q mode, the implementation uses the same TD-residual actor weight, with a sam
 - `train_dataset`: Training dataset (required)
 - `eval_dataset`: Optional evaluation dataset
 - `model_config`: Model loading options; `critic_value_head_hidden_dim` configures the centralized critic's value head (optional)
-- `wandb_config`: Weights & Biases logging config (optional)
+- `wandb_config`: Weights & Biases logging configuration (optional)
 - `metrics_callback`: Optional callback taking rollout samples and returning a dictionary of scalar metrics
 - `external_transition`: Transition function required when `num_turns > 1`
 {{% /hint %}}
@@ -92,7 +92,7 @@ MAAC updates on collected samples without importance sampling or policy-ratio cl
 {{% /hint %}}
 
 {{% hint warning %}}
-The trainer uses a fixed training DataLoader batch size of 1. For `num_turns > 1`, provide an `external_transition` and set `num_generations=1`. `train_batch_size` defaults to `rollout_buffer_size`; actual updates use the available samples in each agent/turn group, including smaller groups when buffers are flushed.
+The trainer uses a fixed training DataLoader batch size of 1. For `num_turns > 1`, an `external_transition` and `num_generations=1` are required. `train_batch_size` defaults to `rollout_buffer_size`; actual updates use the available samples in each agent/turn group, including smaller groups when buffers are flushed.
 {{% /hint %}}
 
 ## IAC
@@ -110,7 +110,7 @@ CoMLRL supports two IAC variants:
 
 - **Separate Critic**: Uses an independent model for value estimation. Actor and critic parameters are optimized separately, at the cost of storing an additional model per agent.
 
-- **Shared Model**: Attaches a small value head to the transformer backbone, sharing the actor model's history (or history-action) representations to reduce space costs.
+- **Shared Model**: Attaches a small value head to the transformer backbone, sharing the actor model's history (or history-action) representations to reduce space requirements.
 
 The critics are updated by minimizing the TD error:
 
@@ -149,16 +149,16 @@ where {{< katex >}}\epsilon{{< /katex >}} is `value_clip_range` and these errors
 - `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
 - `critic_value_head_hidden_dim`: Hidden dimension for critic value head
 - `value_head_hidden_dim`: Hidden dimension for value head in shared-model mode
-- `external_prompt_passthrough`: Use external prompts directly in multi-turn
+- `external_prompt_passthrough`: Whether to use external prompts directly in multi-turn training
 - `discount`: Discount factor in TD targets; logged `expected_return` uses undiscounted reward sums
-- `early_termination_threshold`: Stop when a turn's mean processed reward exceeds this threshold; `None` disables early stopping
+- `early_termination_threshold`: A rollout ends when a turn's mean processed reward exceeds this threshold; `None` disables early stopping
 - `eval_interval`: Evaluation interval (in training batches)
 - `eval_num_samples`: Number of evaluation samples per interval
-- `eval_batch_size`: Eval dataloader batch size
+- `eval_batch_size`: Evaluation DataLoader batch size
 - `logging_steps`: Minimum number of joint-action reward evaluations between training metric logs
 - `parallel_training`: `none` for one device or `mp` for explicit agent/critic device placement
 - `agent_devices`, `critic_devices`: Device assignments; `mp` requires `agent_devices` and, for separate critics, `critic_devices`
-- `reference_kl_enabled`, `reference_kl_coef`: Enable and weight the frozen-reference KL reward penalty (disabled by default)
+- `reference_kl_enabled`, `reference_kl_coef`: Whether the frozen-reference KL reward penalty is enabled, and its weight (disabled by default)
 - `reference_devices`: Optional device placement for reference models
 {{% /hint %}}
 
@@ -170,20 +170,20 @@ where {{< katex >}}\epsilon{{< /katex >}} is `value_clip_range` and these errors
 - `tokenizer`: Shared tokenizer, or a per-agent list when using `agents`; required with `agents` or a model instance, otherwise loaded from `agent_model`
 - `reward_func`: Callable that returns a list of floats (required)
 - `reward_processor`: Optional processor to apply to rewards
-- `formatters`: Single callable or list of callables for each agent to format dataset items into prompts
+- `formatters`: Single callable or list of per-agent callables for formatting dataset items into prompts
 - `args`: Instance of `IACConfig` (optional)
 - `train_dataset`: Training dataset (required)
 - `eval_dataset`: Evaluation dataset (optional)
-- `model_config`: Model configuration dict (optional)
+- `model_config`: Model configuration dictionary (optional)
 - `wandb_config`: Configuration for Weights & Biases logging (optional)
 - `metrics_callback`: Optional callback taking rollout samples and returning a dictionary of scalar metrics
 - `external_transition`: Optional transition function required for multi-turn training
 {{% /hint %}}
 
 {{% hint warning %}}
-IAC updates on collected samples without importance sampling or policy-ratio clipping. In shared-model mode (`use_separate_critic=False`), value heads are attached to the actor models; passing `critic_model` or `critics` raises an error, and `value_clip_range` only applies in this mode. Agents may be homogeneous or heterogeneous. In separate-critic mode (`use_separate_critic=True`), pass a `critics` list of length `num_agents` or a single `critic_model` source to be broadcast. Use distinct model instances or an identifier that is loaded separately for each critic to keep their parameters independent; broadcasting one preloaded model object reuses its parameters. Each critic consumes its actor's token IDs, so a different critic model must be compatible with that actor's tokenizer.
+IAC updates on collected samples without importance sampling or policy-ratio clipping. In shared-model mode (`use_separate_critic=False`), value heads are attached to the actor models; passing `critic_model` or `critics` raises an error, and `value_clip_range` only applies in this mode. Agents may be homogeneous or heterogeneous. In separate-critic mode (`use_separate_critic=True`), users can supply a `critics` list of length `num_agents` or a single `critic_model` source for broadcasting. Distinct model instances or an identifier loaded separately for each critic keep their parameters independent; broadcasting one preloaded model object reuses its parameters. Each critic consumes its actor's token IDs, so a different critic model must be compatible with that actor's tokenizer.
 {{% /hint %}}
 
 {{% hint warning %}}
-The trainer uses a fixed training DataLoader batch size of 1. For `num_turns > 1`, provide an `external_transition` and set `num_generations=1`. `train_batch_size` defaults to `rollout_buffer_size`; actual updates use the available samples in each agent/turn group, including smaller groups when buffers are flushed.
+The trainer uses a fixed training DataLoader batch size of 1. For `num_turns > 1`, an `external_transition` and `num_generations=1` are required. `train_batch_size` defaults to `rollout_buffer_size`; actual updates use the available samples in each agent/turn group, including smaller groups when buffers are flushed.
 {{% /hint %}}

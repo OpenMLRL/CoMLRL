@@ -10,7 +10,7 @@
   <input type="checkbox" class="hidden toggle" id="menu-control" />
   <input type="checkbox" class="hidden toggle" id="toc-control" />
   {{ end }}
-  <a class="docs-skip-link" href="#main-content">Skip to content</a>
+  <a class="docs-skip-link" href="#main-content">{{ i18n "docsSkipToContent" }}</a>
   {{ partial "docs/site-header" . }}
   <main class="container flex">
     {{ if not $isResearchOverview }}
@@ -51,7 +51,7 @@
 </html>
 
 {{ define "menu-container" }}
-<aside class="book-menu" id="site-navigation" aria-label="Documentation navigation">
+<aside class="book-menu" id="site-navigation" aria-label="{{ i18n "docsDocumentationNavigation" }}">
   <div class="book-menu-content">
     {{ template "menu" . }}
   </div>
@@ -66,7 +66,7 @@
   {{ partial "docs/header" . }}
 
   {{ if partial "docs/toc-show" . }}
-  <aside class="hidden" id="mobile-toc" aria-label="On this page">
+  <aside class="hidden" id="mobile-toc" aria-label="{{ i18n "docsOnThisPage" }}">
     {{ template "toc" . }}
   </aside>
   {{ end }}
@@ -107,7 +107,7 @@
 
 {{ define "toc-container" }}
   {{ if partial "docs/toc-show" . }}
-  <aside class="book-toc" aria-label="On this page">
+  <aside class="book-toc" aria-label="{{ i18n "docsOnThisPage" }}">
     <div class="book-toc-content">
       {{ template "toc" . }}
     </div>

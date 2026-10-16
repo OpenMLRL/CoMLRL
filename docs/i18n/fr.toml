@@ -1,0 +1,73 @@
+[docsHome]
+other = "Accueil de la documentation CoMLRL"
+[docsProjectLinks]
+other = "Lines du project"
+[docsGitHubStars]
+other = "{{ .Count }} étoiles GitHub"
+[docsGitHubStarsUpdated]
+other = "{{ .Count }} étoiles · vérifié le {{ .Updated }}"
+[docsColorTheme]
+other = "Thème de couleurs"
+[docsLightMode]
+other = "Mode clair"
+[docsDarkMode]
+other = "Mode sombre"
+[docsReadingMode]
+other = "Mode lecture"
+[docsAreas]
+other = "Sections de la documentation"
+[docsDocumentation]
+other = "Documentation"
+[docsExamples]
+other = "Examples"
+[docsEnvironments]
+other = "Environments"
+[docsOverview]
+other = "Vue d’ensemble"
+[docsExampleOverview]
+other = "Vue d’ensemble des examples"
+[docsResearchOverview]
+other = "Vue d’ensemble de la recherche"
+[docsResearch]
+other = "Recherche"
+[docsPapers]
+other = "Articles"
+[docsExamplePages]
+other = "Pages d’exemples"
+[docsResearchPages]
+other = "Pages de recherche"
+[docsDocumentationPages]
+other = "Pages de documentation"
+[docsMenu]
+other = "Menu"
+[docsOnThisPage]
+other = "Sur cette page"
+[docsPageSections]
+other = "Sections de la page"
+[docsLanguage]
+other = "Langue"
+[docsAutomaticTranslation]
+other = "Traduction automatique"
+[docsEnglishOriginal]
+other = "Original en anglais"
+[docsSkipToContent]
+other = "Aller au contenu"
+[docsDocumentationNavigation]
+other = "Navigation de la documentation"
+[docsAdjacentPages]
+other = "Pages précédente et suivante"
+[docsPreviousPage]
+other = "Page précédente"
+[docsNextPage]
+other = "Page suivante"
+[Search]
+other = "Rechercher"
+["Edit this page"]
+other = "Modifier cette page"
+["Last modified by"]
+other = "Dernière modification par"
+
+[docsExternalFeedback]
+other = "Retour externe"
+[docsParameters]
+other = "Paramètres"

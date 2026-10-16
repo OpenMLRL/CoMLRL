@@ -1,5 +1,9 @@
 {{ partial "docs/inject/toc-before" . }}
-<h2 class="docs-toc-title">On this page</h2>
+<h2 class="docs-toc-title">{{ i18n "docsOnThisPage" }}</h2>
 {{/* Each viewport gets its own outline, without duplicate element IDs. */}}
-{{ .TableOfContents | replaceRE ` id="TableOfContents"` ` class="docs-toc-nav" aria-label="Page sections"` | safeHTML }}
+{{ $toc := .TableOfContents }}
+{{ with .Params.tocDepth }}
+  {{ $toc = $.Fragments.ToHTML 2 (int .) false }}
+{{ end }}
+{{ $toc | replaceRE ` id="TableOfContents"` (printf ` class="docs-toc-nav" aria-label="%s"` (i18n "docsPageSections")) | safeHTML }}
 {{ partial "docs/inject/toc-after" . }}

@@ -10,8 +10,8 @@ devices. Neither mode requires a job scheduler.
 
 ## Model Parallelization
 
-Pass an `IACConfig` to your `IACTrainer` through its `args` parameter. For example,
-with four visible CUDA devices and two agents:
+Users can configure `IACTrainer` by passing an `IACConfig` through its `args` parameter. The following
+configuration uses four visible CUDA devices and two agents:
 
 ```python
 from comlrl.trainers.actor_critic import IACConfig
@@ -31,6 +31,6 @@ when `use_separate_critic=True`. Each model stays on its assigned device; this
 does not split an individual model across GPUs. Responses are passed to the
 reward function, and the rewards are used for each agent's update.
 
-Device indices refer to the GPUs visible to the Python process. Configure the
-device lists to match your machine and the memory needed by each model. Changing
-device placement or parallel scheduling can change numerical training results.
+Device indices refer to the GPUs visible to the Python process. Users can choose device assignments
+based on the available devices and each model's memory requirements. Device
+placement and parallel scheduling can affect numerical training results.

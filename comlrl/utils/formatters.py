@@ -16,21 +16,31 @@ def build_formatters(
         return item.get("prompt", "")
 
     def wrap_formatter(fmt: Formatter) -> Formatter:
+        def remember_source(wrapped):
+            # Checkpoint state belongs to the user callback, not this adapter.
+            # A private attribute leaves inspect.signature and invocation intact.
+            wrapped._comlrl_checkpoint_source = fmt
+            return wrapped
+
         try:
             sig = inspect.signature(fmt)
             if "external_prompts" in sig.parameters:
                 if pass_none_external_prompts:
-                    return lambda x, external_prompts=None, f=fmt: f(
-                        x, external_prompts=external_prompts
+                    return remember_source(
+                        lambda x, external_prompts=None, f=fmt: f(
+                            x, external_prompts=external_prompts
+                        )
                     )
-                return lambda x, external_prompts=None, f=fmt: (
-                    f(x, external_prompts=external_prompts)
-                    if external_prompts is not None
-                    else f(x)
+                return remember_source(
+                    lambda x, external_prompts=None, f=fmt: (
+                        f(x, external_prompts=external_prompts)
+                        if external_prompts is not None
+                        else f(x)
+                    )
                 )
         except (TypeError, ValueError):
             pass
-        return lambda x, external_prompts=None, f=fmt: f(x)
+        return remember_source(lambda x, external_prompts=None, f=fmt: f(x))
 
     if formatters is None:
         return [default_formatter for _ in range(num_agents)]
