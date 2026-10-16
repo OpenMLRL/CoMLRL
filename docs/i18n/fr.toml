@@ -47,7 +47,7 @@ other = "Sections de la page"
 [docsLanguage]
 other = "Langue"
 [docsAutomaticTranslation]
-other = "Traduction automatique"
+other = "Traduit automatiquement avec {{ .Model }}"
 [docsEnglishOriginal]
 other = "Original en anglais"
 [docsSkipToContent]

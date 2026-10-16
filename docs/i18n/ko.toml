@@ -47,7 +47,7 @@ other = "페이지 섹션"
 [docsLanguage]
 other = "언어"
 [docsAutomaticTranslation]
-other = "자동 번역"
+other = "{{ .Model }} 자동 번역"
 [docsEnglishOriginal]
 other = "영어 원문"
 [docsSkipToContent]

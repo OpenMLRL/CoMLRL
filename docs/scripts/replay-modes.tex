@@ -2,19 +2,14 @@
 %   pdflatex -output-directory=/tmp docs/scripts/replay-modes.tex
 %   pdf2svg /tmp/replay-modes.pdf docs/static/img/replay-modes.svg
 %   python3 docs/scripts/prepare_rollout_svgs.py
-% Keep the stage boundaries in prepare_rollout_svgs.py in sync with the row positions.
-% Shared preamble for the CoMLRL training-flow diagrams. Paste it verbatim at the
-% top of every diagram so each .tex stays standalone.
 \documentclass[tikz,border=3pt]{standalone}
 \usepackage{amsmath,amssymb,bm}
 \usetikzlibrary{arrows.meta,positioning,calc,fit}
 
-% Only these paints have dark-theme mappings (assets/_diagram-theme.scss).
 \colorlet{agentA}{red!80!black}     % agent 1: policy, prompts, responses, loss
 \colorlet{agentB}{blue!80!black}    % agent 2
 \colorlet{learned}{orange!80!black} % learned evaluators: critic, reward model
 \colorlet{update}{green!50!black}   % gradients and parameter updates
-% Joint or shared quantities are black. Gray = black with fill opacity.
 
 \tikzset{
   >={Stealth[length=3.2pt,width=3pt]},
@@ -27,7 +22,6 @@
 
 % Replay modes: which round datasets D^(1..nu) each mode samples from, with what
 % weight, and the sampled training pairs B^(nu).
-% Rows are animation stages; avoid \frac and \_ (their rules animate as edges).
 % Bar heights are \s pt per unit weight. lambda_decay uses lambda = 0.5, so the
 % normalized weights of the K = 5 datasets (age a = 4 ... 0) are 2^(4-a)/31.
 \def\s{20}

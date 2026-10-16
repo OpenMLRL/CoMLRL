@@ -1,14 +1,10 @@
-baseURL = "/"            # Hugo will be built with CLI baseURL override
+baseURL = "/"              # Overridden by --baseURL at build time
 title = "CoMLRL"
 copyright = "© {year} OpenMLRL. All rights reserved."
 languageCode = "en-us"
 defaultContentLanguage = "en"
 relativeURLs = false       # Preserve Hugo's baseURL-prefixed paths on GitHub Pages
 
-# Do not build a /public folder into the repo; GitHub Action will publish.
-publishDir = "public"
-
-# Keep the site minimal; Hugo Modules will import the Book theme.
 enableGitInfo = true
 disableKinds = ["taxonomy"]
 
@@ -18,15 +14,15 @@ disableKinds = ["taxonomy"]
 
 [params]
   BookTheme = "light"         # Base palette; theme.js applies system/user preference
-  BookSection = "docs"        # top-level content section for the sidebar
-  BookToC = true               # show the page outline beside the article
+  BookSection = "docs"
+  BookToC = true
   BookSearch = true
   BookLogo = "img/comlrl-logo.png"
   BookRepo = "https://github.com/OpenMLRL/CoMLRL"
   BookRepoBranch = "main"
   BookEditPath = "edit/main/docs"
   BookDateFormat = "Jan 2, 2006"
-  BookMath = true              # enable KaTeX site-wide
+  BookMath = true
 
 [markup]
   [markup.tableOfContents]
@@ -42,6 +38,5 @@ disableKinds = ["taxonomy"]
     noClasses = false
 
 [module]
-  # Import the Hugo Book theme via Hugo Modules
   [[module.imports]]
     path = "github.com/alex-shpak/hugo-book"

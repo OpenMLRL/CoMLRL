@@ -47,7 +47,7 @@ other = "页面章节"
 [docsLanguage]
 other = "语言"
 [docsAutomaticTranslation]
-other = "自动翻译"
+other = "由 {{ .Model }} 自动翻译"
 [docsEnglishOriginal]
 other = "英文原文"
 [docsSkipToContent]

@@ -104,7 +104,7 @@ def build_site(
     languages=None,
     cache_only=False,
     endpoint="http://127.0.0.1:11434",
-    model="qwen2.5-coder:3b",
+    model="translategemma:12b",
 ):
     selected = list(
         dict.fromkeys(
@@ -181,7 +181,8 @@ def build_site(
                     translated = (
                         "---\n"
                         + frontmatter
-                        + '\ntranslationSource: "en"\n---\n'
+                        + '\ntranslationSource: "en"\n'
+                        + f"translationModel: {json.dumps(model)}\n---\n"
                         + translated[match.end() :]
                     )
                     target = translated_content / relative
@@ -245,7 +246,7 @@ def add_translation_arguments(parser):
         help="Require current cached translations; do not call Ollama",
     )
     parser.add_argument(
-        "--model", default="qwen2.5-coder:3b", help="Local Ollama translation model"
+        "--model", default="translategemma:12b", help="Local Ollama translation model"
     )
     parser.add_argument(
         "--ollama-url",

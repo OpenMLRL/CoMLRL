@@ -25,7 +25,7 @@ from PIL import Image, ImageFilter, __version__ as PILLOW_VERSION, _webp, featur
 
 
 DOCS = Path(__file__).resolve().parents[1]
-SOURCE = DOCS / "static" / "img" / "demo.gif"
+SOURCE = DOCS / "assets" / "demo.gif"
 DEFAULT_OUTPUT = DOCS / "static" / "img" / "demo-hd.webp"
 SOURCE_SHA256 = "1b53f9188cba46b5908ca2aed36bbcbeb2b34091e62e6cd669ae5a36a7065de0"
 PILLOW_REQUIRED = "12.3.0"

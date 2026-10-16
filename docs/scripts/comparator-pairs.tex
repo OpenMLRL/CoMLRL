@@ -2,19 +2,14 @@
 %   pdflatex -output-directory=/tmp docs/scripts/comparator-pairs.tex
 %   pdf2svg /tmp/comparator-pairs.pdf docs/static/img/comparator-pairs.svg
 %   python3 docs/scripts/prepare_rollout_svgs.py
-% Keep the stage boundaries in prepare_rollout_svgs.py in sync with the row positions.
-% Shared preamble for the CoMLRL training-flow diagrams. Paste it verbatim at the
-% top of every diagram so each .tex stays standalone.
 \documentclass[tikz,border=3pt]{standalone}
 \usepackage{amsmath,amssymb,bm}
 \usetikzlibrary{arrows.meta,positioning,calc,fit}
 
-% Only these paints have dark-theme mappings (assets/_diagram-theme.scss).
 \colorlet{agentA}{red!80!black}     % agent 1: policy, prompts, responses, loss
 \colorlet{agentB}{blue!80!black}    % agent 2
 \colorlet{learned}{orange!80!black} % learned evaluators: critic, reward model
 \colorlet{update}{green!50!black}   % gradients and parameter updates
-% Joint or shared quantities are black. Gray = black with fill opacity.
 
 \tikzset{
   >={Stealth[length=3.2pt,width=3pt]},
@@ -27,7 +22,6 @@
 
 % Iterative comparator: the comparator's source, index-aligned samples, task-reward
 % comparisons (either side can win) and the iteration's pairs D^(nu).
-% Rows are animation stages; avoid \frac and \_ (their rules animate as edges).
 \begin{document}
 \begin{tikzpicture}[x=1pt, y=1pt, font=\footnotesize]
   \def\ka{125} \def\kb{185} \def\kc{245} % candidate index columns

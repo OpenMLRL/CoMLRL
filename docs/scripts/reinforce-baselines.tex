@@ -2,11 +2,9 @@
 %   pdflatex -output-directory=/tmp docs/scripts/reinforce-baselines.tex
 %   pdf2svg /tmp/reinforce-baselines.pdf docs/static/img/reinforce-baselines.svg
 %   python3 docs/scripts/prepare_rollout_svgs.py
-% Keep the stage boundaries in prepare_rollout_svgs.py in sync with the row positions.
 \documentclass[tikz,border=3pt]{standalone}
 \usepackage{amsmath,amssymb}
 
-% Avoid \frac and \_ : their rules export as straight paths and would animate as edges.
 % Sample colors match the joint-tree leaves; sign colors match the dark-theme map.
 \definecolor{s1}{RGB}{255,140,0}
 \definecolor{s2}{RGB}{255,180,200}

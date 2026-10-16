@@ -29,9 +29,9 @@ English remains the only maintained content in `content/`. The multilingual prev
 python3 docs/scripts/preview.py --multilingual
 ```
 
-The header's language menu switches to the same page and retains the current section anchor. Generated translations are labelled and link to the English original. Code blocks, code comments, model identifiers, formulas, and link destinations are preserved. The language menu lists only languages included in the current build.
+The header's language menu switches to the same page and retains the current section anchor. Generated translations name the model that produced them and link to the English original. Code blocks, code comments, model identifiers, formulas, and link destinations are preserved. The language menu lists only languages included in the current build.
 
-Translations are cached independently in the Git-ignored `.cache/docs-translations/<language>/` directories at the repository root. A source hash determines whether each page needs translation. Unchanged pages reuse their cache; changed or missing pages are translated by a local Ollama service at `http://127.0.0.1:11434`. The default model is `qwen2.5-coder:3b`; `--model` selects another installed model. Local translation requires Ollama to be running and the chosen model to be installed. It does not require Crowdin or a paid translation API, but uses the local device's compute resources. Translation quality still benefits from review.
+Translations are cached independently in the Git-ignored `.cache/docs-translations/<language>/` directories at the repository root. A source hash determines whether each page needs translation. Unchanged pages reuse their cache; changed or missing pages are translated by a local Ollama service at `http://127.0.0.1:11434`. The default model is `translategemma:12b`; `--model` selects another installed model. Local translation requires Ollama to be running and the chosen model to be installed. It does not require Crowdin or a paid translation API, but uses the local device's compute resources. Translation quality still benefits from review.
 
 The first build generates any missing translations and can take longer; subsequent builds reuse them. Cached pages are validated before reuse; invalid entries are regenerated when Ollama is available. `--cache-only` builds without contacting Ollama and fails if any selected language has a missing, stale, or invalid translation. Caches are local: a fresh checkout needs to generate them, or restore them from a build cache. Generated translated Markdown exists only in a temporary build directory; generated HTML is never added to Git by these scripts.
 
@@ -46,12 +46,6 @@ python3 docs/scripts/build.py --multilingual \
 ```
 
 The build checks protected Markdown, preserves English heading and API-card anchors, and validates rendered code, formulas, links, assets, language switches, and redirects before writing the output. A failed translation or validation stops the build. The output is a deployment artifact and should not be copied into the OpenMLRL repository and committed. The production website workflow restores translation caches and runs its own Ollama service on CPU for missing or changed pages. It does not depend on the Ollama service or caches on a developer's computer. The first build can take substantially longer than later builds because it generates translations for all six target languages.
-
-The translation guards and cache behavior can be checked without a model or network access:
-
-```bash
-python3 -B -m unittest discover -s docs/scripts -p 'test_translation*.py'
-```
 
 ## Research publications
 
@@ -69,7 +63,7 @@ The header groups the OpenMLRL link, GitHub link, and theme controls with compac
 
 ## Overview demo
 
-The homepage displays `static/img/demo-hd.webp`, a 2612 × 1460 derivative of the original Manim export. The source `static/img/demo.gif` remains unchanged: 1306 × 730, 404 frames at 70 ms each, looping every 28.28 seconds. Each composited source frame is resized with Lanczos and receives an unsharp mask (radius 1, percent 140, threshold 2), then is encoded as lossless animated WebP. This improves edge definition without OCR, generated symbols, or re-typesetting; it cannot recover detail absent from the original export. The source frame order and timing are preserved, including fades. WebP may merge identical consecutive frames while retaining their complete duration.
+The homepage displays `static/img/demo-hd.webp`, a 2612 × 1460 derivative of the original Manim export. The source `assets/demo.gif`, which the repository README also shows, remains unchanged: 1306 × 730, 404 frames at 70 ms each, looping every 28.28 seconds. Each composited source frame is resized with Lanczos and receives an unsharp mask (radius 1, percent 140, threshold 2), then is encoded as lossless animated WebP. This improves edge definition without OCR, generated symbols, or re-typesetting; it cannot recover detail absent from the original export. The source frame order and timing are preserved, including fades. WebP may merge identical consecutive frames while retaining their complete duration.
 
 Regenerate the derivative from the repository root using the Pillow version specified in the script:
 
@@ -92,6 +86,8 @@ python3 docs/scripts/prepare_rollout_svgs.py
 ```
 
 The script only inserts animation attributes and verifies that removing them reproduces each source file byte for byte. If the diagram layout changes, update its stage boundaries in the script. The `rollout-diagram` shortcode namespaces SVG glyph IDs; `assets/rollout-diagrams.js` controls playback. Without JavaScript, or with reduced motion enabled, the complete diagrams remain visible.
+
+The training-flow originals are standalone TikZ files in `docs/scripts/*.tex`; each header lists the commands that rebuild its SVG. All but `reinforce-baselines.tex` share one preamble, copied verbatim into each file. Only its named paints (`agentA`, `agentB`, `learned`, `update`) have dark-theme mappings in `assets/_diagram-theme.scss`; joint or shared quantities are black, and gray is black with fill opacity. Each row is an animation stage, so keep row positions in sync with the script's stage boundaries, and avoid `\frac` and `\_`, whose rules export as straight paths that would animate as edges.
 
 ## Deploy (GitHub Pages)
 

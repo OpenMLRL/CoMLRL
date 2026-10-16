@@ -10,7 +10,7 @@
 {{ end }}
 {{ if and (ne .Site.Language.Lang "en") .Params.translationSource }}
   <p class="docs-translation-note">
-    <span>{{ i18n "docsAutomaticTranslation" }}</span>
+    <span>{{ i18n "docsAutomaticTranslation" (dict "Model" .Params.translationModel) }}</span>
     {{ range where .AllTranslations "Language.Lang" "en" }}
       <span aria-hidden="true">·</span>
       <a href="{{ .RelPermalink }}" hreflang="en" data-language-link>{{ i18n "docsEnglishOriginal" }}</a>

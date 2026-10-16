@@ -47,7 +47,7 @@ other = "ページ内のセクション"
 [docsLanguage]
 other = "言語"
 [docsAutomaticTranslation]
-other = "自動翻訳"
+other = "{{ .Model }} による自動翻訳"
 [docsEnglishOriginal]
 other = "英語の原文"
 [docsSkipToContent]
