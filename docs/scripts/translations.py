@@ -42,12 +42,14 @@ COUNT = r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?x(?![A-Za-z0-9])"
 # Terms every language keeps in English: masked before translation, then validated.
 # RL jargon, product names, and words with two or more capitals (algorithm names,
 # acronyms, class and dataset names). Inside compounds such as "generated-token",
-# only the term is kept.
+# only the term is kept. Boundaries are ASCII so CJK particles, as in "actors를",
+# do not hide a term.
 KEEP_ENGLISH = re.compile(
-    r"(?<!\w)(?:[Aa]ctor-[Cc]ritic|[Aa]ctors?|[Cc]ritics?|[Rr]ollouts?|[Ee]pisodes?"
-    r"|[Ee]pochs?|[Tt]okens?|[Tt]okenizers?|Top-[kp]|Weights & Biases|Hugging Face"
-    r"|Minecraft|LLaMA-Factory|Dec-POMDP"
-    r"|(?!ZXQ\d{5}QXZ)(?=[A-Za-z0-9]*[A-Z][A-Za-z0-9]*[A-Z])[A-Za-z][A-Za-z0-9]*)(?!\w)"
+    r"(?<![A-Za-z0-9_])(?:[Aa]ctor-[Cc]ritic|[Aa]ctors?|[Cc]ritics?|[Rr]ollouts?"
+    r"|[Ee]pisodes?|[Ee]pochs?|[Tt]okens?|[Tt]okenizers?|Top-[kp]|Weights & Biases"
+    r"|Hugging Face|Minecraft|LLaMA-Factory|Dec-POMDP"
+    r"|(?!ZXQ\d{5}QXZ)(?=[A-Za-z0-9]*[A-Z][A-Za-z0-9]*[A-Z])[A-Za-z][A-Za-z0-9]*)"
+    r"(?![A-Za-z0-9_])"
 )
 _PROTECTED = re.compile(
     "|".join(

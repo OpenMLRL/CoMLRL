@@ -104,7 +104,7 @@ def build_site(
     languages=None,
     cache_only=False,
     endpoint="http://127.0.0.1:11434",
-    model="translategemma:12b",
+    model="translategemma:4b",
 ):
     selected = list(
         dict.fromkeys(
@@ -246,7 +246,7 @@ def add_translation_arguments(parser):
         help="Require current cached translations; do not call Ollama",
     )
     parser.add_argument(
-        "--model", default="translategemma:12b", help="Local Ollama translation model"
+        "--model", default="translategemma:4b", help="Local Ollama translation model"
     )
     parser.add_argument(
         "--ollama-url",
