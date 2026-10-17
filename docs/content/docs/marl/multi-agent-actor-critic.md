@@ -6,7 +6,9 @@ aliases:
 math: true
 ---
 
-Actor-Critic (AC) methods are widely used policy-gradient methods that train a critic to support the policy. They can reach lower variance and better sample efficiency than REINFORCE, but the critic needs careful design and tuning for stable training. In Multi-Agent Reinforcement Learning (MARL), AC methods include Multi-Agent Actor-Critic (MAAC) and Independent Actor-Critic (IAC).
+Actor-Critic (AC) methods are widely used policy gradient methods that use critics to support training.
+AC methods can achieve lower variance and better sample efficiency than REINFORCE, but this requires careful design and tuning of the critic to ensure stable training.
+In Multi-Agent Reinforcement Learning (MARL), Actor-Critic methods include Multi-Agent Actor-Critic (MAAC) and Independent Actor-Critic (IAC).
 
 Both roll out the agents jointly and score their joint response with the reward function, but they use critics differently. MAAC trains one critic on the joint history, so every agent shares its TD error. IAC trains one critic per agent on that agent's history, so each agent gets its own TD error.
 
@@ -14,7 +16,7 @@ Both roll out the agents jointly and score their joint response with the reward 
 
 ## MAAC
 
-Multi-Agent Actor-Critic (MAAC) uses a Centralized Critic (CC) shared by all agents to evaluate joint histories {{< katex >}}V_{\boldsymbol{\phi}}(\mathbf{h}_t){{< /katex >}} with `critic_type="v"`, or joint history-action pairs {{< katex >}}Q_{\boldsymbol{\psi}}(\mathbf{h}_t, \mathbf{a}_t){{< /katex >}} with `critic_type="q"`. The critic reads the agents' prompts joined into one text sequence, plus their completions in Q mode. Each agent's policy gradient is:
+Multi-Agent Actor-Critic (MAAC) uses a Centralized Critic (CC) across agents to evaluate the values of joint histories {{< katex >}}V_{\boldsymbol{\phi}}(\mathbf{h}_t){{< /katex >}} with `critic_type="v"`, or joint history-action pairs {{< katex >}}Q_{\boldsymbol{\psi}}(\mathbf{h}_t, \mathbf{a}_t){{< /katex >}} with `critic_type="q"`. The critic receives the agents' prompts joined into a single text sequence; Q mode also includes their generated completions. The policy gradient of each agent is:
 
 {{< katex display=true >}}
 \nabla_{\theta_i} J(\theta_i) = \mathbb{E}_{\boldsymbol{\pi}}\left[\sum_{t=0}^{H-1} \nabla_{\theta_i} \log \pi_{\theta_i}(a_{i,t}|h_{i,t})\,\boldsymbol{\delta}_t\right]
@@ -26,9 +28,9 @@ where {{< katex inline=true >}}\boldsymbol{\delta}_t = r_t + \gamma V_{\boldsymb
 \mathcal{L}(\boldsymbol{\phi}) = \mathbb{E}_{\boldsymbol{\pi}}\left[\sum_{t=0}^{H-1} \big(r_t + \gamma V_{\phi}(\mathbf{h}_{t+1}) - V_{\phi}(\mathbf{h}_{t})\big)^2\right].
 {{< /katex >}}
 
-Here {{< katex >}}r_t{{< /katex >}} is the processed reward, minus the reference-KL penalty when that is enabled; rewards may be shared across agents or given per agent. The last collected turn, including an early-terminated or single-turn rollout, uses the reward alone as its target, without bootstrapping. A completion's log-probability sums its generated tokens, excluding prompt and trailing padding tokens, and the loss averages over samples. Before updating, buffers are grouped by agent and turn, and `advantage_normalization` normalizes the TD errors within each group; targets and advantages stay fixed during the update. The shared critic is updated with each agent's batch in turn, and `value_loss_coef` scales its loss.
+Here {{< katex >}}r_t{{< /katex >}} is the processed reward, with the optional reference-KL penalty subtracted when enabled; rewards may be shared across agents or supplied per agent. The final collected turn, including an early-terminated or single-turn rollout, uses the reward alone as its target, without bootstrapping. The completion log-probability is the sum of generated-token log-probabilities; prompt and trailing padding tokens are excluded. The loss then averages across samples. Buffers are grouped by agent and turn before updating, and `advantage_normalization` normalizes the TD errors within each such group. Targets and advantages remain fixed during the update. The shared critic is updated sequentially with each agent's batch, and `value_loss_coef` scales its loss.
 
-Q mode uses the same TD-error actor weight and bootstraps with a sampled next action; it does not implement an actor objective weighted directly by Q or a state-only baseline for Q.
+In Q mode, the implementation uses the same TD-residual actor weight, with a sampled next action in the bootstrap. It does not implement a separate actor objective weighted directly by Q or a state-only baseline for Q.
 
 {{% hint info %}}
 **MAACConfig** parameters:
@@ -88,7 +90,7 @@ The trainer uses a fixed training DataLoader batch size of 1. For `num_turns > 1
 
 ## IAC
 
-Independent Actor-Critic (IAC) optimizes each agent's policy independently, using returns from the agents' joint responses. Each agent has its own actor and critic and treats the other agents as part of the environment. Rewards can be shared or agent-specific. Each critic conditions on its agent's prompt and history in V mode, or on its prompt and completion in Q mode. The policy gradient for each agent is:
+Independent Actor-Critic (IAC) optimizes each agent's policy independently while using joint returns from multiple agents. Each agent maintains its own actor and critic, and other agents serve as part of the environment. Rewards can be shared or agent-specific. The critic conditions on that agent's prompt/history in V mode, or on its prompt and completion in Q mode. The policy gradient for each agent is:
 
 {{< katex display=true >}}
 \nabla_{\theta_i} J(\theta_i) = \mathbb{E}_{\boldsymbol{\pi}}\left[\sum_{t=0}^{H-1} \nabla_{\theta_i} \log \pi_{\theta_i}(a_{i,t}|h_{i,t})\,\delta_{i,t}\right]
@@ -100,7 +102,7 @@ CoMLRL supports two IAC variants:
 
 - **Separate Critic**: Uses an independent model for value estimation. Actor and critic parameters are optimized separately, at the cost of storing an additional model per agent.
 
-- **Shared Model**: Attaches a small value head to the transformer backbone, sharing the actor model's history (or history-action) representations to reduce memory use.
+- **Shared Model**: Attaches a small value head to the transformer backbone, sharing the actor model's history (or history-action) representations to reduce space requirements.
 
 The critics are updated by minimizing the TD error:
 
@@ -171,7 +173,7 @@ where {{< katex >}}\hat{V}_t{{< /katex >}} is the TD target, {{< katex >}}\epsil
 {{% /hint %}}
 
 {{% hint warning %}}
-IAC updates on collected samples without importance sampling or policy-ratio clipping. In shared-model mode (`use_separate_critic=False`), value heads are attached to the actor models; passing `critic_model` or `critics` raises an error, and `value_clip_range` only applies in this mode. In separate-critic mode (`use_separate_critic=True`), users can supply a `critics` list of length `num_agents` or a single `critic_model` source to broadcast. Distinct model instances, or an identifier loaded separately for each critic, keep the critics' parameters independent; broadcasting one preloaded model object shares its parameters. Each critic consumes its actor's token IDs, so a different critic model must be compatible with that actor's tokenizer. Agents may be homogeneous or heterogeneous in either mode.
+IAC updates on collected samples without importance sampling or policy-ratio clipping. In shared-model mode (`use_separate_critic=False`), value heads are attached to the actor models; passing `critic_model` or `critics` raises an error, and `value_clip_range` only applies in this mode. Agents may be homogeneous or heterogeneous. In separate-critic mode (`use_separate_critic=True`), users can supply a `critics` list of length `num_agents` or a single `critic_model` source for broadcasting. Distinct model instances or an identifier loaded separately for each critic keep their parameters independent; broadcasting one preloaded model object reuses its parameters. Each critic consumes its actor's token IDs, so a different critic model must be compatible with that actor's tokenizer.
 {{% /hint %}}
 
 {{% hint warning %}}

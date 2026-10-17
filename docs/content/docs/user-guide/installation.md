@@ -3,7 +3,7 @@ title: Installation
 weight: 1
 ---
 
-CoMLRL requires Python 3.10 or later. Install it from PyPI, conda-forge, or source, then install the PyTorch build for your device.
+CoMLRL can be installed from PyPI, conda-forge, or source and supports Python 3.10 or later. Users can install a PyTorch build compatible with their device.
 
 ## Installation from PyPI {#install-from-pypi}
 

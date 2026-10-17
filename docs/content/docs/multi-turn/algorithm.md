@@ -6,7 +6,7 @@ aliases:
   - /docs/user-guide/multi-turn-training/
 ---
 
-Many complex problems take more than one turn to solve. Between turns, LLM agents interact with the environment and receive feedback from other models or tools in the system.
+Many complex problems require more than one turn to solve. LLM agents interact with the environment to obtain useful feedback from other models or tools in the system.
 
 ## Multi-Turn MAGRPO
 
@@ -35,8 +35,8 @@ The current MAGRPO implementation accumulates undiscounted returns: `discount` d
 
 ## Multi-Turn MAAC/IAC
 
-Whereas the MAGRPO rollout tree produces many samples per episode, multi-turn MAAC/IAC generate one sample per agent per turn, and the episode continues until termination.
+The MAGRPO rollout tree generates numerous samples per episode. In the multi-turn setting, MAAC/IAC generate only one sample per agent per turn, and the episode continues across turns until termination.
 MAAC/IAC use one-step temporal-difference targets, with `discount` applied to the next rollout value and no bootstrapping after the final or early-terminated turn. The current implementation collects the full episode before buffering its samples. Policy updates occur when `rollout_buffer_size` is reached, and any remaining buffer is flushed at the end of the epoch. Policies are not updated between turns of the same episode.
-External feedback turns environment observations into prompts for later turns and is usually implemented in CoMLRL's downstream environments, as described in [Environment Transition]({{< relref "docs/multi-turn/transition" >}}).
+External feedback controls how environment observations are incorporated into prompts for subsequent turns. This mechanism is usually implemented in CoMLRL's downstream environments and is described in [Environment Transition]({{< relref "docs/multi-turn/transition" >}}).
 
 {{< rollout-diagram diagram="ac" direction="right" title="Actor-critic trajectory" description="One joint response per turn advances the episode from left to right." >}}

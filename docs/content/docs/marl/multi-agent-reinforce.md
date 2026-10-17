@@ -6,7 +6,9 @@ aliases:
 math: true
 ---
 
-REINFORCE is a class of policy-gradient methods that optimize the policy directly from sampled returns. Their simplicity and efficiency make them popular for LLM fine-tuning, as in [GRPO](https://arxiv.org/pdf/2402.03300), [Dr. GRPO](https://arxiv.org/abs/2503.20783), [RLOO](https://openreview.net/forum?id=r1lgTGL5DE), [ReMax](https://arxiv.org/abs/2310.10505), [TreeRPO](https://arxiv.org/abs/2506.05183), and [REINFORCE++](https://arxiv.org/abs/2501.03262). In multi-agent settings, several LLM agents respond at each turn, and their joint responses receive a shared reward.
+REINFORCE is a class of policy-gradient methods that optimize the policy directly using sampled returns.
+These methods are widely used for LLM fine-tuning because of their simplicity and efficiency. Examples include [GRPO](https://arxiv.org/pdf/2402.03300), [Dr. GRPO](https://arxiv.org/abs/2503.20783), [RLOO](https://openreview.net/forum?id=r1lgTGL5DE), [ReMax](https://arxiv.org/abs/2310.10505), [TreeRPO](https://arxiv.org/abs/2506.05183), and [REINFORCE++](https://arxiv.org/abs/2501.03262).
+REINFORCE can be extended to multi-agent settings, where multiple LLM agents respond at each turn and their joint responses receive a shared reward.
 
 All MAREINFORCE trainers share one training loop. At each rollout node, every agent samples {{< katex >}}K{{< /katex >}} responses, the trainer scores the index-aligned joint responses with one shared reward, and each agent weights its own log-probabilities by the resulting shared advantages before a buffered optimizer step.
 
@@ -14,16 +16,17 @@ All MAREINFORCE trainers share one training loop. At each rollout node, every ag
 
 ## MAREINFORCE
 
-Before advantage normalization or reference regularization, the policy-gradient surrogate of Multi-Agent REINFORCE (MAREINFORCE) is:
+The policy-gradient surrogate for Multi-Agent REINFORCE (MAREINFORCE), before advantage normalization or reference regularization, can be expressed as:
 
 {{< katex display=true >}}
 J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t \sim \boldsymbol{\pi}_{\boldsymbol{\theta}}}
 \Bigg[\sum_{t=0}^{H-1} R_t \cdot \log \pi_{\theta_i}(a_{i,t}\mid h_{i,t})\Bigg],
 {{< /katex >}}
-where {{< katex >}}R_t{{< /katex >}} is the return at turn {{< katex >}}t{{< /katex >}} and {{< katex >}}H{{< /katex >}} is the horizon (the number of dialog turns).
+where {{< katex >}}R_t{{< /katex >}} is the return at turn {{< katex >}}t{{< /katex >}} and {{< katex >}}H{{< /katex >}} is the horizon (i.e., the number of dialog turns).
 The expectation is taken over initial observations from the dataset {{< katex >}}\mathcal{D}{{< /katex >}} and the joint action history of all episodes following policy {{< katex >}}\boldsymbol{\pi}_{\boldsymbol{\theta}}{{< /katex >}}.
 
-REINFORCE methods use no critic for value estimation, so their gradient estimates can have high variance from stochastic sampling and long-term credit assignment. Common remedies are an action-independent baseline and averaging over more samples, such as {{< katex >}}K{{< /katex >}} samples at each joint history {{< katex >}}\mathbf{h}_t{{< /katex >}}.
+REINFORCE methods do not use a critic model for value estimation. Their policy-gradient estimates can have high variance due to stochastic sampling and long-term credit assignment.
+Common approaches to reducing this variance include using an action-independent baseline or averaging over more samples, such as {{< katex >}}K{{< /katex >}} samples at each joint history {{< katex >}}\mathbf{h}_t{{< /katex >}}.
 
 {{< katex display=true >}}
 J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t  \sim \boldsymbol{\pi}_{\boldsymbol{\theta}}}
@@ -33,7 +36,7 @@ where the baseline {{< katex >}}b(\mathbf{h}_t){{< /katex >}} is action-independ
 
 ## MAGRPO
 
-Multi-Agent Group-Relative Policy Optimization (MAGRPO) instantiates MAREINFORCE in the style of GRPO, using the mean return of the {{< katex >}}K{{< /katex >}} samples as its baseline. In the default `aligned` joint mode, its surrogate before advantage normalization is:
+Multi-Agent Group-Relative Policy Optimization (MAGRPO) is an instantiation of MAREINFORCE inspired by GRPO, where the group-average baseline is the mean return of {{< katex >}}K{{< /katex >}} samples. In the default `aligned` joint mode, its surrogate before advantage normalization is:
 
 {{< katex display=true >}}
 J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t  \sim \boldsymbol{\pi}_{\boldsymbol{\theta}}}

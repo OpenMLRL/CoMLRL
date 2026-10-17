@@ -11,7 +11,7 @@ aliases:
 
 Many approaches use single-agent RL frameworks to train role-conditioned agents that share parameters. Distinct agents better represent heterogeneous LLMs with different capabilities and reflect the multi-agent setting more directly.
 
-CoMLRL supports separate actors with decentralized execution, including training with a centralized critic. Its centralized collaboration mode instead uses one actor to generate the complete joint response. The trainers cover REINFORCE, actor-critic, and PbRL methods, and each method's page describes its objective and constraints.
+CoMLRL supports separate actors with decentralized execution, including training with a centralized critic. Its centralized collaboration mode instead uses one actor to generate the complete joint response. The available trainers include REINFORCE, Actor-Critic, and Multi-Agent PbRL; each method's page describes its implemented objective and constraints.
 
 {{% /details %}}
 
@@ -23,7 +23,7 @@ CoMLRL supports separate actors with decentralized execution, including training
 
 {{% details title="Does CoMLRL support self-play/self-improvement/self-evolution with MARL?" id="does-comlrl-support-self-playself-improvementself-evolution-with-marl" class="docs-qa-item" %}}
 
-<strong>Yes.</strong> Although CoMLRL focuses on LLM collaboration formalized as a <a href="https://www.fransoliehoek.net/docs/OliehoekAmato16book.pdf">Dec-POMDP</a>, users can customize environment interactions to implement pipelines such as self-play (<a href="https://github.com/spiral-rl/spiral">Spiral</a>) and self-improvement (<a href="https://github.com/vsubramaniam851/multiagent-ft/tree/main">MAFT</a>). The <a href="{{< relref "docs/multi-turn/algorithm" >}}">multi-turn training</a> documentation describes how.
+<strong>Yes.</strong> Although CoMLRL focuses on LLM collaboration formalized as a <a href="https://www.fransoliehoek.net/docs/OliehoekAmato16book.pdf">Dec-POMDP</a>, users can customize environment interactions to implement pipelines such as self-play (<a href="https://github.com/spiral-rl/spiral">Spiral</a>) and self-improvement (<a href="https://github.com/vsubramaniam851/multiagent-ft/tree/main">MAFT</a>). The <a href="{{< relref "docs/multi-turn/algorithm" >}}">multi-turn training</a> documentation provides further details.
 
 {{% /details %}}
 

@@ -45,6 +45,11 @@ BLOCK_TAG = r"<(?:h[1-6]|p|div|li|summary|figcaption)\b"
 BLOCK_MARKER = re.compile(
     rf"[ \t]*(?:(?:#{{1,6}}|[-*+]|\d+\.|>)(?=[ \t])|{BLOCK_TAG})|"
 )
+# Bold markers and word-boundary underscores; an unpaired one renders literally.
+EMPHASIS = (
+    re.compile(r"\*\*"),
+    re.compile(r"(?<![A-Za-z0-9_])_(?=\S)|(?<=\S)_(?![A-Za-z0-9_])"),
+)
 # Terms every language keeps in English: masked before translation, then validated.
 # The project's full name (also with bold initials), RL jargon, product names, and
 # words with two or more capitals (algorithm names, acronyms, class and dataset
@@ -292,6 +297,23 @@ def _block_markers(markdown):
     return [BLOCK_MARKER.match(line)[0] for line in markdown.splitlines()]
 
 
+def _unpaired_emphasis(source, translated):
+    """Whether a translated line has an odd marker count where English has pairs."""
+
+    def parities(text):
+        prose = PROTECTED.sub(lambda match: "x", text)
+        return [
+            [len(marker.findall(line)) % 2 for marker in EMPHASIS]
+            for line in prose.splitlines()
+        ]
+
+    return any(
+        dst > src
+        for src_line, dst_line in zip(parities(source), parities(translated))
+        for src, dst in zip(src_line, dst_line)
+    )
+
+
 def _same_structure(source, translated):
     def unmatched_html_prefixes(text):
         # An unterminated outer tag may otherwise be skipped while its nested
@@ -324,6 +346,8 @@ def validate_translation(source, translated):
         raise ValueError("Translation moved a heading anchor")
     if _block_markers(source) != _block_markers(translated):
         raise ValueError("Translation changed list, quote, or heading markers")
+    if _unpaired_emphasis(source, translated):
+        raise ValueError("Translation left a bold or italic marker unpaired")
 
     if not _same_structure(source[src_front.end() :], translated[dst_front.end() :]):
         raise ValueError("Translation changed protected code, math, links, or markup")
@@ -478,6 +502,13 @@ def translate(source, *, endpoint, model, language="zh-cn"):
                 raise ValueError(
                     f"Fragment translation changed protected structure in {key}"
                 )
+        # A model may drop one marker of a pair; losing the emphasis reads better.
+        for marker in EMPHASIS:
+            if (
+                len(marker.findall(translated[key])) % 2
+                > len(marker.findall(value)) % 2
+            ):
+                translated[key] = marker.sub("", translated[key])
     # Titles and shortcode labels are inserted after restoration; restore terms first.
     for key, value in translated.items():
         translated[key] = TOKEN.sub(

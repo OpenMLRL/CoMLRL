@@ -4,7 +4,7 @@ title: Overview
 
 <h1 class="docs-welcome">Welcome to CoMLRL's documentation</h1>
 
-**Co**operative **M**ulti-**L**LM **R**einforcement **L**earning (**CoMLRL**) is an open-source library for training multiple LLMs to collaborate using Multi-Agent Reinforcement Learning (MARL). It implements MARL algorithms for LLM collaboration and supports a variety of environments and benchmarks.
+**Co**operative **M**ulti-**L**LM **R**einforcement **L**earning (**CoMLRL**) is an open-source library for training multiple LLMs to collaborate using Multi-Agent Reinforcement Learning (MARL). It provides implementations of various MARL algorithms for LLM collaboration and supports different environments and benchmarks.
 
 <figure class="docs-demo">
   <img src="{{< relurl "img/demo-hd.webp" >}}" width="1306" height="730" decoding="async" fetchpriority="high" alt="Animated overview of CoMLRL: pretrained language models, cooperative MARL trainers, and multi-agent environment interactions." />
@@ -18,7 +18,7 @@ title: Overview
 
 <em style="font-weight: 600; color: var(--docs-accent);"> "What is LLM collaboration?"</em>
 
-LLM collaboration involves agents working together to solve tasks in multi-agent systems. Each agent receives a task prompt and responds synchronously according to its instructions, and the agents' responses jointly form a solution. Users or external systems may then validate the solution and add requirements or suggestions. These interactions are part of the environment, whose state can change with the agents' outputs; the updated state enters the prompts of later turns until the task is complete or a turn limit is reached.
+LLM collaboration involves agents working together to solve tasks in multi-agent systems. Each agent receives a task prompt and generates a response synchronously according to its instructions. The agents' responses jointly form a solution. Users and systems may validate the solution and provide additional requirements or suggestions. These interactions form part of the environment, whose state may change based on the agents' outputs. State updates are included in prompts for subsequent turns until the task is complete or a turn limit is reached.
 
 {{% /tab %}}
 
@@ -26,7 +26,7 @@ LLM collaboration involves agents working together to solve tasks in multi-agent
 
 <em style="font-weight: 600; color: var(--docs-accent);"> "Why should we fine-tune multi-LLM systems with MARL?"</em>
 
-Many studies solve tasks with LLM-based multi-agent systems through agent interaction. However, most models are pretrained separately and never optimized for coordination, which can limit performance, and effective prompts remain hard to design. Cooperative MARL optimizes a team of agents toward a shared objective, which makes it a natural foundation for training LLM-based multi-agent systems.
+Many studies use LLM-based multi-agent systems to solve tasks through agent interaction. Most models are pretrained separately without optimization for coordination, which may limit performance. Effective prompt design also remains challenging. Cooperative MARL methods optimize teams of agents toward a shared objective. These established methods provide a natural foundation for training LLM-based multi-agent systems.
 
 {{% /tab %}}
 
@@ -34,7 +34,7 @@ Many studies solve tasks with LLM-based multi-agent systems through agent intera
 
 <em style="font-weight: 600; color: var(--docs-accent);"> "What are the benefits of decentralized reasoning?"</em>
 
-During decentralized execution, each agent uses its own prompt and policy. Independent generations can run concurrently when the devices permit, which supports role-specific models and modular task decomposition. Latency, memory use, and task quality still depend on model sizes, prompt lengths, communication, and devices; decentralization alone does not guarantee a speedup, nor does it give each agent all the information available to a centralized model.
+During decentralized execution, agents use their own prompts and policies. Independent generations can run concurrently when the device configuration permits, supporting role-specific models and modular task decomposition. Latency, memory use, and task quality depend on model sizes, prompt lengths, communication, and devices. Decentralization alone does not guarantee a speedup or preserve all information available to a centralized model.
 
 {{% /tab %}}
 

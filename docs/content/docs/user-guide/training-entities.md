@@ -7,15 +7,15 @@ aliases:
   - /docs/user-guide/model-loading/
 ---
 
-CoMLRL supports training LLM agents, with LLM-based critics or reward models to facilitate training. Agents and critics can be homogeneous or heterogeneous models from Hugging Face or local directories.
-Users can specify [Hugging Face model identifiers](https://huggingface.co/models) through `agent_model`/`critic_model` for homogeneous setups, or provide `agents`/`critics` lists for heterogeneous setups. Trained models can be saved and loaded into a new trainer to continue training.
+CoMLRL supports training LLM agents and facilitates their training with LLM-based critics or reward models. Agents and critics can be homogeneous or heterogeneous models from Hugging Face or local directories.
+Users can specify [Hugging Face model identifiers](https://huggingface.co/models) through `agent_model`/`critic_model` for homogeneous setups, or provide `agents`/`critics` lists for heterogeneous setups. Trained entities can be saved and loaded into a new trainer for further training.
 
 
 ## LLM Agents
 
 ### Homogeneous Agents
 
-Users can initialize homogeneous agents by setting `agent_model` to a single model identifier and leaving `agents=None`. Trainers that also take a `num_agents` argument need it to match the configuration.
+Users can initialize homogeneous agents by setting `agent_model` to a single model identifier and leaving `agents=None`. For trainers with a separate `num_agents` constructor argument, users can set it alongside the matching configuration value; the configuration alone does not override it.
 
 The following example loads three _Qwen/Qwen2.5-1.5B_ agents:
 
@@ -32,9 +32,10 @@ trainer = MAGRPOTrainer(
 
 ### Heterogeneous Agents
 
-Homogeneous agents can be prompted to take different roles and work on separate parts of a task in parallel; heterogeneous agents also bring the specialized capabilities of different models.
+Although homogeneous agents can be prompted to take on different roles and work on separate parts of a task in parallel, heterogeneous agents can also contribute the specialized capabilities of different models.
 
-Users can initialize heterogeneous agents by passing model identifiers or loaded model objects in `agents`, with compatible tokenizers in `tokenizer`. `agent_model` can then remain `None`; if both are provided, their model names must match and the list length must match the number of agents, or training raises an error.
+Users can initialize heterogeneous agents by supplying model identifiers or loaded model objects in `agents`, with compatible tokenizers supplied through `tokenizer`.
+With `agents` supplied, `agent_model` can remain `None`. If both are provided, their model names must match, and their list lengths must match the number of agents; otherwise, training raises an error.
 
 The following example loads _Qwen/Qwen2.5-Coder-3B_ and _Qwen/Qwen2.5-Coder-7B_ agents:
 
@@ -50,7 +51,7 @@ trainer = MAGRPOTrainer(
 
 ## LLM Critics
 
-Actor-critic algorithms such as Independent Actor-Critic (IAC) and Multi-Agent Actor-Critic (MAAC) use LLM critics, loaded according to the algorithm and the `use_separate_critic` setting. MARLHF trainers with `rl_algorithm="maac"` or `"iac"` accept the same `critic_model` and `critics` arguments, or `critic_model_name` in their configuration; otherwise, they use the first actor's model identifier.
+Algorithms such as Independent Actor-Critic (IAC) and Multi-Agent Actor-Critic (MAAC) use LLM critics. How these critics are loaded depends on the algorithm and the `use_separate_critic` setting. MARLHF trainers with `rl_algorithm="maac"` or `"iac"` accept the same `critic_model` and `critics` arguments, or `critic_model_name` in their configuration; otherwise, they use the first actor's model identifier.
 
 ### Centralized Critic
 
@@ -76,8 +77,8 @@ trainer = MAACTrainer(
 
 ### Independent Critics
 
-Independent critics give each agent its own critic. With `use_separate_critic=True`, users can supply one `critic_model` identifier to load a separate copy per agent, or a `critics` list of length `num_agents`. Each separate critic receives token IDs from its actor's tokenizer and must be compatible with it.
-With `use_separate_critic=False`, each actor shares its LLM backbone with its critic and both load together, so `critic_model` and `critics` remain `None`.
+With independent critics, each agent can have its own critic. With `use_separate_critic=True`, users can supply one `critic_model` identifier to load a separate copy per agent, or a `critics` list of length `num_agents`. Each separate critic receives token IDs from its actor's tokenizer and must be compatible with it.
+With `use_separate_critic=False`, each actor and critic share an LLM backbone and load together. In this case, `critic_model` and `critics` remain unset (`null` or `None`).
 As with agents, supplying both `critic_model` and `critics` requires matching model names and lengths; otherwise, training raises an error.
 
 The following example loads _Qwen/Qwen2.5-Coder-3B_ and _Qwen/Qwen2.5-Coder-7B_ actors with separate critics based on the same models:
@@ -105,7 +106,7 @@ trainer = IACTrainer(
 )
 ```
 
-Alternatively, each actor can share its model with its critic:
+Alternatively, each actor can share the same model with its critic:
 
 ```python
 trainer = IACTrainer(
@@ -167,7 +168,7 @@ trainer = MARLHFTrainer(
 
 ### Saving Models
 
-After training, users can call `save_model(output_dir)` to save the actors' Hugging Face model configurations, weights, and tokenizers to local directories:
+Users can call `save_model(output_dir)` after training to explicitly save the actors' Hugging Face model configurations, weights, and tokenizers to local directories:
 
 ```python
 trainer.train()
@@ -263,7 +264,9 @@ resumed_trainer.train(
 )
 ```
 
-Checkpoints preserve model and optimizer states, training progress, random states, and, for PbRL, the preference data and history. They are saved at completed epochs, iterations, or PbRL stages, with a final save at completion; `checkpoint_interval` controls periodic saves, and resuming repeats any work since the last checkpoint.
+Checkpoints preserve model and optimizer states, training progress, random states, and, where applicable, PbRL data and history.
+
+Checkpoints are saved at completed epochs, iterations, or PbRL stages, with a final save at completion. `checkpoint_interval` controls periodic saves. Resuming repeats any work since the last checkpoint.
 
 `num_train_epochs` and `num_iterations` count the total run, including completed work, and can be increased when resuming. Models, tokenizers, data, and training settings must remain compatible. Stateful datasets and callbacks can provide `state_dict()` and `load_state_dict()`; external service state is not restored. If a PbRL output directory already contains files, resumed output goes into a `resume-*` subdirectory.
 

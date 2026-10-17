@@ -40,7 +40,9 @@ train_dataset = split["train"]
 eval_dataset = split["test"]
 ```
 
-Here, eight task items are used for training and two are held out for evaluation. `seed` makes the split repeatable; it does not set the random seed for model generation. Existing training and evaluation splits can be used directly. Training data loaders keep the task order; users can shuffle the task items once with `train_dataset.shuffle(seed=42)` before creating the trainer, which fixes an order without reshuffling each epoch.
+Here, eight task items are used for training and two are held out for evaluation. `seed` makes the split repeatable; it does not set the random seed for model generation. Existing training and evaluation splits can be used directly.
+
+The current training data loaders preserve task order. Users can shuffle the task items with `train_dataset.shuffle(seed=42)` before creating the trainer. This produces a fixed order, without reshuffling each epoch.
 
 ## Prompts from Tasks
 
@@ -56,11 +58,13 @@ def detailed_formatter(item):
 formatters = [brief_formatter, detailed_formatter]
 ```
 
-For multi-turn tasks, formatters may also accept `external_prompts`, as described in [Multi-Turn Interaction]({{< relref "docs/multi-turn/transition" >}}).
+For multi-turn tasks, formatters may also accept `external_prompts`. The transition interface is described in [Multi-Turn Interaction]({{< relref "docs/multi-turn/transition" >}}).
 
 ## Rewards
 
-Both rule-based rewards and LLM reward models reach trainers through `reward_func`. The function receives one list of completions per agent, in actor order, plus the task items if it accepts a `batch_items` keyword, and returns one reward per joint response. The trainers used here call it for one task item at a time, available as `batch_items[0]`. An optional `reward_processor` transforms each returned reward before training; for example, `RewardProcessors.scale(factor=10.0)` from `comlrl.utils.reward_processor` multiplies rewards by 10.
+Both rule-based rewards and LLM reward models are passed to trainers through `reward_func`. The reward function receives one list of completions per agent, in actor order. If it accepts a `batch_items` keyword, trainers also pass the task items. It returns one reward per joint response. The trainers used here call it for one task item at a time, with that item available as `batch_items[0]`.
+
+`reward_processor` transforms each returned reward before training; for example, `RewardProcessors.scale(factor=10.0)` from `comlrl.utils.reward_processor` multiplies rewards by 10. By default, rewards are unchanged.
 
 ### Rule-Based Rewards
 
@@ -155,9 +159,9 @@ metrics = trainer.evaluate(num_eval_samples=len(eval_dataset))
 print(metrics)
 ```
 
-For the MAREINFORCE family, IAC, and MAAC, `eval_interval` counts training task items. Evaluation runs before item zero of each epoch, then at the configured interval; `0` enables manual evaluation only. `eval_num_samples` limits the number of evaluated task items, counted from the start of the evaluation split; setting it to the split length evaluates them all. `eval_batch_size` controls the evaluation data loader batch size, not the number of responses generated per agent.
+For the MAREINFORCE family, IAC, and MAAC, `eval_interval` counts training task items. Evaluation runs before item zero of each epoch, then at the configured interval; `0` enables manual evaluation only. `eval_num_samples` specifies a positive limit on evaluated task items, starting at the beginning of the evaluation split. Setting it to the split length evaluates all task items. `eval_batch_size` controls the evaluation data loader batch size, not the number of responses generated per agent.
 
-MAGRPO, IAC, and MAAC generate one response per agent per turn during evaluation. IAC and MAAC evaluate through their rollout collection path with the configured turns, but their `evaluate()` takes no sample-count argument:
+MAGRPO, IAC, and MAAC generate one response per agent per turn during evaluation. IAC and MAAC use their rollout collection path, with the configured turn structure, but their `evaluate()` method takes no sample-count argument:
 
 ```python
 # For an existing IACTrainer or MAACTrainer:
@@ -202,7 +206,7 @@ wandb_config = {
 # wandb_config=wandb_config,
 ```
 
-Users should authenticate W&B in their environment before enabling logging. Omitting `wandb_config` or setting it to `None` disables W&B. Supported run settings include `project`, `entity`, `name` (or `run_name`), `tags`, and `dir`. The `config_sections` field adds task and experiment settings to the recorded configuration; `config_sections.output.verbose` controls trainer progress output.
+Users can authenticate W&B in their environment before enabling logging. Omitting `wandb_config` or setting it to `None` disables W&B. Supported run settings include `project`, `entity`, `name` (or `run_name`), `tags`, and `dir`. The `config_sections` field adds task and experiment settings to the recorded configuration; `config_sections.output.verbose` controls trainer progress output.
 
 ### Training Metrics
 
