@@ -511,6 +511,10 @@ class TranslationServiceError(RuntimeError):
     """A temporary connection or server failure eligible for bounded recovery."""
 
 
+class RepetitionError(ValueError):
+    """Ollama aborted a generation that kept repeating; retrying it repeats too."""
+
+
 def _request_batch(fields, *, endpoint, model, language):
     info = language_info(language)
     schema = {
@@ -556,13 +560,21 @@ def _request_batch(fields, *, endpoint, model, language):
         with urlopen(request, timeout=300) as response:
             result = json.loads(json.load(response)["message"]["content"])
     except HTTPError as exc:
+        try:
+            detail = json.loads(exc.read()).get("error", "")
+        except (OSError, ValueError, AttributeError):
+            detail = ""
+        # Greedy decoding can loop on the same input every time (HTTP 500).
+        if "repeat limit" in detail:
+            raise RepetitionError(f"Translator aborted a repeating output: {detail}")
         error = (
             TranslationServiceError
             if exc.code == 429 or 500 <= exc.code < 600
             else RuntimeError
         )
         raise error(
-            f"Local Ollama translation failed ({model} at {endpoint}): HTTP {exc.code}"
+            f"Local Ollama translation failed ({model} at {endpoint}): "
+            f"HTTP {exc.code} {detail}".rstrip()
         ) from exc
     except (URLError, TimeoutError, ConnectionError, HTTPException) as exc:
         raise TranslationServiceError(
@@ -631,6 +643,26 @@ def translate_batch(fields, *, endpoint, model, language="zh-cn", _retry=False):
                     )
                 )
         return recovered
+    except RepetitionError:
+        # Retry fields alone; one that still loops is translated between its
+        # placeholders, which keeps them out of generation.
+        if len(fields) > 1:
+            return {
+                key: translate_batch(
+                    {key: value},
+                    endpoint=endpoint,
+                    model=model,
+                    language=language,
+                    _retry=True,
+                )[key]
+                for key, value in fields.items()
+            }
+        return {
+            key: _translate_fragments(
+                value, endpoint=endpoint, model=model, language=language
+            )
+            for key, value in fields.items()
+        }
     except ValueError:
         if _retry:
             raise
