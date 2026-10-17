@@ -120,7 +120,7 @@ L(\phi_i) = \max\Big( (V_{\phi_i}(h_t) - \hat{V}_t)^2,\ (V_{\phi_i}^{\text{clip}
 where {{< katex >}}\hat{V}_t{{< /katex >}} is the TD target, {{< katex >}}\epsilon{{< /katex >}} is `value_clip_range`, and the errors are averaged across the mini-batch. Separate critics use the unclipped squared error.
 
 {{% hint info %}}
-**IACConfig** provides parameters for configuring Independent Actor-Critic training:
+**IACConfig** parameters:
 
 - `num_agents`: Number of agents
 - `num_turns`: Number of turns
@@ -155,7 +155,7 @@ where {{< katex >}}\hat{V}_t{{< /katex >}} is the TD target, {{< katex >}}\epsil
 {{% /hint %}}
 
 {{% hint info %}}
-**IACTrainer** trains agents using Independent Actor-Critic:
+**IACTrainer** setup:
 
 - `agent_model` or `agents`: Model identifier string for homogeneous agents, or list of agent models (multi-agent `agent_model` must be a string)
 - `critic_model` or `critics`: Critic identifier, model instance, or list of critic models when `use_separate_critic=True`

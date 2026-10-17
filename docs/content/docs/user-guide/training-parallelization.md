@@ -2,49 +2,27 @@
 title: Training Parallelization
 linkTitle: Training Parallelization
 weight: 6
-tocDepth: 3
 ---
 
-CoMLRL trainers run in a Python process. For IAC and the preference trainers,
-`parallel_training="none"` is the default; `"mp"` enables scheduling agents and
-other training entities on explicitly assigned devices. Neither mode requires a
-job scheduler.
+CoMLRL can place different models on different GPUs. With `parallel_training="mp"`, each agent runs on its own device from `agent_devices`, and the agents generate concurrently; critics, reward models, comparators, and reference models take their own device settings. The default, `"none"`, keeps the agents on one device. Both modes run in one Python process and require no job scheduler.
 
-## Model Parallelization
+Each model stays on its assigned device; a single model is not split across GPUs. Device indices refer to the GPUs visible to the Python process. A setting for several models takes either one device per model or one device for all of them, so users can match the placement to the available GPUs and each model's memory. Device placement and parallel scheduling can affect numerical training results.
 
-Each model stays on its assigned device; this does not split an individual model
-across GPUs. Device indices refer to the GPUs visible to the Python process.
-Users can choose device assignments based on the available devices and each
-model's memory requirements. Device placement and parallel scheduling can affect
-numerical training results.
+## Device Placement
 
-### Actor-Critic
+{{% hint info "**Device Placement**" %}}
+**Device Placement** parameters:
 
-Users can configure `IACTrainer` by passing an `IACConfig` through its `args` parameter. The following
-configuration uses four visible CUDA devices and two agents:
+- `agent_devices`: Agent devices; required in `"mp"` mode
+- `critic_devices`: One device for a centralized critic, or one per agent for separate critics; required in `"mp"` mode for MAAC and separate-critic IAC, while MARLHF defaults to the agent devices
+- `reward_model_device`: MARLHF reward-model device; defaults to `"cuda:0"`, or `None` for the trainer device
+- `comparator_devices`: Devices for local comparator models in iterative PbRL; defaults to the agent devices
+- `reference_devices`: Devices for frozen reference models with reference KL; defaults to the agent devices
+{{% /hint %}}
 
-```python
-from comlrl.trainers.actor_critic import IACConfig
+## Example
 
-config = IACConfig(
-    num_agents=2,
-    num_turns=1,
-    use_separate_critic=True,
-    parallel_training="mp",
-    agent_devices=["cuda:0", "cuda:1"],
-    critic_devices=["cuda:2", "cuda:3"],
-)
-```
-
-`agent_devices` is required in `"mp"` mode. `critic_devices` is also required
-when `use_separate_critic=True`. Responses are passed to the reward function,
-and the rewards are used for each agent's update.
-
-### PbRL
-
-Preference trainers place the reward model and comparator through their own
-settings. The following iterative MARLHF configuration uses six visible CUDA
-devices, two agents, and MAAC for the online RL stage:
+The following configuration puts each model of an iterative MARLHF run on its own GPU: two agents, a centralized critic for the MAAC policy stage, the reward model, and copies of the current agents as comparators.
 
 ```python
 from comlrl.trainers.preference import MARLHFIterConfig
@@ -61,9 +39,3 @@ config = MARLHFIterConfig(
     comparator_devices=["cuda:4", "cuda:5"],
 )
 ```
-
-The shared MAAC critic takes one device and defaults to the first agent device;
-with `rl_algorithm="iac"` and separate critics, `critic_devices` takes one device
-per agent. The joint reward model trains and scores on `reward_model_device`.
-`current_copy` copies the current actors to `comparator_devices`, one device per
-role, for each preference-collection phase.

@@ -40,6 +40,11 @@ MODEL_ID = (
     r"(?=[A-Za-z0-9_.-]*\d)[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?"
 )
 COUNT = r"(?<![A-Za-z0-9.])\d+(?:\.\d+)?x(?![A-Za-z0-9])"
+# Block elements whose tags open and close one line stay outside the translated text.
+BLOCK_TAG = r"<(?:h[1-6]|p|div|li|summary|figcaption)\b"
+BLOCK_MARKER = re.compile(
+    rf"[ \t]*(?:(?:#{{1,6}}|[-*+]|\d+\.|>)(?=[ \t])|{BLOCK_TAG})|"
+)
 # Terms every language keeps in English: masked before translation, then validated.
 # The project's full name (also with bold initials), RL jargon, product names, and
 # words with two or more capitals (algorithm names, acronyms, class and dataset
@@ -283,11 +288,8 @@ def _link_structure(text):
 
 
 def _block_markers(markdown):
-    """Indentation and list, quote, or heading marker that begin each line."""
-    return [
-        re.match(r"[ \t]*(?:#{1,6}|[-*+]|\d+\.|>)(?=[ \t])|", line)[0]
-        for line in markdown.splitlines()
-    ]
+    """Indentation and list, quote, heading, or block-tag marker starting each line."""
+    return [BLOCK_MARKER.match(line)[0] for line in markdown.splitlines()]
 
 
 def _same_structure(source, translated):
@@ -325,11 +327,12 @@ def validate_translation(source, translated):
 
     if not _same_structure(source[src_front.end() :], translated[dst_front.end() :]):
         raise ValueError("Translation changed protected code, math, links, or markup")
-    # Count substrings: a model may attach text, such as a plural "s", to a term.
+    # Count from each term's start: a model may attach a plural "s" or a particle,
+    # but an identifier such as MAGRPOTrainer must not stand in for "Trainer".
     missing = [
         term
         for term, count in Counter(KEEP_ENGLISH.findall(source)).items()
-        if translated.count(term) < count
+        if len(re.findall(rf"(?<![A-Za-z0-9]){re.escape(term)}", translated)) < count
     ]
     if missing:
         raise ValueError(
@@ -432,6 +435,15 @@ def translate(source, *, endpoint, model, language="zh-cn"):
         anchor = re.search(rf"\s+({TOKEN.pattern})$", text)
         if anchor and restorations[anchor[1]].startswith("{#"):
             text, newline = text[: anchor.start()], anchor[0] + newline
+        # Keep a block element that wraps the line, such as <h1>…</h1>, around it.
+        wrapped = re.fullmatch(rf"({TOKEN.pattern})(.*)({TOKEN.pattern})", text)
+        if (
+            wrapped
+            and re.match(BLOCK_TAG, restorations[wrapped[1]])
+            and restorations[wrapped[3]].startswith("</")
+        ):
+            prefix, text = prefix + wrapped[1], wrapped[2]
+            newline = wrapped[3] + newline
         if re.search(r"[A-Za-z]", TOKEN.sub("", text)):
             lines.append(prefix + "@FIELD:" + field(text) + "@" + newline)
         else:

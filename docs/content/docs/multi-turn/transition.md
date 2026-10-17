@@ -12,7 +12,7 @@ External feedback mechanisms control how environment observations are incorporat
 
 Users can implement custom external feedback by defining a function with the following interface:
 
-{{% hint info %}}
+{{% hint info "Custom External Feedback Interface:" %}}
 Custom External Feedback Interface:
 
 - `prompt`: Original task prompt or problem description (required)

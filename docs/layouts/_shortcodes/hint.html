@@ -3,8 +3,10 @@
 {{- $lines := split $inner "\n" -}}
 {{- $title := index $lines 0 -}}
 {{- $referenceTitle := or (.Get 1) $title -}}
-{{/* Present API parameter lists in always-visible cards; Markdown stays intact. */}}
-{{- $isAPI := and (eq $kind "info") (gt (len (findRE `^(\*\*[A-Za-z]+(Config|Trainer)\*\*|Custom External Feedback Interface:)` $referenceTitle)) 0) -}}
+{{/* Present API parameter lists in always-visible cards; Markdown stays intact.
+     An info hint whose first line names a Config or Trainer class becomes a card;
+     other lists pass their card name as the second argument, which is never translated. */}}
+{{- $isAPI := and (eq $kind "info") (or (.Get 1) (gt (len (findRE `^(\*\*[A-Za-z]+(Config|Trainer)\*\*|Custom External Feedback Interface:)` $referenceTitle)) 0)) -}}
 {{- if $isAPI -}}
   {{- $body := strings.TrimSpace (strings.TrimPrefix $title $inner) -}}
   {{- $name := replaceRE `^\*\*([^*]+)\*\*.*$` "$1" $referenceTitle -}}

@@ -167,7 +167,7 @@ The comparator supplies the alternative responses in each comparison. `comparato
 
 The `history` source saves policy checkpoints automatically. The two sides may sample different numbers of candidates; only indices present on both sides are compared. `pair_selection="comparator_reward"` ranks comparisons by comparator reward and then reward gap; it does not assume the comparator wins.
 
-{{% hint info %}}
+{{% hint info "**Comparator**" %}}
 **Comparator** parameters:
 
 - `comparator_policy`: `"current"`, `"current_copy"`, `"model"`, `"history"`, or `"api"`
@@ -182,8 +182,8 @@ The `history` source saves policy checkpoints automatically. The two sides may s
 
 With decentralized actors, a decentralized comparator (the default) generates one response per role. A centralized comparator receives the adapter's joint prompt and generates all roles' responses together; its joint text is parsed into role responses before pairs are built. With a centralized actor, the comparator's joint text is kept throughout.
 
-{{% hint info %}}
-**Comparator generation** parameters:
+{{% hint info "**Comparator Generation**" %}}
+**Comparator Generation** parameters:
 
 - `comparator_generation_mode`: `"decentralized"` or `"centralized"`
 - `comparator_centralized_agent_index`: Role whose actor or checkpoint generates a centralized comparator's joint response (current, current-copy, or history sources); defaults to 0, and centralized actor training requires 0
@@ -221,7 +221,7 @@ comparator_api_model=claude-sonnet-4-20250514
 comparator_api_key_env=ANTHROPIC_API_KEY
 ```
 
-{{% hint info %}}
+{{% hint info "**Comparator API**" %}}
 **Comparator API** parameters:
 
 - `comparator_api_url`: Endpoint URL; required for `"api"`
@@ -268,7 +268,7 @@ w_a = \frac{\lambda^a}{\sum_{j=0}^{K-1}\lambda^j},
 
 Historical modes assign each of the `preference_replay_sample_size` draws to a dataset by weight, then sample pairs within each dataset. Sampling proceeds without repetition when the assigned count does not exceed the dataset size; larger counts cycle through shuffled copies. The combined sample is shuffled. The default sample size is the current round's pair count, or the latest non-empty dataset's size if the current round is empty.
 
-{{% hint info %}}
+{{% hint info "**Replay Buffer**" %}}
 **Replay Buffer** parameters:
 
 - `preference_replay_mode`: `"current"` (default), `"nearest_k"`, `"all_history"`, or `"lambda_decay"`
@@ -298,8 +298,6 @@ args = MADPOIterConfig(
 Each round is written to `iteration_0001.json`, `iteration_0002.json`, and so on under `preference_replay_dir`, with the prompts, preferred and rejected completions, rewards, and metadata. Historical samples are re-tokenized from this text. Setting `preference_replay_dir` to an earlier run alone does not import its files. [Training checkpoints]({{< relref "/docs/user-guide/training-entities#training-state" >}}) restore the replay index and its data. Actor checkpoints for the `history` comparator are stored separately under `policy_checkpoint_dir`.
 
 ## Configuration
-
-<span id="api-marlhfconfig"></span>
 
 {{% hint info %}}
 **MARLHFConfig** parameters:
@@ -331,8 +329,6 @@ Each round is written to `iteration_0001.json`, `iteration_0002.json`, and so on
 `MARLHFConfig` inherits the shared preference settings from `MADPOConfig`; MARLHF does not use `dpo_beta`.
 {{% /hint %}}
 
-<span id="api-marlhftrainer"></span>
-
 {{% hint info %}}
 **MARLHFTrainer** setup:
 
@@ -357,8 +353,6 @@ Each round is written to `iteration_0001.json`, `iteration_0002.json`, and so on
 `reward_model_name` is required when the actors are model objects without a model identifier. MAAC and separate-critic IAC likewise require explicit critic sources or a usable critic model identifier.
 {{% /hint %}}
 
-<span id="api-madpoconfig"></span>
-
 {{% hint info %}}
 **MADPOConfig** parameters:
 
@@ -376,8 +370,6 @@ Each round is written to `iteration_0001.json`, `iteration_0002.json`, and so on
 - `eval_interval`, `eval_num_samples`, `eval_batch_size`: Evaluation schedule and sample sizes; MADPO counts `eval_interval` in preference updates
 - `logging_steps`: Training logging interval
 {{% /hint %}}
-
-<span id="api-madpotrainer"></span>
 
 {{% hint info %}}
 **MADPOTrainer** setup:
@@ -397,8 +389,6 @@ Each round is written to `iteration_0001.json`, `iteration_0002.json`, and so on
 - `centralized_comparator_adapter`: Prompt builder and response parser for centralized actors or comparators
 {{% /hint %}}
 
-<span id="api-madpoiterconfig"></span>
-
 {{% hint info %}}
 **MADPOIterConfig** parameters:
 
@@ -407,8 +397,6 @@ Each round is written to `iteration_0001.json`, `iteration_0002.json`, and so on
 - `pair_selection`: Adds `"comparator_reward"` (the iterative default), which prefers higher comparator rewards, then larger reward gaps; `"all"` retains every non-tied comparison and requires `preference_pairs_per_sample=None`
 - Comparator and replay settings: described in [Comparator](#comparator) and [Replay Buffer](#replay-buffer)
 {{% /hint %}}
-
-<span id="api-marlhfiterconfig"></span>
 
 {{% hint info %}}
 **MARLHFIterConfig** parameters:
