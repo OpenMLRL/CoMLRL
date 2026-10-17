@@ -11,14 +11,14 @@ We are happy to help with issues encountered while using CoMLRL.
 
 ## Report Issues
 
-The following steps can help users resolve or report an issue:
+To resolve or report an issue:
 
 {{% steps %}}
 
-1. Users can first consult the documentation, including the search feature (Ctrl + K).
+1. Check the documentation first, including its search (Ctrl + K).
 
-2. A search of existing [GitHub Issues](https://github.com/OpenMLRL/CoMLRL/issues) may reveal reports of the same problem.
+2. Search the existing [GitHub Issues](https://github.com/OpenMLRL/CoMLRL/issues) for the same problem.
 
-3. A minimal reproducible example helps diagnose the issue. A few lines of code that demonstrate the problem can lead to a faster response.
+3. Include a minimal reproducible example; a few lines of code that show the problem lead to a faster response.
 
 {{% /steps %}}

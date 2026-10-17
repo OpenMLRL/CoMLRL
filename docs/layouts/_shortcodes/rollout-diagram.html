@@ -1,5 +1,4 @@
 {{- $name := .Get "diagram" -}}
-{{- $feedback := eq (.Get "animation") "feedback" -}}
 {{- $id := printf "rollout-%s-%d" $name .Ordinal -}}
 {{- $asset := resources.Get (printf "rollouts/%s.svg" $name) -}}
 {{- if not $asset -}}
@@ -12,10 +11,10 @@
 {{- $svg = replace $svg `href="#` (printf `href="#%s-` $id) -}}
 {{- $svg = replace $svg `url(#` (printf `url(#%s-` $id) -}}
 {{- $svg = replace $svg `<svg ` (printf `<svg role="img" aria-labelledby="%s-title %s-description" focusable="false" ` $id $id) -}}
-<figure class="docs-rollout" {{ if $feedback }}data-feedback-loop{{ else }}data-rollout{{ end }}{{ if $simple }} data-algorithm-flow{{ end }} data-diagram="{{ $name }}" data-direction="{{ .Get "direction" | default "down" }}" aria-labelledby="{{ $id }}-title">
+<figure class="docs-rollout" data-rollout{{ if $simple }} data-algorithm-flow{{ end }} data-diagram="{{ $name }}" data-direction="{{ .Get "direction" | default "down" }}" aria-labelledby="{{ $id }}-title">
   <figcaption class="docs-rollout-caption">
     <span class="docs-rollout-title" id="{{ $id }}-title">{{ .Get "title" }}</span>
-    <span class="docs-rollout-description{{ if or $feedback $simple }} docs-sr-only{{ end }}" id="{{ $id }}-description">{{ .Get "description" }}</span>
+    <span class="docs-rollout-description{{ if $simple }} docs-sr-only{{ end }}" id="{{ $id }}-description">{{ .Get "description" }}</span>
   </figcaption>
   <div class="docs-rollout-stage">{{ $svg | safeHTML }}</div>
   <div class="docs-rollout-controls" hidden>

@@ -3,7 +3,7 @@ title: CoMLRL Quick Start
 weight: 1
 ---
 
-This tutorial demonstrates a simple two-agent training task with a length-ratio reward. Both agents receive the same prompt and generate independently; the second agent does not see the first agent's response. The reward encourages the second output to contain 2–3× as many characters as the first. It does not evaluate story quality or semantic collaboration.
+This tutorial trains two agents on a simple task with a length-ratio reward. Both agents receive the same prompt and generate independently, so the second agent never sees the first agent's response. The reward favors a second output with 2–3× as many characters as the first; it does not judge story quality or semantic collaboration.
 
 Users can run the example from an installed source checkout:
 
@@ -11,7 +11,7 @@ Users can run the example from an installed source checkout:
 python examples/story-len-ratio.py
 ```
 
-Memory requirements depend on the model, number of agents, batch size, and response length. W&B logging is disabled by default. The `--wandb` flag enables it; `--wandb-project` and `--wandb-entity` are optional.
+Memory use depends on the model, the number of agents, the batch size, and the response length. W&B logging is off by default; `--wandb` turns it on, and `--wandb-project` and `--wandb-entity` are optional.
 
 ## Import Libraries
 
@@ -58,7 +58,7 @@ agents = [AutoModelForCausalLM.from_pretrained(model_name) for _ in range(2)]
 
 ## Define the Reward Function
 
-The reward function evaluates the ratio of the agents' output lengths. It returns the maximum reward (1.0) when the second output contains 2–3× as many characters as the first. Outside this range, the reward decays exponentially with the distance from the nearest boundary.
+The reward function compares the agents' output lengths. It returns the maximum reward, 1.0, when the second output has 2–3× as many characters as the first; outside this range, the reward decays exponentially with the distance to the nearest boundary.
 
 ```python
 def proper_length_ratio_reward(

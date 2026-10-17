@@ -19,11 +19,17 @@ NUMBER = re.compile(r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?")
 ANNOTATIONS = re.compile(
     rb' data-rollout-stage="\d+" data-rollout-kind="(?:node|edge)"'
 )
-# Only TikZ exports are listed; hand-written flows in assets/rollouts carry their own stages.
+# Only originals in static/img are listed; hand-written flows in assets/rollouts carry their own stages.
 # Boundaries fall between complete rows/columns/formulae, never through a formula.
+# The chain has five visible nodes; its trailing ellipsis shares the final stage.
 # The baseline chart reveals the node, its returns, then one variant row at a time.
-# Training flows reveal one column at a time; edges and their labels join the column they enter.
+# Training and transition flows reveal one column at a time; edges and their labels join the column they enter.
 LAYOUTS = {
+    "joint-tree": (1, (26, 60, 94)),
+    "align-tree": (1, (22, 60, 92)),
+    "cross-tree": (1, (30, 74, 118)),
+    "ac": (0, (42, 95, 144, 197)),
+    "environment-transition": (0, (63, 167)),
     "reinforce-baselines": (1, (25, 53, 80, 131, 180, 225, 275)),
     "reinforce-training": (0, (60, 138, 229)),
     "ac-training": (0, (60, 140, 207)),

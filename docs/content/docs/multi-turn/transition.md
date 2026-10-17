@@ -4,9 +4,9 @@ weight: 2
 math: true
 ---
 
-External feedback mechanisms control how environment observations are incorporated into prompts for subsequent turns. These mechanisms are usually implemented in CoMLRL's downstream environments.
+External feedback turns environment observations into prompts for later turns. CoMLRL's downstream environments usually implement it.
 
-{{< rollout-diagram diagram="environment-transition" animation="feedback" title="Feedback Loop" description="Agents combine their contributions into a response. Tool errors and user hints or new information are routed back to the corresponding agent for the next turn." >}}
+{{< rollout-diagram diagram="environment-transition" direction="right" title="Environment transition" description="At turn t, the agents' responses enter the external transition, which returns each agent's own observation for turn t+1." >}}
 
 ## Custom External Feedback
 
@@ -21,13 +21,10 @@ Custom External Feedback Interface:
 - `prompt_history_per_agent`: List containing one list of previous prompts per agent (optional)
 - `response_history_per_agent`: List containing one list of previous responses per agent (optional)
 
-The function must return a list or tuple of prompts for the next turn, one for each agent.
-The trainer passes only the arguments above, with no additional keyword arguments. Users can configure mode-specific parameters through a closure or `functools.partial`.
+The function returns a list or tuple with one next-turn prompt per agent. The trainer passes only the arguments above, so mode-specific parameters go through a closure or `functools.partial`.
 {{% /hint %}}
 
-By default, each returned prompt becomes the new `prompt` field and is passed through the corresponding agent's formatter.
-If `external_prompt_passthrough=true`, the returned prompts are used directly without reformatting.
-In MAGRPO, the external transition is called for each rollout branch with that branch's histories.
+By default, each returned prompt becomes the new `prompt` field and goes through the corresponding agent's formatter; with `external_prompt_passthrough=True`, the prompts are used as they are. In MAGRPO, the transition is called for each rollout branch with that branch's histories.
 
 The following example constructs prompts for the next turn:
 
@@ -52,7 +49,7 @@ def custom_external(
 ```
 
 {{% hint warning %}}
-IAC/MAAC multi-turn training requires `num_generations` to be set to 1.
+Multi-turn IAC/MAAC training requires `num_generations=1`.
 {{% /hint %}}
 
 ## Example Modes {#example-modes-expert-diagnosis-and-self-improvement}

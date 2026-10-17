@@ -22,7 +22,7 @@ Each model stays on its assigned device; a single model is not split across GPUs
 
 ## Example
 
-The following configuration puts each model of an iterative MARLHF run on its own GPU: two agents, a centralized critic for the MAAC policy stage, the reward model, and copies of the current agents as comparators.
+The following configuration puts each model of an iterative MARLHF run on its own GPU: two agents, a centralized critic for MAAC policy learning, the reward model, and copies of the current agents as comparators.
 
 ```python
 from comlrl.trainers.preference import MARLHFIterConfig

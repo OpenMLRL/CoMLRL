@@ -81,15 +81,15 @@ The `.docs-demo` frame uses the theme's paper surface, a fine outer border, roun
 
 The `rollout-diagram` shortcode inlines `assets/rollouts/<name>.svg` and namespaces its SVG IDs. `assets/rollout-diagrams.js` controls playback. Without JavaScript, or with reduced motion enabled, the complete diagrams remain visible.
 
-Most diagrams are hand-written SVGs with the `algorithm-flow` class, edited directly in `assets/rollouts/`. `assets/_algorithm-flows.scss` styles their cards (`af-node`), arrows (`af-edge`), and colors (`af-purple`, `af-teal`, `af-amber`, `af-neutral`) in each theme. Every card and arrow group carries `data-rollout-stage` and `data-rollout-kind`. Playback keeps the whole diagram visible, highlights one stage at a time, and moves the `af-dot` of each active arrow along its path. The Environment Transition loop instead uses `animation="feedback"`, which `assets/feedback-loop.js` plays in fixed phases.
+The Multi-LLM PbRL diagrams are hand-written SVGs with the `algorithm-flow` class, edited directly in `assets/rollouts/`. `assets/_algorithm-flows.scss` styles their cards (`af-node`), arrows (`af-edge`), and colors (`af-purple`, `af-teal`, `af-amber`, `af-neutral`) in each theme. Every card and arrow group carries `data-rollout-stage` and `data-rollout-kind`. Playback keeps the whole diagram visible, highlights one stage at a time, and moves the `af-dot` of each active arrow along its path.
 
-The Multi-Agent REINFORCE and Actor-Critic diagrams (`reinforce-training`, `ac-training`, `reinforce-baselines`) are TikZ figures in `docs/scripts/*.tex`. Each header lists its rebuild commands, ending with the one that regenerates the staged copies:
+The Multi-Agent REINFORCE, Actor-Critic, and Environment Transition diagrams (`reinforce-training`, `ac-training`, `reinforce-baselines`, `environment-transition`) are TikZ figures in `docs/scripts/*.tex`; each header lists its rebuild commands. The Multi-Turn Algorithm trees and chain (`joint-tree`, `align-tree`, `cross-tree`, `ac`) are original SVG artwork in `static/img/`. After updating any of these originals, regenerate the staged copies:
 
 ```bash
 python3 docs/scripts/prepare_rollout_svgs.py
 ```
 
-The script only inserts animation attributes and verifies that removing them reproduces each source byte for byte. Each row or column is an animation stage, so keep positions in sync with the stage boundaries in the script, and avoid `\frac` and `\_`, whose rules export as straight paths that would animate as edges. The two training flows share one preamble, copied verbatim into each file. `assets/_diagram-theme.scss` maps each diagram's exact paint colors for dark mode; of the preamble's named paints, `agentA`, `agentB`, and `learned` are mapped, so using `update` or a new color also needs a mapping there.
+The script only inserts animation attributes and verifies that removing them reproduces each source byte for byte. Each row or column is an animation stage, so keep positions in sync with the stage boundaries in the script, and avoid `\frac` and `\_`, whose rules export as straight paths that would animate as edges. The training and transition flows share one preamble, copied verbatim into each file. `assets/_diagram-theme.scss` maps each diagram's exact paint colors for dark mode; of the preamble's named paints, `agentA`, `agentB`, and `learned` are mapped, so using `update` or a new color also needs a mapping there.
 
 ## Deploy (GitHub Pages)
 

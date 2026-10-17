@@ -27,9 +27,6 @@
   {{ with resources.Get "rollout-diagrams.js" | resources.Minify | resources.Fingerprint }}
   <script defer src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}"></script>
   {{ end }}
-  {{ with resources.Get "feedback-loop.js" | resources.Minify | resources.Fingerprint }}
-  <script defer src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}"></script>
-  {{ end }}
 {{ end }}
 
 {{ if or .IsHome (.HasShortcode "rollout-diagram") }}
