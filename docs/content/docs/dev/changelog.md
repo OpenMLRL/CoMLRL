@@ -19,12 +19,12 @@ weight: 3
 
 ## Version 1.4.0
 
-- Add online preference-learning methods (PR [#68](https://github.com/OpenMLRL/CoMLRL/pull/68)).
+- Add online PbRL methods (PR [#68](https://github.com/OpenMLRL/CoMLRL/pull/68)).
 - Add dataset drift logger.
 
 ## Version 1.3.9
 
-- Add offline preference-learning methods such as MADPO and MARLHF (PR [#67](https://github.com/OpenMLRL/CoMLRL/pull/67)).
+- Add offline PbRL methods such as MADPO and MARLHF (PR [#67](https://github.com/OpenMLRL/CoMLRL/pull/67)).
 
 ## Version 1.3.8
 
@@ -51,7 +51,7 @@ weight: 3
 - Fix the bug in loading heterogeneous models and refactor the loading logic.
 - Enable MBGD in MAGRPO to align with MAAC and IAC.
 - Remove redundant and legacy hyperparameters (e.g., model kwargs, patching hyperparameters).
-- Clean up multi-device legacy code, such as drop last and num_workers.
+- Clean up multi-device legacy code, such as `drop_last` and `num_workers`.
 - Add unit tests for model loading and separate them from CI as a badge.
 - Clean short functions.
 - Reorganize the docs and align the parameters.
@@ -71,7 +71,7 @@ weight: 3
 
 - Allow batch training in MAGRPOTrainer, IACTrainer, and MAACTrainer.
 - Allow multi-turn training in IACTrainer and MAACTrainer.
-- Change the x-axis from data_step to env_step.
+- Change the x-axis from `data_step` to `env_step`.
 
 ## Version 1.3.0
 

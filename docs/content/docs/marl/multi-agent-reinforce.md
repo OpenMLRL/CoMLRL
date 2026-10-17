@@ -10,6 +10,10 @@ REINFORCE is a class of policy-gradient methods that optimize the policy directl
 These methods are widely used for LLM fine-tuning because of their simplicity and efficiency. Examples include [GRPO](https://arxiv.org/pdf/2402.03300), [Dr. GRPO](https://arxiv.org/abs/2503.20783), [RLOO](https://openreview.net/forum?id=r1lgTGL5DE), [ReMax](https://arxiv.org/abs/2310.10505), [TreeRPO](https://arxiv.org/abs/2506.05183), and [REINFORCE++](https://arxiv.org/abs/2501.03262).
 REINFORCE can be extended to multi-agent settings, where multiple LLM agents respond at each turn and their joint responses receive a shared reward.
 
+All MAREINFORCE trainers share one training loop. At each rollout node, every agent samples {{< katex >}}K{{< /katex >}} responses, the trainer scores the index-aligned joint responses with one shared reward, and each agent weights its own log-probabilities by the resulting shared advantages before a buffered optimizer step.
+
+{{< rollout-diagram diagram="reinforce-training" title="MAREINFORCE training flow" description="Every joint sample earns one shared return; its advantage weights each agent's own policy gradient." >}}
+
 ## MAREINFORCE
 
 The policy-gradient surrogate for Multi-Agent REINFORCE (MAREINFORCE), before advantage normalization or reference regularization, can be expressed as:
@@ -42,10 +46,6 @@ J(\theta_i) = \mathbb{E}_{\mathbf{o}_0 \sim \mathcal{D}, \mathbf{h}_t  \sim \bol
 The sampled group mean includes the sample being updated, so it is not the action-independent baseline assumed in the general expression above. In multi-turn training, each branch's return is its immediate reward plus the mean return of its child node, with no discount applied. In `cross` mode, each agent's completion instead receives the **sum** of returns over all joint combinations containing that completion.
 
 By default, `advantage_normalization=True` then centers and scales the advantages within each node's generation group using the population standard deviation, with a minimum denominator of `1e-6`. If reference KL regularization is enabled, the sampled reference penalty is subtracted from returns before the baseline and normalization are applied.
-
-MAGRPO and the variants below share one trainer loop. At each rollout node, every agent samples {{< katex >}}K{{< /katex >}} responses, the trainer scores the index-aligned joint responses with one shared reward, and each agent weights its own log-probabilities by the resulting shared advantages before a buffered optimizer step.
-
-{{< rollout-diagram diagram="reinforce-training" title="MAREINFORCE training step" description="Each agent samples K responses; index-aligned joint responses share one reward and return, a group baseline gives shared advantages, and each agent updates on its own log-probabilities." >}}
 
 {{% hint warning %}}
 The current `MAGRPOTrainer` loss slice omits the final completion token, so its implemented sequence score differs from the full sequence log-probability in the surrogate above. The canonical setting is `joint_mode="cross"`; the accepted `"crossed"` alias generates Cartesian combinations but does not apply the same per-completion return aggregation.

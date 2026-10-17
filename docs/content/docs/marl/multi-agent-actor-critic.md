@@ -10,32 +10,25 @@ Actor-Critic (AC) methods are widely used policy gradient methods that use criti
 AC methods can achieve lower variance and better sample efficiency than REINFORCE, but this requires careful design and tuning of the critic to ensure stable training.
 In Multi-Agent Reinforcement Learning (MARL), Actor-Critic methods include Multi-Agent Actor-Critic (MAAC) and Independent Actor-Critic (IAC).
 
+Both roll out the agents jointly and score the joint response with the reward function; they differ in their critics. MAAC uses one critic over the joint history, so all agents share its TD error, while IAC gives each agent a critic over its own history and its own TD error.
+
+{{< rollout-diagram diagram="ac-training" title="Actor-critic training flow" description="MAAC's centralized critic gives all agents the same TD error; IAC's independent critics give each agent its own." >}}
+
 ## MAAC
 
-Multi-Agent Actor-Critic (MAAC) uses one Centralized Critic (CC) across agents to evaluate joint histories with `critic_type="v"`, or joint history-action pairs with `critic_type="q"`. The critic receives the agents' prompts joined into a single text sequence; Q mode also includes their generated completions.
-
-The critic prediction is denoted by {{< katex >}}C_{\boldsymbol{\phi}}(x_t){{< /katex >}}, where {{< katex >}}x_t=\mathbf{h}_t{{< /katex >}} in V mode and {{< katex >}}x_t=(\mathbf{h}_t,\mathbf{a}_t){{< /katex >}} in Q mode. CoMLRL forms a one-step target and a TD residual for each agent:
+Multi-Agent Actor-Critic (MAAC) uses a Centralized Critic (CC) across agents to evaluate the values of joint histories {{< katex >}}V_{\boldsymbol{\phi}}(\mathbf{h}_t){{< /katex >}} with `critic_type="v"`, or joint history-action pairs {{< katex >}}Q_{\boldsymbol{\psi}}(\mathbf{h}_t, \mathbf{a}_t){{< /katex >}} with `critic_type="q"`. The critic receives the agents' prompts joined into a single text sequence; Q mode also includes their generated completions. The policy gradient of each agent is:
 
 {{< katex display=true >}}
-y_{i,t}=\tilde r_{i,t}+\gamma m_t\bar C(x_{t+1}),
-\qquad A_{i,t}=y_{i,t}-\bar C(x_t),
+\nabla_{\theta_i} J(\theta_i) = \mathbb{E}_{\boldsymbol{\pi}}\left[\sum_{t=0}^{H-1} \nabla_{\theta_i} \log \pi_{\theta_i}(a_{i,t}|h_{i,t})\,\boldsymbol{\delta}_t\right]
 {{< /katex >}}
 
-where {{< katex >}}\bar C{{< /katex >}} is the detached prediction recorded during rollout collection, and {{< katex >}}m_t{{< /katex >}} is 1 only when another turn was collected. The final collected turn, including an early-terminated or single-turn rollout, uses {{< katex >}}y_{i,t}=\tilde r_{i,t}{{< /katex >}} without bootstrapping. Rewards may be shared across agents or supplied per agent. Here {{< katex >}}\tilde r_{i,t}{{< /katex >}} denotes the processed reward, with the optional reference-KL penalty subtracted when enabled.
-
-The actor and critic minimize the following losses over each agent's mini-batch {{< katex >}}B_i{{< /katex >}}:
+where {{< katex inline=true >}}\boldsymbol{\delta}_t = r_t + \gamma V_{\boldsymbol{\phi}}(\mathbf{h}_{t+1}) - V_{\boldsymbol{\phi}}(\mathbf{h}_{t}){{< /katex >}}, and the critic is updated by:
 
 {{< katex display=true >}}
-\mathcal L_{\pi_i}=-\frac{1}{|B_i|}\sum_{t\in B_i}\log\pi_{\theta_i}(a_{i,t}\mid h_{i,t})\,\operatorname{sg}(\widehat A_{i,t}),
-\qquad
-\mathcal L_C=\frac{1}{|B_i|}\sum_{t\in B_i}\big(C_{\boldsymbol{\phi}}(x_t)-y_{i,t}\big)^2.
+\mathcal{L}(\boldsymbol{\phi}) = \mathbb{E}_{\boldsymbol{\pi}}\left[\sum_{t=0}^{H-1} \big(r_t + \gamma V_{\phi}(\mathbf{h}_{t+1}) - V_{\phi}(\mathbf{h}_{t})\big)^2\right].
 {{< /katex >}}
 
-Here {{< katex >}}\widehat A{{< /katex >}} is the optionally normalized residual and {{< katex >}}\operatorname{sg}{{< /katex >}} means stop-gradient. The completion log-probability is the sum of generated-token log-probabilities; prompt and trailing padding tokens are excluded. The loss then averages across samples. Buffers are grouped by agent and turn before updating, and `advantage_normalization` normalizes the residuals within each such group. Targets and advantages remain fixed during the update. The shared critic is updated sequentially with each agent's batch, and `value_loss_coef` scales its loss.
-
-The animation below follows one MAAC turn from sampling through the update for two agents. Both actors use residuals from the same centralized critic, which is then trained against the TD targets using each agent's batch in turn; IAC instead gives each agent its own critic.
-
-{{< rollout-diagram diagram="ac-training" title="MAAC training step" description="Each agent samples one response per turn; the centralized critic turns the reward and next history into TD targets and residuals that weight each actor's loss and regress the critic." >}}
+Here {{< katex >}}r_t{{< /katex >}} is the processed reward, with the optional reference-KL penalty subtracted when enabled; rewards may be shared across agents or supplied per agent. The final collected turn, including an early-terminated or single-turn rollout, uses the reward alone as its target, without bootstrapping. The completion log-probability is the sum of generated-token log-probabilities; prompt and trailing padding tokens are excluded. The loss then averages across samples. Buffers are grouped by agent and turn before updating, and `advantage_normalization` normalizes the TD errors within each such group. Targets and advantages remain fixed during the update. The shared critic is updated sequentially with each agent's batch, and `value_loss_coef` scales its loss.
 
 In Q mode, the implementation uses the same TD-residual actor weight, with a sampled next action in the bootstrap. It does not implement a separate actor objective weighted directly by Q or a state-only baseline for Q.
 
@@ -97,14 +90,13 @@ The trainer uses a fixed training DataLoader batch size of 1. For `num_turns > 1
 
 ## IAC
 
-Independent Actor-Critic (IAC) optimizes each agent's policy with its own critic; other agents serve as part of the environment. Rewards can be shared or agent-specific. The critic conditions on that agent's prompt/history in V mode, or on its prompt and completion in Q mode. IAC uses the same detached-target convention as MAAC:
+Independent Actor-Critic (IAC) optimizes each agent's policy independently while using joint returns from multiple agents. Each agent maintains its own actor and critic, and other agents serve as part of the environment. Rewards can be shared or agent-specific. The critic conditions on that agent's prompt/history in V mode, or on its prompt and completion in Q mode. The policy gradient for each agent is:
 
 {{< katex display=true >}}
-y_{i,t}=\tilde r_{i,t}+\gamma m_t\bar C_i(x_{i,t+1}),
-\qquad A_{i,t}=y_{i,t}-\bar C_i(x_{i,t}),
+\nabla_{\theta_i} J(\theta_i) = \mathbb{E}_{\boldsymbol{\pi}}\left[\sum_{t=0}^{H-1} \nabla_{\theta_i} \log \pi_{\theta_i}(a_{i,t}|h_{i,t})\,\delta_{i,t}\right]
 {{< /katex >}}
 
-where {{< katex >}}x_{i,t}=h_{i,t}{{< /katex >}} in V mode and {{< katex >}}x_{i,t}=(h_{i,t},a_{i,t}){{< /katex >}} in Q mode. The actor uses the same sample-averaged loss and completion-token sum as MAAC, with optional normalization within each agent/turn group. The Q-mode actor also uses this TD residual.
+where {{< katex inline=true >}}\delta_{i,t} = r_t + \gamma V_{\phi_i}(h_{i,t+1}) - V_{\phi_i}(h_{i,t}){{< /katex >}}. The actor uses the same sample-averaged loss and completion-token sum as MAAC, with optional normalization within each agent/turn group. The Q-mode actor also uses this TD error.
 
 CoMLRL supports two IAC variants:
 
@@ -115,17 +107,17 @@ CoMLRL supports two IAC variants:
 The critics are updated by minimizing the TD error:
 
 {{< katex display=true >}}
-\mathcal L_{C_i}=\frac{1}{|B_i|}\sum_{t\in B_i}\big(C_{\phi_i}(x_{i,t})-y_{i,t}\big)^2.
+\mathcal{L}(\phi_i) = \mathbb{E}_{\boldsymbol{\pi}}\left[\sum_{t=0}^{H-1} \big(r_t + \gamma V_{\phi_i}(h_{i,t+1}) - V_{\phi_i}(h_{i,t})\big)^2\right].
 {{< /katex >}}
 
-When using a shared model (`use_separate_critic=False`), the actor and value head optimize the combined loss {{< katex >}}\mathcal L_{\pi_i}+\texttt{value\_loss\_coef}\,\mathcal L_{C_i}{{< /katex >}}. Unless `value_clip_range=None`, the value loss takes the larger error from the current prediction and a prediction clipped relative to the rollout value, for either critic type:
+When using a shared model (`use_separate_critic=False`), the actor and value head optimize the actor loss plus the critic loss weighted by `value_loss_coef`. Unless `value_clip_range=None`, a value clip is applied to improve training stability:
 
 {{< katex display=true >}}
-\ell_{C_i}=\max\Big((C_{\phi_i}(x_{i,t})-y_{i,t})^2,\ (C_{\phi_i}^{\mathrm{clip}}(x_{i,t})-y_{i,t})^2\Big),
-\\ C_{\phi_i}^{\mathrm{clip}}(x)=\bar C_i(x)+\operatorname{clip}\big(C_{\phi_i}(x)-\bar C_i(x),-\epsilon,\epsilon\big),
+L(\phi_i) = \max\Big( (V_{\phi_i}(h_t) - \hat{V}_t)^2,\ (V_{\phi_i}^{\text{clip}}(h_t) - \hat{V}_t)^2 \Big)
+\\ V_{\phi_i}^{\text{clip}}(h_t) = V_{\phi_i}^{\text{old}}(h_t) + \mathrm{clip}(V_{\phi_i}(h_t) - V_{\phi_i}^{\text{old}}(h_t), -\epsilon, \epsilon),
 {{< /katex >}}
 
-where {{< katex >}}\epsilon{{< /katex >}} is `value_clip_range` and these errors are averaged across the mini-batch. Separate critics use the unclipped squared error.
+where {{< katex >}}\hat{V}_t{{< /katex >}} is the TD target, {{< katex >}}\epsilon{{< /katex >}} is `value_clip_range`, and the errors are averaged across the mini-batch. Separate critics use the unclipped squared error.
 
 {{% hint info %}}
 **IACConfig** provides parameters for configuring Independent Actor-Critic training:

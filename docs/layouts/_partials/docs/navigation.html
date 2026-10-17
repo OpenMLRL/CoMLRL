@@ -12,10 +12,6 @@
     {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
     {{- $groups = $groups | append (dict "Title" (i18n "docsExamples") "Page" . "Linked" false "Children" $children) -}}
   {{- end -}}
-  {{- with .Site.GetPage "/docs/env" -}}
-    {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
-    {{- $groups = $groups | append (dict "Title" (i18n "docsEnvironments") "Page" . "Linked" true "Children" $children) -}}
-  {{- end -}}
 {{- else if eq $area "research" -}}
   {{- with .Site.GetPage "/docs/research" -}}
     {{- $home = . -}}
@@ -26,10 +22,12 @@
     {{- end -}}
   {{- end -}}
 {{- else -}}
-  {{- range slice "/docs/user-guide" "/docs/marl" "/docs/mapl" "/docs/multi-turn" "/docs/dev" -}}
+  {{- range slice "/docs/user-guide" "/docs/marl" "/docs/multi-turn" "/docs/env" "/docs/dev" -}}
     {{- with $current.Site.GetPage . -}}
       {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
-      {{- $groups = $groups | append (dict "Title" .Title "Page" . "Linked" false "Children" $children) -}}
+      {{/* Environments keeps its linked overview page and curated group title. */}}
+      {{- $env := eq .Path "/docs/env" -}}
+      {{- $groups = $groups | append (dict "Title" (cond $env (i18n "docsEnvironments") .Title) "Page" . "Linked" $env "Children" $children) -}}
     {{- end -}}
   {{- end -}}
 {{- end -}}

@@ -49,7 +49,7 @@ During decentralized execution, agents use their own prompts and policies. Indep
   - **_Multi-Agent Actor-Critic:_** Actor-Critic methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/maac.py).
     - Independent actor-critic (separate critic or value head over the LLM backbone).
     - Centralized critic over joint prompts with separate actors.
-  - **_Multi-Agent Preference Learning:_** MADPO, MARLHF, and their iterative variants.
+  - **_Multi-Agent PbRL:_** MADPO, MARLHF, and their iterative variants.
     - Direct joint preference optimization or a learned joint reward followed by RL.
     - Decentralized actors or one centralized actor with role-aware joint responses.
 - **Environments that simulate real-world tasks for training and evaluating LLM collaboration:**

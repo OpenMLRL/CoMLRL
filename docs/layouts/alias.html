@@ -41,7 +41,11 @@
     </script>
     <noscript><meta http-equiv="refresh" content="0; url={{ .Permalink }}"></noscript>
   {{ else }}
-    <meta http-equiv="refresh" content="0; url={{ .Permalink }}">
+    <script>
+      // Keep section anchors, such as those of the merged PbRL pages.
+      window.location.replace({{ .Permalink }} + window.location.search + window.location.hash);
+    </script>
+    <noscript><meta http-equiv="refresh" content="0; url={{ .Permalink }}"></noscript>
   {{ end }}
 </head>
 <body>

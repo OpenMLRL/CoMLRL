@@ -22,11 +22,12 @@ LANGUAGE_SCRIPTS = {
 }
 FRONT = re.compile(r"\A---\n(.*?)\n---(?:\n|$)", re.S)
 DISPLAY = r"title|linkTitle|description"
+# A fence ends before its newline, so the next line keeps its own list marker.
 FENCE = (
     r"(?m:^[ \t]*(?P<backtick_fence>`{3,})(?!`)[^`\n]*\n"
-    r"[\s\S]*?^[ \t]*(?P=backtick_fence)`*[ \t]*(?:\n|$)"
+    r"[\s\S]*?^[ \t]*(?P=backtick_fence)`*[ \t]*$"
     r"|^[ \t]*(?P<tilde_fence>~{3,})(?!~)[^\n]*\n"
-    r"[\s\S]*?^[ \t]*(?P=tilde_fence)~*[ \t]*(?:\n|$))"
+    r"[\s\S]*?^[ \t]*(?P=tilde_fence)~*[ \t]*$)"
 )
 MATH = r"\{\{[<%]\s*katex\b[\s\S]*?\{\{[<%]\s*/katex\s*[>%]\}\}"
 SHORTCODE = r"\{\{[<%][\s\S]*?[>%]\}\}"
@@ -281,6 +282,14 @@ def _link_structure(text):
     return result
 
 
+def _block_markers(markdown):
+    """Indentation and list, quote, or heading marker that begin each line."""
+    return [
+        re.match(r"[ \t]*(?:#{1,6}|[-*+]|\d+\.|>)(?=[ \t])|", line)[0]
+        for line in markdown.splitlines()
+    ]
+
+
 def _same_structure(source, translated):
     def unmatched_html_prefixes(text):
         # An unterminated outer tag may otherwise be skipped while its nested
@@ -311,6 +320,8 @@ def validate_translation(source, translated):
         raise ValueError("Translation changed the heading hierarchy")
     if any(re.search(r"\{#[^}]*\}(?!$)", h[2]) for h in heading_lines(translated)):
         raise ValueError("Translation moved a heading anchor")
+    if _block_markers(source) != _block_markers(translated):
+        raise ValueError("Translation changed list, quote, or heading markers")
 
     if not _same_structure(source[src_front.end() :], translated[dst_front.end() :]):
         raise ValueError("Translation changed protected code, math, links, or markup")

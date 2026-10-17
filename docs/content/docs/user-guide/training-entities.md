@@ -1,15 +1,17 @@
 ---
-title: Model Loading & Saving
-linkTitle: Model Loading & Saving
+title: Training Entities
+linkTitle: Training Entities
 weight: 2
 tocDepth: 4
+aliases:
+  - /docs/user-guide/model-loading/
 ---
 
-CoMLRL supports both homogeneous and heterogeneous models from Hugging Face or local directories.
-Users can specify [Hugging Face model identifiers](https://huggingface.co/models) through `agent_model`/`critic_model` for homogeneous setups, or provide `agents`/`critics` lists for heterogeneous setups. Trained agents can be saved and loaded into a new trainer for further training.
+CoMLRL supports training LLM agents and facilitates their training with LLM-based critics or reward models. Agents and critics can be homogeneous or heterogeneous models from Hugging Face or local directories.
+Users can specify [Hugging Face model identifiers](https://huggingface.co/models) through `agent_model`/`critic_model` for homogeneous setups, or provide `agents`/`critics` lists for heterogeneous setups. Trained entities can be saved and loaded into a new trainer for further training.
 
 
-## Loading LLM Agents
+## LLM Agents
 
 ### Homogeneous Agents
 
@@ -47,9 +49,9 @@ trainer = MAGRPOTrainer(
 )
 ```
 
-## Loading LLM Critics
+## LLM Critics
 
-Algorithms such as Independent Actor-Critic (IAC) and Multi-Agent Actor-Critic (MAAC) use LLM critics. How these critics are loaded depends on the algorithm and the `use_separate_critic` setting.
+Algorithms such as Independent Actor-Critic (IAC) and Multi-Agent Actor-Critic (MAAC) use LLM critics. How these critics are loaded depends on the algorithm and the `use_separate_critic` setting. MARLHF trainers with `rl_algorithm="maac"` or `"iac"` accept the same `critic_model` and `critics` arguments, or `critic_model_name` in their configuration; otherwise, they use the first actor's model identifier.
 
 ### Centralized Critic
 
@@ -136,6 +138,31 @@ Trainers use `agents`/`critics` lists internally. The `agent_model` and `critic_
 {{% hint warning %}}
 MAGRPO loads tokenizers automatically for model identifier strings. MAAC/IAC load a tokenizer automatically for `agent_model`, but require an explicit `tokenizer` when `agents` is supplied, even if it contains strings. Loaded model objects require one compatible shared tokenizer or a tokenizer list matching the actors. Heterogeneous actors may have different vocabularies when each uses its own compatible tokenizer; separate critics must also accept their actor's token IDs (the first actor's IDs for MAAC).
 {{% /hint %}}
+
+## LLM Reward Models
+
+In PbRL, [MARLHF]({{< relref "/docs/marl/multi-llm-pbrl#marlhf" >}}) learns a joint reward model from preference pairs and keeps it fixed as the reward for policy learning. Users can load its backbone through `reward_model_name` in `MARLHFConfig`, from a Hugging Face model identifier or a local directory of a causal language model. It defaults to the first actor's model identifier and is required when the actors are model objects without one. The trainer loads the backbone with its own tokenizer, adds a scalar head on the last non-padding token, and places the model on `reward_model_device` (default `"cuda:0"`; `None` uses the trainer device). `reward_freeze_backbone=True` trains only the head.
+
+The following example loads a _Qwen/Qwen2.5-Coder-7B_ reward model for two _Qwen/Qwen2.5-Coder-3B_ agents:
+
+```python
+from comlrl.trainers.preference import MARLHFConfig, MARLHFTrainer
+
+trainer = MARLHFTrainer(
+    agent_model="Qwen/Qwen2.5-Coder-3B",
+    num_agents=2,
+    reward_func=reward_func,
+    train_dataset=train_dataset,
+    args=MARLHFConfig(
+        num_agents=2,
+        num_turns=1,
+        reward_model_name="Qwen/Qwen2.5-Coder-7B",
+        reward_model_device="cuda:1",
+    ),
+)
+```
+
+`MARLHFIterTrainer` reloads the reward model from this source at each iteration before reward learning. The task reward from `reward_func` still labels the preference pairs; [Training Initialization]({{< relref "/docs/user-guide/training-initialization#rewards" >}}) describes how to pass rule-based or LLM-based task rewards.
 
 ## Saving & Resuming Training
 
@@ -237,13 +264,13 @@ resumed_trainer.train(
 )
 ```
 
-Checkpoints preserve model and optimizer states, training progress, and random states, along with preference-learning data and history where applicable.
+Checkpoints preserve model and optimizer states, training progress, and random states, along with PbRL data and history where applicable.
 
-Checkpoints are saved at completed epochs, iterations, or preference-learning stages, with a final save at completion. `checkpoint_interval` controls periodic saves. Resuming repeats any work since the last checkpoint.
+Checkpoints are saved at completed epochs, iterations, or PbRL stages, with a final save at completion. `checkpoint_interval` controls periodic saves. Resuming repeats any work since the last checkpoint.
 
 `num_train_epochs` and `num_iterations` count the total run, including completed work, and can be increased when resuming. Models, tokenizers, data, and training settings must remain compatible. Stateful datasets and callbacks can provide `state_dict()` and `load_state_dict()`; external service state is not restored.
 
-If a preference-learning output directory already contains files, resumed output goes into a `resume-*` subdirectory.
+If a PbRL output directory already contains files, resumed output goes into a `resume-*` subdirectory.
 
 For W&B, users can merge the saved run identity into their existing `wandb_config` before constructing the trainer. This preserves logging and output settings and avoids opening an empty run during construction:
 

@@ -157,4 +157,11 @@ Please cite the following papers if you find this library useful in your researc
   booktitle={Proceedings of the International Conference on Machine Learning.},
   year    = {2026}
 }
+
+@article{liu2026improving,
+  title={Improving LLM Collaboration via Multi-Agent Preference Learning},
+  author={Liu, Shuo and Li, Xinzichen and Chen, Tianle and Amato, Christopher},
+  journal={arXiv preprint arXiv:2609.32827},
+  year={2026}
+}
 ```

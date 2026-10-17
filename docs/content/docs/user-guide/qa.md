@@ -11,7 +11,7 @@ aliases:
 
 Many approaches train role-conditioned agents with shared parameters using single-agent RL frameworks. Distinct agents better represent heterogeneous LLMs with different capabilities and more directly reflect the multi-agent setting.
 
-CoMLRL supports separate actors with decentralized execution, including training with a centralized critic. Its centralized collaboration mode instead uses one actor to generate the complete joint response. The available trainers include REINFORCE, Actor-Critic, and Multi-Agent Preference Learning; each method's page describes its implemented objective and constraints.
+CoMLRL supports separate actors with decentralized execution, including training with a centralized critic. Its centralized collaboration mode instead uses one actor to generate the complete joint response. The available trainers include REINFORCE, Actor-Critic, and Multi-Agent PbRL; each method's page describes its implemented objective and constraints.
 
 {{% /details %}}
 

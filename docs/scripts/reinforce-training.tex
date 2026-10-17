@@ -20,82 +20,38 @@
   label/.style={anchor=west, font=\footnotesize},
 }
 
-% One rollout node of the MAREINFORCE family (MAGRPO, MAREINFORCE, MARLOO, MAReMax).
-% Columns: agent 1 (left), shared quantities (center), agent 2 (right).
+% The MAREINFORCE family at one turn, left to right: the agents' sampled responses
+% share one return per joint sample, and the same advantage weights each agent's
+% own policy gradient. Columns are animation stages.
 \begin{document}
 \begin{tikzpicture}[x=1pt, y=1pt, font=\footnotesize]
-  \def\xa{98}   % agent 1 column
-  \def\xc{191}  % shared column
-  \def\xb{284}  % agent 2 column
+  % Stage 0: each agent's policy acts on its own history.
+  \node[agentA] (h1) at (0,18) {$h_{1,t}$};
+  \node[agentB] (h2) at (0,-18) {$h_{2,t}$};
+  \node[policy, agentA] (p1) at (36,18) {$\pi_{\theta_1}$};
+  \node[policy, agentB] (p2) at (36,-18) {$\pi_{\theta_2}$};
+  \draw[flow, agentA] (h1) -- (p1);
+  \draw[flow, agentB] (h2) -- (p2);
 
-  % Stage 0: task item, prompts and policies.
-  \node[label] at (0,-11) {history};
-  \node[box] (o) at (\xc,0) {$\mathbf{o}_0\sim\mathcal{D}$};
-  \node[box] (h1) at (\xa,0) {$h_{1,t}$};
-  \node[box] (h2) at (\xb,0) {$h_{2,t}$};
-  \draw[flow] (o) -- node[above, font=\scriptsize] {formatter} (h1);
-  \draw[flow] (o) -- node[above, font=\scriptsize] {formatter} (h2);
-  \node[policy, agentA] (p1) at (\xa,-22) {$\pi_{\theta_1}$};
-  \node[policy, agentB] (p2) at (\xb,-22) {$\pi_{\theta_2}$};
-  \draw[flow] (h1) -- (p1);
-  \draw[flow] (h2) -- (p2);
-  \node[note] at (\xc,-21) {$t>0$: \texttt{external\char95transition}};
+  % Stage 1: the k-th responses form a joint sample with one shared return.
+  \node[box] (R) at (100,0) {$R^k_t$};
+  \node[note] at (100,31) {shared return};
+  \node[note] at (100,-13) {$k=1,\ldots,K$};
+  \draw[flow, agentA] (p1.east) -- node[above] {$a^k_{1,t}$} (72,18) |- ([yshift=3pt]R.west);
+  \draw[flow, agentB] (p2.east) -- node[below] {$a^k_{2,t}$} (72,-18) |- ([yshift=-3pt]R.west);
 
-  % Stage 1: K responses per agent.
-  \node[label] at (0,-58) {sample};
-  \node[box, agentA] (a11) at (\xa-26,-58) {$a^{1}_{1,t}$};
-  \node[agentA] at (\xa,-58) {$\cdots$};
-  \node[box, agentA] (a1K) at (\xa+26,-58) {$a^{K}_{1,t}$};
-  \node[box, agentB] (a21) at (\xb-26,-58) {$a^{1}_{2,t}$};
-  \node[agentB] at (\xb,-58) {$\cdots$};
-  \node[box, agentB] (a2K) at (\xb+26,-58) {$a^{K}_{2,t}$};
-  \foreach \n in {a11,a1K} \draw[agentA, line width=.8pt] (p1.south) -- (\n.north);
-  \foreach \n in {a21,a2K} \draw[agentB, line width=.8pt] (p2.south) -- (\n.north);
-  \node[note] at (\xc,-58) {$K=$\,\texttt{num\char95generations}};
+  % Stage 2: a baseline turns the returns into advantages.
+  \node[box] (A) at (171,0) {$\hat A^k_t=R^k_t-b(\mathbf{h}_t)$};
+  \node[note] at (171,31) {advantage};
+  \draw[flow] (R) -- (A);
 
-  % Stage 2: aligned joint responses and their shared returns.
-  \node[label] at (0,-101) {return};
-  \node[box] (j1) at (\xc-26,-92)
-    {$\textcolor{agentA}{a^{1}_{1,t}}\,\textcolor{agentB}{a^{1}_{2,t}}$};
-  \node at (\xc,-92) {$\cdots$};
-  \node[box] (jK) at (\xc+26,-92)
-    {$\textcolor{agentA}{a^{K}_{1,t}}\,\textcolor{agentB}{a^{K}_{2,t}}$};
-  \draw[flow, agentA] (\xa,-67) -- (j1.west);
-  \draw[flow, agentB] (\xb,-67) -- (jK.east);
-  \node at (\xc-26,-110) {$R^{1}_t$};
-  \node at (\xc,-110) {$\cdots$};
-  \node at (\xc+26,-110) {$R^{K}_t$};
-  \node[note, anchor=west] at (50,-104) {joint $\mathbf{a}^k_t$: same index $k$\\\texttt{reward\char95func}$\,\to r^k_t$};
-  \node[note, anchor=west] at (258,-104) {$R^k_t=r^k_t+{}$mean\\return of child node};
-
-  % Stage 3: shared group-relative advantages.
-  \node[label] at (0,-138) {advantage};
-  \draw[flow] (\xc-26,-116) -- (\xc-26,-131);
-  \draw[flow] (\xc+26,-116) -- (\xc+26,-131);
-  \node at (\xc-26,-138) {$\hat A^{1}_t$};
-  \node at (\xc,-138) {$\cdots$};
-  \node at (\xc+26,-138) {$\hat A^{K}_t$};
-  \node[note, anchor=west] at (50,-138) {$A^k_t=R^k_t-b$\\$\hat A^k_t$: normalized};
-  \node[note, anchor=west] at (258,-138) {$b$: \texttt{advantage\char95mode}\\over the $K$ returns};
-
-  % Stage 4: per-agent losses weighted by the shared advantages.
-  \node[label] at (0,-174) {loss};
-  \node[box, agentA, align=center] (l1) at (\xa,-174)
-    {$\mathcal{L}_1=-\mathrm{mean}_k\,\hat A^k_t$\\$\times\log\pi_{\theta_1}(a^k_{1,t}\mid h_{1,t})$};
-  \node[box, agentB, align=center] (l2) at (\xb,-174)
-    {$\mathcal{L}_2=-\mathrm{mean}_k\,\hat A^k_t$\\$\times\log\pi_{\theta_2}(a^k_{2,t}\mid h_{2,t})$};
-  \draw[flow] (\xc-34,-145) -- (l1.north east);
-  \draw[flow] (\xc+34,-145) -- (l2.north west);
-  \node[note, align=center] at (\xc,-178) {shared $\hat A^k_t$,\\no critic};
-
-  % Stage 5: buffered per-agent optimizer steps.
-  \node[label] at (0,-218) {update};
-  \draw[flow, update] (l1.south) -- (\xa,-205);
-  \draw[flow, update] (l2.south) -- (\xb,-205);
-  \node[update] (u1) at (\xa,-211) {$\theta_1\leftarrow\theta_1-\alpha\nabla_{\theta_1}\bar{\mathcal{L}}_1$};
-  \node[update] (u2) at (\xb,-211) {$\theta_2\leftarrow\theta_2-\alpha\nabla_{\theta_2}\bar{\mathcal{L}}_2$};
-  \node[policy, agentA] at (\xa,-232) {$\pi_{\theta_1}'$};
-  \node[policy, agentB] at (\xb,-232) {$\pi_{\theta_2}'$};
-  \node[note, align=center] at (\xc,-222) {$\bar{\mathcal{L}}_i$: mean over the agent's\\\texttt{rollout\char95buffer\char95size}\\buffered node samples};
+  % Stage 3: the same advantage weights each agent's own policy gradient.
+  \node[box, agentA] (g1) at (286,18)
+    {$\textcolor{black}{\hat A^k_t}\,\nabla_{\theta_1}\log\pi_{\theta_1}(a^k_{1,t}\mid h_{1,t})$};
+  \node[box, agentB] (g2) at (286,-18)
+    {$\textcolor{black}{\hat A^k_t}\,\nabla_{\theta_2}\log\pi_{\theta_2}(a^k_{2,t}\mid h_{2,t})$};
+  \node[note] at (286,31) {policy gradient};
+  \draw[flow] ([yshift=3pt]A.east) -- (222,3) |- (g1.west);
+  \draw[flow] ([yshift=-3pt]A.east) -- (222,-3) |- (g2.west);
 \end{tikzpicture}
 \end{document}
