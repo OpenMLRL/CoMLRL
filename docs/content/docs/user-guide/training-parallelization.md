@@ -10,7 +10,7 @@ Each model stays on its assigned device; a single model is not split across GPUs
 
 ## Device Placement
 
-{{% hint info "**Device Placement**" %}}
+{{% hint info %}}
 **Device Placement** parameters:
 
 - `agent_devices`: Agent devices; required in `"mp"` mode

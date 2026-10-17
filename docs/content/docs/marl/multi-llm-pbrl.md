@@ -34,7 +34,7 @@ The oracle function scores each joint response with one shared value. By default
 
 For each task item, every agent samples `preference_num_candidates` responses to its prompt, and responses with the same candidate index form a joint response. Of any two joint responses with different scores, the higher-scored one is preferred: it is the winner {{< katex >}}w{{< /katex >}}, and the other is the loser {{< katex >}}l{{< /katex >}}. Ties are discarded. `pair_selection` and `preference_pairs_per_sample` decide which pairs each task keeps. In iterative training, each comparison is instead between the current agents' joint response and the [comparator](#comparator)'s joint response at the same candidate index, and either side can win.
 
-{{% hint info "**Preference Data**" %}}
+{{% hint info %}}
 **Preference Data** parameters:
 
 - `preference_num_candidates`: Candidates sampled per task and actor; at least 2 (default 80)
@@ -74,7 +74,7 @@ Training a cooperative LLM-based multi-agent system with PbRL alternates between
 
 Evaluation always samples from the current policies and scores them with the task reward (`reward_func` and `reward_processor`), never with a learned reward model.
 
-{{% hint info "**PbRL Trainer**" %}}
+{{% hint info %}}
 **PbRL Trainer** parameters:
 
 - `agent_model` or `agents`: Model identifier for homogeneous agents, or a list of model identifiers or instances
@@ -133,7 +133,7 @@ In iterative training, the comparator supplies the other side of each comparison
 
 The `history` source saves policy checkpoints automatically. The two sides may sample different numbers of candidates; only indices present on both sides are compared, and `pair_selection="comparator_reward"` does not assume the comparator wins. By default, the comparator generates one response per role; with `comparator_generation_mode="centralized"`, one comparator model writes every role's response in a single joint response, which is parsed into role responses before pairs are built.
 
-{{% hint info "**Comparator**" %}}
+{{% hint info %}}
 **Comparator** parameters:
 
 - `comparator_policy`: `"current"`, `"current_copy"`, `"model"`, `"history"`, or `"api"`
@@ -181,7 +181,7 @@ comparator_api_model=claude-sonnet-4-20250514
 comparator_api_key_env=ANTHROPIC_API_KEY
 ```
 
-{{% hint info "**Comparator API**" %}}
+{{% hint info %}}
 **Comparator API** parameters:
 
 - `comparator_api_url`: Endpoint URL; required for `"api"`
@@ -232,7 +232,7 @@ w_a = \frac{\lambda^a}{\sum_{j=0}^{K-1}\lambda^j},
 
 Historical modes assign each of the `preference_replay_sample_size` draws to a dataset by weight, then sample pairs within each dataset. Sampling proceeds without repetition when the assigned count does not exceed the dataset size; larger counts cycle through shuffled copies. The combined sample is shuffled. The default sample size is the current round's pair count, or the latest non-empty dataset's size if the current round is empty.
 
-{{% hint info "**Replay Buffer**" %}}
+{{% hint info %}}
 **Replay Buffer** parameters:
 
 - `preference_replay_mode`: `"current"` (default), `"nearest_k"`, `"all_history"`, or `"lambda_decay"`

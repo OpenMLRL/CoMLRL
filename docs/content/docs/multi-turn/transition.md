@@ -12,7 +12,7 @@ External feedback turns environment observations into prompts for later turns. C
 
 Users can implement custom external feedback by defining a function with the following interface:
 
-{{% hint info "Custom External Feedback Interface:" %}}
+{{% hint info %}}
 Custom External Feedback Interface:
 
 - `prompt`: Original task prompt or problem description (required)
