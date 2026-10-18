@@ -71,9 +71,6 @@ conda install -c conda-forge comlrl
     - [HumanEval](https://github.com/openai/human-eval) - Handwritten evaluation problems.
     - [CoopHumanEval](https://huggingface.co/datasets/OpenMLRL/CoopHumanEval) - HumanEval with cooperative nature.
     - [ClassEval](https://conf.researchr.org/details/icse-2024/icse-2024-research-track/219/Evaluating-Large-Language-Models-in-Class-Level-Code-Generation) - Complete class-level code based on attributes and docstrings.
-  - [**_Minecraft_**](https://github.com/OpenMLRL/LLM_Collab_Minecraft): Collaborative building tasks in Minecraft.
-    - [StrBuild](https://github.com/OpenMLRL/LLM_Collab_Minecraft/tree/main/str_build) - Building structures based on string blueprints.
-    - [HouseBuild](https://github.com/OpenMLRL/LLM_Collab_Minecraft/tree/main/house_build) - Constructing houses from given blueprints while defending against spider attacks.
   - [**_Travel_**](https://github.com/OpenMLRL/LLM_Collab_Travel): Collaborative travel planning under user constraints.
     - [TravelPlanner](https://huggingface.co/datasets/osunlp/TravelPlanner) - Planning multi-day trip itineraries.
   - [**_Tool-Use_**](https://github.com/OpenMLRL/LLM_Collab_BFCL-v4): Collaborative function calling with tools using [BFCL v4](https://gorilla.cs.berkeley.edu/leaderboard.html).

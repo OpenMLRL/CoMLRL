@@ -55,14 +55,14 @@ EMPHASIS = (
 # words with two or more capitals (algorithm names, acronyms, class and dataset
 # names). Inside compounds such as "generated-token", only the term is kept.
 # Boundaries are ASCII letters and digits, so CJK particles ("actors를") and
-# Markdown emphasis ("_Minecraft_") do not hide a term.
+# Markdown emphasis ("_MAGRPO_") do not hide a term.
 KEEP_ENGLISH = re.compile(
     r"(?<![A-Za-z0-9])(?:(?:\*\*)?Co(?:\*\*)?operative (?:\*\*)?M(?:\*\*)?ulti-"
     r"(?:\*\*)?L(?:\*\*)?LM (?:\*\*)?R(?:\*\*)?einforcement (?:\*\*)?L(?:\*\*)?earning"
     r"|[Aa]ctor-[Cc]ritic|[Aa]ctors?|[Cc]ritics?|[Rr]ollouts?"
     r"|[Ee]pisodes?|[Ee]pochs?|[Tt]okens?|[Tt]okenizers?|[Tt]rainers?|Top-[kp]"
     r"|(?i:value[ -]heads?)|[Bb]ackbones?|[Mm]argins?"
-    r"|Weights & Biases|Hugging Face|Minecraft|LLaMA-Factory|Dec-POMDP"
+    r"|Weights & Biases|Hugging Face|LLaMA-Factory|Dec-POMDP"
     r"|(?!ZXQ\d{5}QXZ)(?=[A-Za-z0-9]*[A-Z][A-Za-z0-9]*[A-Z])[A-Za-z][A-Za-z0-9]*)"
     r"(?![A-Za-z0-9])"
 )

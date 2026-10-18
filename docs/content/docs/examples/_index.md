@@ -28,4 +28,4 @@ Two-turn training in which an external transition reports each agent's response 
 
 ## Environments
 
-Richer examples can be found in the [environments]({{< relref "docs/env" >}}), which apply CoMLRL to writing, coding, Minecraft building, travel planning, and tool use.
+Richer examples can be found in the [environments]({{< relref "docs/env" >}}), which apply CoMLRL to writing, coding, travel planning, and tool use.

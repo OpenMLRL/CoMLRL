@@ -16,10 +16,6 @@ Environments that simulate real-world tasks for training and evaluating LLM coll
   - [HumanEval](https://github.com/openai/human-eval) - Handwritten evaluation problems.
   - [CoopHumanEval](https://huggingface.co/datasets/OpenMLRL/CoopHumanEval) - A cooperative variant of HumanEval.
 
-- **Minecraft**: Multi-agent building environments.
-  - StrBuild - Structured builds from text.
-  - HouseBuild - Coordinated house construction.
-
 - **Travel**: Collaborative travel planning under user constraints.
   - [TravelPlanner](https://huggingface.co/datasets/osunlp/TravelPlanner) - Planning multi-day trip itineraries.
 
