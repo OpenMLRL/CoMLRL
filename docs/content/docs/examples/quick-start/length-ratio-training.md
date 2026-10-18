@@ -1,6 +1,8 @@
 ---
-title: CoMLRL Quick Start
+title: Length-Ratio Training
 weight: 1
+aliases:
+  - /docs/examples/comlrl-quick-start/
 ---
 
 This tutorial demonstrates a simple two-agent training task with a length-ratio reward. Both agents receive the same prompt and generate independently; the second agent does not see the first agent's response. The reward encourages the second output to contain 2–3× as many characters as the first. It does not evaluate story quality or semantic collaboration.

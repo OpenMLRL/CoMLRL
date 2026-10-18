@@ -3,7 +3,7 @@ title: Installation
 weight: 1
 ---
 
-CoMLRL can be installed from PyPI, conda-forge, or source and supports Python 3.10 or later. Users can install a PyTorch build compatible with their device.
+CoMLRL can be installed from PyPI, conda-forge, or source and supports Python 3.10 or later. Users should also install a PyTorch build compatible with their device.
 
 ## Installation from PyPI {#install-from-pypi}
 
@@ -21,7 +21,7 @@ conda install -c conda-forge comlrl
 
 ## Installation from source {#install-from-source}
 
-Users can clone the repository and install CoMLRL in editable mode to access the latest features or develop it locally:
+Users can also clone the repository and install CoMLRL in editable mode to access the latest features or develop it locally:
 
 ```bash
 git clone https://github.com/OpenMLRL/CoMLRL.git

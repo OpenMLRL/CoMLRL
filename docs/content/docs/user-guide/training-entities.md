@@ -15,7 +15,7 @@ Users can specify [Hugging Face model identifiers](https://huggingface.co/models
 
 ### Homogeneous Agents
 
-Users can initialize homogeneous agents by setting `agent_model` to a single model identifier and leaving `agents=None`. For trainers with a separate `num_agents` constructor argument, users can set it alongside the matching configuration value; the configuration alone does not override it.
+Homogeneous agents are initialized by setting `agent_model` to a single model identifier and leaving `agents=None`. For trainers with a separate `num_agents` constructor argument, that argument can be set alongside the matching configuration value; the configuration alone does not override it.
 
 The following example loads three _Qwen/Qwen2.5-1.5B_ agents:
 
@@ -32,7 +32,7 @@ trainer = MAGRPOTrainer(
 
 ### Heterogeneous Agents
 
-Although homogeneous agents can be prompted to take on different roles and work on separate parts of a task in parallel, heterogeneous agents can also contribute the specialized capabilities of different models.
+Although homogeneous agents can be prompted to take on different roles and work on separate parts of a task in parallel, heterogeneous agents can contribute the specialized capabilities of different models.
 
 Users can initialize heterogeneous agents by supplying model identifiers or loaded model objects in `agents`, with compatible tokenizers supplied through `tokenizer`.
 With `agents` supplied, `agent_model` can remain `None`. If both are provided, their model names must match, and their list lengths must match the number of agents; otherwise, training raises an error.
@@ -55,7 +55,7 @@ Algorithms such as Independent Actor-Critic (IAC) and Multi-Agent Actor-Critic (
 
 ### Centralized Critic
 
-Users can load a separate centralized critic through `critic_model` or a one-element `critics` list. It must be a supported causal language model: the trainer adds a value head and encodes the joint input with the first actor's tokenizer, so that tokenizer must also be compatible with the critic.
+A separate centralized critic can be loaded through `critic_model` or a one-element `critics` list. It must be a supported causal language model: the trainer adds a value head and encodes the joint input with the first actor's tokenizer, so that tokenizer must also be compatible with the critic.
 
 The following example pairs _Qwen/Qwen2.5-Coder-3B_ and _Qwen/Qwen2.5-Coder-1.5B_ actors with a centralized _Qwen/Qwen2.5-Coder-7B_ critic:
 
@@ -141,7 +141,7 @@ MAGRPO loads tokenizers automatically for model identifier strings. MAAC/IAC loa
 
 ## LLM Reward Models
 
-In PbRL, [MARLHF]({{< relref "/docs/marl/multi-llm-pbrl#marlhf" >}}) learns a joint reward model from preference pairs and keeps it fixed as the reward for policy learning. Users can load its backbone through `reward_model_name` in `MARLHFConfig`, from a Hugging Face model identifier or a local directory of a causal language model. It defaults to the first actor's model identifier and is required when the actors are model objects without one. The trainer loads the backbone with its own tokenizer, adds a scalar head on the last non-padding token, and places the model on `reward_model_device` (default `"cuda:0"`; `None` uses the trainer device). `reward_freeze_backbone=True` trains only the head.
+In PbRL, [MARLHF]({{< relref "/docs/marl/multi-llm-pbrl#marlhf" >}}) learns a joint reward model from preference pairs and keeps it fixed as the reward for policy learning. Its backbone is loaded through `reward_model_name` in `MARLHFConfig`, from a Hugging Face model identifier or a local directory of a causal language model. It defaults to the first actor's model identifier and is required when the actors are model objects without one. The trainer loads the backbone with its own tokenizer, adds a scalar head on the last non-padding token, and places the model on `reward_model_device` (default `"cuda:0"`; `None` uses the trainer device). `reward_freeze_backbone=True` trains only the head.
 
 The following example loads a _Qwen/Qwen2.5-Coder-7B_ reward model for two _Qwen/Qwen2.5-Coder-3B_ agents:
 
@@ -177,7 +177,7 @@ trainer.save_model("./saved-models/run-1")
 
 ### Training from Saved Models
 
-Users can continue training a saved two-actor MAGRPO setup by supplying the actors' directories in the original role order. The parent `run-1` directory contains the actors; each `agent_i` directory is a loadable model.
+Training can continue from a saved two-actor MAGRPO setup by supplying the actors' directories in the original role order. The parent `run-1` directory contains the actors; each `agent_i` directory is a loadable model.
 
 ```python
 from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
@@ -208,11 +208,7 @@ MAGRPO loads tokenizers from the actor directories automatically. Here, `num_tra
 
 Other trainers support the same local-directory approach, subject to the tokenizer and actor-count requirements above. Preference trainers start preference collection and reward learning according to the new run's configuration.
 
-#### Restoring Value Heads
-
-This section applies to `save_model` exports. Training checkpoints restore value heads automatically.
-
-IAC and MAAC save value heads separately as `value_head.pt`. Loading a critic or shared actor directory through the constructor restores the language-model backbone and creates a new value head. Users can retain the learned values by explicitly restoring the saved head before calling `train()`.
+IAC and MAAC save value heads separately as `value_head.pt`. Loading a critic or shared actor directory through the constructor restores the language-model backbone and creates a new value head. Users can retain the learned values by explicitly restoring the saved head before calling `train()`. Training checkpoints, unlike `save_model` exports, restore value heads automatically.
 
 For a saved two-actor MAAC setup using the default linear value head:
 
@@ -270,7 +266,7 @@ Checkpoints are saved at completed epochs, iterations, or PbRL stages, with a fi
 
 `num_train_epochs` and `num_iterations` count the total run, including completed work, and can be increased when resuming. Models, tokenizers, data, and training settings must remain compatible. Stateful datasets and callbacks can provide `state_dict()` and `load_state_dict()`; external service state is not restored. If a PbRL output directory already contains files, resumed output goes into a `resume-*` subdirectory.
 
-For W&B, users can merge the saved run identity into their existing `wandb_config` before constructing the trainer. This preserves logging and output settings and avoids opening an empty run during construction:
+For W&B, the saved run identity can be merged into the existing `wandb_config` before the trainer is constructed. This preserves logging and output settings and avoids opening an empty run during construction:
 
 ```python
 from comlrl.utils import read_checkpoint_metadata

@@ -4,28 +4,7 @@
   <meta charset="utf-8">
   <title>{{ .Permalink }}</title>
   <link rel="canonical" href="{{ .Permalink }}">
-  {{ if and .Page (eq .Page.Path "/docs/multi-turn/algorithm") }}
-    {{ with .Page.Site.GetPage "/docs/multi-turn/transition" }}
-    <script>
-      // Preserve bookmarks to the transition half of the former combined guide.
-      (function () {
-        var transitionAnchors = [
-          '#environment-transition',
-          '#custom-external-feedback',
-          '#api-custom-external-feedback-interface',
-          '#example-modes-expert-diagnosis-and-self-improvement',
-          '#centralized-preference-collaboration',
-          '#api-comparators'
-        ];
-        var target = transitionAnchors.indexOf(window.location.hash) !== -1
-          ? {{ .RelPermalink }}
-          : {{ $.Permalink }};
-        window.location.replace(target + window.location.search + window.location.hash);
-      })();
-    </script>
-    {{ end }}
-    <noscript><meta http-equiv="refresh" content="0; url={{ .Permalink }}"></noscript>
-  {{ else if and .Page (eq .Page.Path "/docs/dev/support") }}
+  {{ if and .Page (eq .Page.Path "/docs/dev/support") }}
     <script>
       // Keep bookmarks to the three parts of the former Developer guide.
       (function () {

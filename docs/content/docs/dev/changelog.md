@@ -5,6 +5,12 @@ weight: 3
 
 # Changelog
 
+## Version 1.4.3
+
+- Support MAPL algorithms, including MARLHF and MADPO (PR [#72](https://github.com/OpenMLRL/CoMLRL/pull/72)).
+- Support centralized multi-agent system training (PR [#72](https://github.com/OpenMLRL/CoMLRL/pull/72)).
+- Refine the documentation.
+
 ## Version 1.4.2
 
 - Support more comparator models (commit [e1b3d80](https://github.com/OpenMLRL/CoMLRL/commit/e1b3d8065eeddaad9d857d10e0d21764cb1f3270)).

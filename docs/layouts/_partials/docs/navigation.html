@@ -9,8 +9,11 @@
   {{- with .Site.GetPage "/docs/examples" -}}
     {{- $home = . -}}
     {{- $homeTitle = i18n "docsExampleOverview" -}}
-    {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
-    {{- $groups = $groups | append (dict "Title" (i18n "docsExamples") "Page" . "Linked" false "Children" $children) -}}
+    {{/* Each subsection, such as Quick Start or Advanced Usage, is one sidebar group. */}}
+    {{- range .Sections.ByWeight -}}
+      {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
+      {{- $groups = $groups | append (dict "Title" .Title "Page" . "Linked" false "Children" $children) -}}
+    {{- end -}}
   {{- end -}}
 {{- else if eq $area "research" -}}
   {{- with .Site.GetPage "/docs/research" -}}
@@ -22,7 +25,7 @@
     {{- end -}}
   {{- end -}}
 {{- else -}}
-  {{- range slice "/docs/user-guide" "/docs/marl" "/docs/multi-turn" "/docs/env" "/docs/dev" -}}
+  {{- range slice "/docs/user-guide" "/docs/marl" "/docs/env" "/docs/dev" -}}
     {{- with $current.Site.GetPage . -}}
       {{- $children := where .RegularPages.ByWeight "Params.bookHidden" "ne" true -}}
       {{/* Environments keeps its linked overview page and curated group title. */}}

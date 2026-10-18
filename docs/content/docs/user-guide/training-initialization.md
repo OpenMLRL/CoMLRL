@@ -9,7 +9,7 @@ aliases:
   - /docs/user-guide/logging/
 ---
 
-Training is initialized from a task set, a class of tasks that share an input format and a reward. Formatters turn each task into agent prompts, and a reward function scores the agents' joint responses. The examples use the length-ratio task from the [quick start]({{< relref "docs/examples/comlrl-quick-start" >}}).
+Training is initialized from a task set, a class of tasks that share an input format and a reward. Formatters turn each task into agent prompts, and a reward function scores the agents' joint responses.
 
 ## Task Sets
 
@@ -46,7 +46,7 @@ The current training data loaders preserve task order. Users can shuffle the tas
 
 ## Prompts from Tasks
 
-Users can share a prompt format across agents with one formatter, or assign different roles with a list of formatters in actor order. Only fields used by a formatter enter the model prompt; the reward function can still read the full task item.
+One formatter can share a prompt format across agents, or a list of formatters in actor order can assign different roles. Only fields used by a formatter enter the model prompt; the reward function can still read the full task item.
 
 ```python
 def brief_formatter(item):
@@ -58,7 +58,7 @@ def detailed_formatter(item):
 formatters = [brief_formatter, detailed_formatter]
 ```
 
-For multi-turn tasks, formatters may also accept `external_prompts`. The transition interface is described in [Multi-Turn Interaction]({{< relref "docs/multi-turn/transition" >}}).
+For multi-turn tasks, formatters may also accept `external_prompts`. The transition interface is described in [Multi-Turn Interaction]({{< relref "docs/marl/multi-turn-interaction" >}}).
 
 ## Rewards
 
@@ -68,7 +68,7 @@ Both rule-based rewards and LLM reward models are passed to trainers through `re
 
 ### Rule-Based Rewards
 
-A rule-based reward computes scores directly from the responses and task items, for example with task checks, verifiers, or test harnesses. The following function scores the length-ratio task:
+A rule-based reward computes scores directly from the responses and task items, for example with task checks, verifiers, or test harnesses. The following function scores a length-ratio task:
 
 ```python
 import math
@@ -123,7 +123,7 @@ def model_reward(brief_completions, detailed_completions, *, batch_items):
 # reward_func=model_reward,
 ```
 
-Users can load the reward model once, outside the function, and place it on a device with free memory; trainers do not move or update it. To learn a reward model from preferences instead, see [LLM Reward Models]({{< relref "/docs/user-guide/training-entities#llm-reward-models" >}}).
+The reward model can be loaded once, outside the function, and placed on a device with free memory; trainers do not move or update it. To learn a reward model from preferences instead, see [LLM Reward Models]({{< relref "/docs/user-guide/training-entities#llm-reward-models" >}}).
 
 ## Training and Evaluation
 
@@ -173,19 +173,7 @@ Without an `eval_dataset`, `evaluate()` returns an empty dictionary. For PbRL tr
 
 ## Logging
 
-CoMLRL supports local evaluation records, training curves in Weights & Biases, and task-specific metrics. The examples use the trainer and evaluation split above.
-
-### Local Metrics
-
-Evaluation returns a metrics dictionary even when W&B is disabled. Users can save this dictionary locally to record a completed evaluation:
-
-```python
-import json
-from pathlib import Path
-
-metrics = trainer.evaluate(num_eval_samples=len(eval_dataset))
-Path("eval-metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
-```
+CoMLRL supports training curves in Weights & Biases, task-specific metrics, and local evaluation records. The examples use the trainer and evaluation split above.
 
 ### Weights & Biases
 
@@ -206,7 +194,7 @@ wandb_config = {
 # wandb_config=wandb_config,
 ```
 
-Users can authenticate W&B in their environment before enabling logging. Omitting `wandb_config` or setting it to `None` disables W&B. Supported run settings include `project`, `entity`, `name` (or `run_name`), `tags`, and `dir`. The `config_sections` field adds task and experiment settings to the recorded configuration; `config_sections.output.verbose` controls trainer progress output.
+W&B can be authenticated in the user's environment before logging is enabled. Omitting `wandb_config` or setting it to `None` disables W&B. Supported run settings include `project`, `entity`, `name` (or `run_name`), `tags`, and `dir`. The `config_sections` field adds task and experiment settings to the recorded configuration; `config_sections.output.verbose` controls trainer progress output.
 
 ### Training Metrics
 
@@ -268,3 +256,15 @@ def metrics_callback(rollouts):
 ```
 
 This callback runs during both training and evaluation. Evaluation averages its values across evaluated task items and adds `eval/`; training logs its values at rollout collection time, separately from the standard `logging_steps` gate.
+
+### Local Metrics
+
+Evaluation returns a metrics dictionary even when W&B is disabled. This dictionary can be saved locally to record a completed evaluation:
+
+```python
+import json
+from pathlib import Path
+
+metrics = trainer.evaluate(num_eval_samples=len(eval_dataset))
+Path("eval-metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
+```
