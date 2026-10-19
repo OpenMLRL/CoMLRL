@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from comlrl.trainers.preference import (
+from comlrl.trainers.pbrl import (
     MADPOConfig,
     MADPOIterConfig,
     MADPOIterTrainer,
@@ -16,8 +16,8 @@ from comlrl.trainers.preference import (
     MARLHFIterTrainer,
     MARLHFTrainer,
 )
-from comlrl.trainers.preference.collaboration import CentralizedCollaboration
-from comlrl.trainers.preference.marlhf import JointRewardModel
+from comlrl.trainers.centralized import CentralizedCollaboration
+from comlrl.trainers.pbrl.marlhf import JointRewardModel
 
 from helpers import (
     BAD,
@@ -201,7 +201,6 @@ def test_eval_splits_roles_and_uses_task_reward(cls, config_cls, tokenizer, tmp_
     assert observed[0]["agent_completions_turns"] == [[["good"]], [["good"]]]
     assert result["eval/turn_1/reward_mean"] == 2.0
     assert result["eval/turn_1/domain_metric"] == 1.0
-    assert not trainer._centralized_eval_items
 
 
 @pytest.mark.parametrize("cls,config_cls", MARLHF_TRAINERS)

@@ -54,7 +54,8 @@ The current `MAGRPOTrainer` loss slice omits the final completion token, so its 
 {{% hint info %}}
 **MAGRPOConfig** parameters:
 
-- `num_agents`: Configured number of agents, which should match the trainer setup
+- `num_agents`: Configured number of agents, or of task roles with a centralized actor, which should match the trainer setup
+- `collaboration_mode`: `"decentralized"` (default) trains one actor per agent; `"centralized"` trains one actor that writes the complete joint response for all roles, requires `num_turns=1`, and `max_new_tokens` then covers the whole joint response
 - `num_turns`: Number of turns per episode
 - `num_train_epochs`: Number of training epochs
 - `agent_learning_rate`: Learning rate
@@ -76,6 +77,7 @@ The current `MAGRPOTrainer` loss slice omits the final completion token, so its 
 - `external_prompt_passthrough`: Whether to use external prompts directly in multi-turn training
 - `advantage_mode`: Baseline mode (`mean`, `max`, `rloo`, `raw`)
 - `skip_zero_grad_steps`: Whether an optimizer step is skipped when all of its gradients are zero, for example when every advantage in the batch is zero; otherwise AdamW keeps moving the weights along its stored momentum (default `False`)
+- `match_decentralized_loss`: With a centralized actor, whether the joint response is scored with the decentralized loss (the same token range, precision and non-finite fallback) instead of the joint-sequence loss (default `False`)
 - `parallel_training`: Agent execution mode (`none` or `mp`)
 - `agent_devices`: Agent device placement; required explicitly for `parallel_training="mp"`
 - `reference_kl_enabled`: Whether to enable a frozen-reference KL penalty (default `False`)
@@ -100,6 +102,7 @@ The current `MAGRPOTrainer` loss slice omits the final completion token, so its 
 - `external_transition`: Function providing transitions between turns; required when `num_turns > 1` (the default is `2`)
 - `eval_logger`: Optional task-metrics callback, called as `eval_logger(agent_completions_turns=..., batch_items=..., prompts=...)`; returns one metrics dictionary per evaluated item and is used with `eval_aggregator`
 - `eval_aggregator`: Optional callback, called as `eval_aggregator(metrics, num_turns=...)`; the returned `turn_k/...` metrics are logged under `eval/`. Both evaluation callbacks must be supplied for custom metrics
+- `centralized_adapter`: Joint prompt builder and role parser (`build_prompt`, `parse_completion`) for a centralized actor; required with `collaboration_mode="centralized"`. Rewards and evaluation receive the parsed role outputs
 {{% /hint %}}
 
 {{% hint warning %}}

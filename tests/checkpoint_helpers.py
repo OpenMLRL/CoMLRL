@@ -9,13 +9,13 @@ from datasets import Dataset
 import numpy as np
 import torch
 
-from comlrl.trainers.preference import (
+from comlrl.trainers.pbrl import (
     MADPOIterTrainer,
     MADPOTrainer,
     MARLHFIterTrainer,
     MARLHFTrainer,
 )
-from comlrl.trainers.preference.madpo import AgentPreferenceTensors, PreferencePair
+from comlrl.trainers.pbrl.madpo import AgentPreferenceTensors, PreferencePair
 from comlrl.trainers.reinforce.magrpo import MAGRPOConfig, NodeSample
 from comlrl.utils.checkpoint import TrainingCheckpointMixin
 

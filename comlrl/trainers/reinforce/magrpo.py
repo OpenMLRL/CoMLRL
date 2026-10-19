@@ -42,6 +42,12 @@ from comlrl.utils.tokenizer_utils import (
 )
 from comlrl.utils.wandb_utils import verbose_from_wandb_config, wandb_init_kwargs
 
+from ..centralized import (
+    CollaborationModeMixin,
+    joint_policy_gradient_loss,
+    validate_collaboration_mode,
+)
+
 
 @dataclass
 class MAGRPOConfig:
@@ -79,6 +85,13 @@ class MAGRPOConfig:
     # Without a gradient (every advantage zero), AdamW would still move weights
     # along its stored momentum; skipping keeps such updates from changing them.
     skip_zero_grad_steps: bool = False
+    # "centralized" trains one joint actor that answers for all num_agents roles;
+    # role outputs are split from its response only for rewards and evaluation.
+    collaboration_mode: str = "decentralized"
+    # Centralized only: score the joint response with the decentralized loss (the
+    # same token range, precision and non-finite fallback) instead of the
+    # joint-sequence loss, so both modes share one objective implementation.
+    match_decentralized_loss: bool = False
     reference_kl_enabled: bool = False
     reference_kl_coef: float = 0.1
     reference_devices: Optional[Union[str, Sequence[str]]] = None
@@ -102,6 +115,9 @@ class MAGRPOConfig:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.num_turns < 1:
             raise ValueError("num_turns must be >= 1.")
+        validate_collaboration_mode(self.collaboration_mode)
+        if self.collaboration_mode == "centralized" and self.num_turns != 1:
+            raise ValueError("Centralized MAGRPO currently supports num_turns=1 only.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
         if self.train_batch_size is None:
@@ -112,11 +128,7 @@ class MAGRPOConfig:
         if mode == "mp" and self.agent_devices is None:
             raise ValueError("parallel_training='mp' requires explicit agent_devices.")
         self.parallel_training = mode
-        actor_count = (
-            1
-            if getattr(self, "collaboration_mode", None) == "centralized"
-            else self.num_agents
-        )
+        actor_count = 1 if self.collaboration_mode == "centralized" else self.num_agents
         validate_reference_kl_config(self, actor_count)
 
 
@@ -141,7 +153,7 @@ def _has_gradient(optimizer) -> bool:
     )
 
 
-class MAGRPOTrainer(TrainingCheckpointMixin):
+class MAGRPOTrainer(CollaborationModeMixin, TrainingCheckpointMixin):
     """
     Multi-Agent Group Relative Policy Optimization Trainer (MAGRPO).
     Supports both single-turn and multi-turn training with external transitions.
@@ -167,6 +179,10 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
         eval_aggregator: Called as ``eval_aggregator(metrics, num_turns=...)`` and
             returns ``turn_k/...`` metrics, logged under ``eval/``
         external_transition: Function that provides external transitions between turns
+        centralized_adapter: With ``args.collaboration_mode="centralized"``, builds one
+            joint prompt from the role prompts and splits the joint response back into
+            ``num_agents`` role outputs (``build_prompt`` / ``parse_completion``). One
+            actor is then trained; rewards and evaluation see the split role outputs.
     """
 
     default_config_cls: Type[Any] = MAGRPOConfig
@@ -192,8 +208,18 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
         eval_logger: Optional[Callable] = None,
         eval_aggregator: Optional[Callable] = None,
         args: Optional[Any] = None,
+        *,
+        centralized_adapter: Optional[Any] = None,
     ):
         self.args = args if args is not None else self.default_config_cls()
+        reward_func, formatters, num_agents = self._setup_collaboration(
+            centralized_adapter,
+            agents=agents,
+            tokenizer=tokenizer,
+            reward_func=reward_func,
+            formatters=formatters,
+            num_agents=num_agents,
+        )
         self.parallel_training = normalize_parallel_training(
             getattr(self.args, "parallel_training", "none")
         )
@@ -458,7 +484,7 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
             }
             if hasattr(self.args, "num_generations"):
                 config_dict["num_generations"] = self.args.num_generations
-            if getattr(self, "centralized_collaboration", None) is not None:
+            if self.is_centralized:
                 config_dict["collaboration_mode"] = "centralized"
                 config_dict["num_roles"] = self.centralized_collaboration.num_roles
                 config_dict["num_actor_models"] = len(self.agents)
@@ -676,6 +702,9 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
         extra_metrics: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, float]:
         """Log evaluation metrics for any number of turns."""
+        all_agent_completions_turns = self._role_completions(
+            all_agent_completions_turns, all_batch_items
+        )
         eval_metrics = {}
 
         # Detailed logging (if logger is provided), standardized to modern interface
@@ -1242,7 +1271,7 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
         completion_input_ids = generation_output.sequences
 
         prompt_len = prompt_input_ids[0].shape[0]
-        joint_actor = getattr(self, "centralized_collaboration", None) is not None
+        joint_actor = self.is_centralized
         # Joint prompts can contain EOS even when it is also the padding token.
         if not joint_actor:
             pad_positions = (prompt_input_ids[0] == tokenizer.pad_token_id).nonzero()
@@ -1632,6 +1661,10 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
         Returns:
             torch.Tensor: The computed loss with gradients attached
         """
+        if self.is_centralized and not getattr(
+            self.args, "match_decentralized_loss", False
+        ):
+            return joint_policy_gradient_loss(self, agent, completions_data, returns)
         agent_module = unwrap_model(agent)
         device = next(agent_module.parameters()).device
 

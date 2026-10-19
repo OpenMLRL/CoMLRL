@@ -245,7 +245,7 @@ Historical modes assign each of the `preference_replay_sample_size` draws to a d
 `current` rejects `preference_replay_sample_size` and `preference_replay_lambda` and accepts `preference_replay_k` only as `None` or 1. The following configuration instead samples 256 pairs from all rounds, weighted toward recent ones:
 
 ```python
-from comlrl.trainers.preference import MADPOIterConfig
+from comlrl.trainers.pbrl import MADPOIterConfig
 
 args = MADPOIterConfig(
     num_agents=2,

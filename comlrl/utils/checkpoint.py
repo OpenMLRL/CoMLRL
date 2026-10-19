@@ -32,9 +32,9 @@ _OWNER_FILENAME = "checkpoint_owner.json"
 _DATACLASSES = {
     "comlrl.trainers.reinforce.magrpo.NodeSample",
     "comlrl.trainers.actor_critic.iac.RolloutSample",
-    "comlrl.trainers.preference.madpo.PreferencePair",
-    "comlrl.trainers.preference.madpo.AgentPreferenceTensors",
-    "comlrl.trainers.preference.iterative.PreferenceReplayShard",
+    "comlrl.trainers.pbrl.madpo.PreferencePair",
+    "comlrl.trainers.pbrl.madpo.AgentPreferenceTensors",
+    "comlrl.trainers.pbrl.iterative.PreferenceReplayShard",
 }
 _MODEL_FIELDS = ("agents", "critics", "reference_models", "reward_model")
 _OPTIMIZER_FIELDS = (
@@ -1294,7 +1294,7 @@ class TrainingCheckpointMixin:
             shutil.rmtree(path)
         _fsync_directory(root)
         if callable(getattr(self, "_checkpoint_save_assets", None)):
-            from comlrl.trainers.preference.checkpointing import (
+            from comlrl.trainers.pbrl.checkpoint_extras import (
                 prune_preference_asset_pool,
             )
 

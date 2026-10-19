@@ -33,7 +33,7 @@ from .madpo import (
     MADPOTrainer,
     PreferencePair,
 )
-from .centralized import CentralizedComparatorAdapter
+from ..centralized import CentralizedComparatorAdapter
 from .marlhf import MARLHFConfig, MARLHFTrainer
 from .output_paths import resolve_output_path
 
@@ -348,7 +348,7 @@ class MADPOIterTrainer(MADPOTrainer):
     algorithm_name = "MADPOIter"
 
     def _checkpoint_validate_progress(self, state):
-        from .checkpointing import validate_preference_progress
+        from .checkpoint_extras import validate_preference_progress
 
         validate_preference_progress(self, state, "madpo_iter")
 
@@ -623,7 +623,7 @@ class MADPOIterTrainer(MADPOTrainer):
             or checkpoint_interval != 1
             or checkpoint_total_limit is not None
         ):
-            from .checkpointing import train_iterations_checkpointed
+            from .checkpoint_extras import train_iterations_checkpointed
 
             with self._checkpoint_context(
                 resume_from_checkpoint=resume_from_checkpoint,
@@ -2016,7 +2016,7 @@ class MADPOIterTrainer(MADPOTrainer):
         batch_item: Dict[str, Any],
         prompt: str,
     ) -> List[Dict[str, Any]]:
-        if getattr(self, "centralized_collaboration", None) is not None:
+        if self.is_centralized:
             if not completions:
                 raise ValueError("Centralized comparator produced no candidates.")
             # Preserve the exact joint text, including tags, for preference learning.
@@ -2860,7 +2860,7 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
     algorithm_name = "MARLHFIter"
 
     def _checkpoint_validate_progress(self, state):
-        from .checkpointing import validate_preference_progress
+        from .checkpoint_extras import validate_preference_progress
 
         validate_preference_progress(self, state, "marlhf_iter")
 
@@ -2906,7 +2906,7 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
             or checkpoint_interval != 1
             or checkpoint_total_limit is not None
         ):
-            from .checkpointing import train_iterations_checkpointed
+            from .checkpoint_extras import train_iterations_checkpointed
 
             with self._checkpoint_context(
                 resume_from_checkpoint=resume_from_checkpoint,

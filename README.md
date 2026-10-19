@@ -58,7 +58,7 @@ conda install -c conda-forge comlrl
   - **_Multi-Agent Actor-Critic:_** Actor-Critic methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/maac.py).
     - Independent actor-critic (separate critic or value-head over LLM backbone).
     - Centralized critic over joint prompts with separate actors.
-  - **_Multi-Agent Preference Learning:_** [MADPO](comlrl/trainers/preference/madpo.py), [MARLHF](comlrl/trainers/preference/marlhf.py), and their [iterative variants](comlrl/trainers/preference/iterative.py).
+  - **_Multi-Agent Preference Learning:_** [MADPO](comlrl/trainers/pbrl/madpo.py), [MARLHF](comlrl/trainers/pbrl/marlhf.py), and their [iterative variants](comlrl/trainers/preference/iterative.py).
     - Direct joint preference optimization or learned joint rewards followed by RL.
     - Decentralized actors or a centralized actor generating a complete joint response.
 

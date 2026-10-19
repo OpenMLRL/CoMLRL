@@ -8,8 +8,6 @@ import torch
 from transformers import GPT2Config, GPT2LMHeadModel
 
 from comlrl.trainers.reinforce import (
-    CentralizedMAGRPOConfig,
-    CentralizedMAGRPOTrainer,
     MAGRPOConfig,
     MAGRPOTrainer,
 )
@@ -88,8 +86,10 @@ def _make_trainer(variant="magrpo", *, eos_mismatch=False, seed=37):
         formatters=lambda item: item["prompt"],
     )
     if variant == "centralized":
-        trainer = CentralizedMAGRPOTrainer(
-            args=CentralizedMAGRPOConfig(**common),
+        trainer = MAGRPOTrainer(
+            args=MAGRPOConfig(
+                **{**common, "collaboration_mode": "centralized", "num_turns": 1}
+            ),
             centralized_adapter=_SplitRoles(),
             **kwargs,
         )

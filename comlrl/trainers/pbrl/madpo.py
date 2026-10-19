@@ -15,11 +15,12 @@ from comlrl.utils.reference_kl import validate_reference_kl_config
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials
 
 from ..reinforce.magrpo import MAGRPOTrainer
-from .centralized import (
+from ..centralized import (
     CentralizedComparatorAdapter,
     TaggedCentralizedComparatorAdapter,
+    joint_sequence_log_prob,
+    validate_collaboration_mode,
 )
-from .collaboration import CentralizedCollaboration, joint_sequence_log_prob
 
 
 @dataclass
@@ -87,8 +88,7 @@ class MADPOConfig:
     environment_steps_per_pair: int = 2
 
     def __post_init__(self) -> None:
-        if self.collaboration_mode not in {"decentralized", "centralized"}:
-            raise ValueError("collaboration_mode must be decentralized or centralized.")
+        validate_collaboration_mode(self.collaboration_mode)
         if self.collaboration_mode == "centralized":
             if getattr(self, "comparator_centralized_agent_index", 0) != 0:
                 raise ValueError("Centralized collaboration has only actor index 0.")
@@ -191,29 +191,7 @@ class MADPOTrainer(MAGRPOTrainer):
                     f"centralized_comparator_adapter.{method} must be callable."
                 )
         self.centralized_comparator_adapter = adapter
-        self.centralized_collaboration = None
-        self._centralized_eval_items = []
-        if config.collaboration_mode == "centralized":
-            if agents is not None and len(agents) != 1:
-                raise ValueError(
-                    "Centralized collaboration requires exactly one actor model."
-                )
-            if isinstance(tokenizer, (list, tuple)) and len(tokenizer) != 1:
-                raise ValueError(
-                    "Centralized collaboration requires one actor tokenizer."
-                )
-            if not callable(reward_func):
-                raise ValueError("reward_func must be a callable.")
-            if num_agents != config.num_agents:
-                raise ValueError(
-                    "num_agents must match args.num_agents (the role count)."
-                )
-            self.centralized_collaboration = CentralizedCollaboration(
-                adapter, formatters, reward_func, num_agents
-            )
-            formatters = self.centralized_collaboration.build_prompt
-            reward_func = self.centralized_collaboration
-            num_agents = 1
+        # In centralized mode MAGRPOTrainer wraps one joint actor with this adapter.
         super().__init__(
             agent_model=agent_model,
             agents=agents,
@@ -230,26 +208,8 @@ class MADPOTrainer(MAGRPOTrainer):
             eval_logger=eval_logger,
             eval_aggregator=eval_aggregator,
             args=config,
+            centralized_adapter=adapter,
         )
-
-    def evaluate(self, num_eval_samples: Optional[int] = None) -> Dict[str, float]:
-        self._centralized_eval_items = []
-        try:
-            return super().evaluate(num_eval_samples=num_eval_samples)
-        finally:
-            self._centralized_eval_items = []
-
-    def _evaluate_sample(self, batch_item, *args, **kwargs):
-        super()._evaluate_sample(batch_item, *args, **kwargs)
-        if self.centralized_collaboration is not None:
-            self._centralized_eval_items.append(batch_item)
-
-    def _log_eval_metrics(self, all_agent_completions_turns, *args, **kwargs):
-        if self.centralized_collaboration is not None:
-            all_agent_completions_turns = self.centralized_collaboration.split_eval(
-                all_agent_completions_turns, self._centralized_eval_items
-            )
-        return super()._log_eval_metrics(all_agent_completions_turns, *args, **kwargs)
 
     def train(
         self,
@@ -383,37 +343,37 @@ class MADPOTrainer(MAGRPOTrainer):
             commit_epoch(start_epoch, updates_seen)
 
     def _checkpoint_extra_state(self):
-        from .checkpointing import preference_extra_state
+        from .checkpoint_extras import preference_extra_state
 
         return preference_extra_state(self)
 
     def _restore_checkpoint_extra_state(self, state, checkpoint_dir):
-        from .checkpointing import restore_preference_extra_state
+        from .checkpoint_extras import restore_preference_extra_state
 
         restore_preference_extra_state(self, state, checkpoint_dir)
 
     def _checkpoint_save_assets(self, checkpoint_dir):
-        from .checkpointing import save_preference_assets
+        from .checkpoint_extras import save_preference_assets
 
         return save_preference_assets(self, checkpoint_dir)
 
     def _checkpoint_load_assets(self, checkpoint_dir, assets):
-        from .checkpointing import load_preference_assets
+        from .checkpoint_extras import load_preference_assets
 
         load_preference_assets(self, checkpoint_dir, assets)
 
     def _checkpoint_validate_assets(self, checkpoint_dir, assets):
-        from .checkpointing import validate_preference_assets
+        from .checkpoint_extras import validate_preference_assets
 
         validate_preference_assets(self, checkpoint_dir, assets)
 
     def _checkpoint_validate_extra_state(self, state, checkpoint_dir):
-        from .checkpointing import validate_preference_extra_state
+        from .checkpoint_extras import validate_preference_extra_state
 
         validate_preference_extra_state(state)
 
     def _checkpoint_validate_progress(self, state):
-        from .checkpointing import validate_preference_progress
+        from .checkpoint_extras import validate_preference_progress
 
         validate_preference_progress(self, state, "madpo")
 

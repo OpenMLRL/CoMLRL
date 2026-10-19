@@ -7,9 +7,9 @@ import pytest
 from comlrl.trainers.actor_critic import IACTrainer, MAACTrainer
 from comlrl.trainers.actor_critic.iac import IACConfig
 from comlrl.trainers.actor_critic.maac import MAACConfig
-from comlrl.trainers.preference import MADPOTrainer, MARLHFTrainer
-from comlrl.trainers.preference.madpo import MADPOConfig
-from comlrl.trainers.preference.marlhf import MARLHFConfig
+from comlrl.trainers.pbrl import MADPOTrainer, MARLHFTrainer
+from comlrl.trainers.pbrl.madpo import MADPOConfig
+from comlrl.trainers.pbrl.marlhf import MARLHFConfig
 from comlrl.trainers.reinforce import MAGRPOTrainer
 from comlrl.trainers.reinforce.magrpo import MAGRPOConfig
 

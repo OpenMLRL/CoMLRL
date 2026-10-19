@@ -15,7 +15,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenize
 
 from comlrl.utils.tokenizer_utils import ensure_pad_token
 
-from .collaboration import joint_policy_gradient_loss
+from ..centralized import joint_policy_gradient_loss
 from .madpo import MADPOConfig, MADPOTrainer, PreferencePair
 from ..actor_critic import IACConfig, IACTrainer, MAACConfig, MAACTrainer
 from ..reinforce.magrpo import MAGRPOTrainer
@@ -241,7 +241,7 @@ class MARLHFTrainer(MADPOTrainer):
         self._train_online_rl(**kwargs)
 
     def _checkpoint_validate_progress(self, state):
-        from .checkpointing import validate_preference_progress
+        from .checkpoint_extras import validate_preference_progress
 
         validate_preference_progress(self, state, "marlhf")
 

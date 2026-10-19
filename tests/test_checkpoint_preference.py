@@ -7,14 +7,14 @@ import pytest
 import torch
 import wandb
 
-from comlrl.trainers.preference import (
+from comlrl.trainers.pbrl import (
     MADPOIterTrainer,
     MADPOTrainer,
     MARLHFIterTrainer,
     MARLHFTrainer,
     marlhf,
 )
-from comlrl.trainers.preference.checkpointing import train_iterations_checkpointed
+from comlrl.trainers.pbrl.checkpoint_extras import train_iterations_checkpointed
 
 from checkpoint_helpers import (
     Interrupted,

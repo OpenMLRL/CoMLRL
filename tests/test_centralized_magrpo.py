@@ -3,22 +3,18 @@
 import pytest
 import torch
 
-from comlrl.trainers.reinforce import (
-    CentralizedMAGRPOConfig,
-    CentralizedMAGRPOTrainer,
-    MAGRPOConfig,
-)
+from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
 
 from helpers import BAD, GOOD, JointAdapter, make_centralized_magrpo_trainer, model_for
 
 
-def test_config_rejects_wrong_mode_and_multiple_turns():
-    assert CentralizedMAGRPOConfig().num_turns == 1
+def test_config_rejects_unknown_mode_and_multiple_turns():
+    assert MAGRPOConfig().collaboration_mode == "decentralized"
     assert MAGRPOConfig().num_turns == 2
-    with pytest.raises(ValueError, match="centralized collaboration"):
-        CentralizedMAGRPOConfig(collaboration_mode="decentralized")
+    with pytest.raises(ValueError, match="collaboration_mode"):
+        MAGRPOConfig(collaboration_mode="joint")
     with pytest.raises(ValueError, match="num_turns=1"):
-        CentralizedMAGRPOConfig(num_turns=2)
+        MAGRPOConfig(collaboration_mode="centralized", num_turns=2)
 
 
 def test_one_actor_training_uses_joint_prompt_and_task_rewards(tokenizer):
@@ -47,7 +43,6 @@ def test_eval_passes_separate_roles_to_eval_logger(tokenizer):
     assert observed[0]["prompts"] == ["task prompt"]
     assert result["eval/turn_1/reward_mean"] == 2.0
     assert result["eval/turn_1/domain_metric"] == 3.0
-    assert not trainer._centralized_eval_items
 
 
 def test_loss_matches_full_joint_sequence_policy_gradient(tokenizer):
@@ -87,10 +82,12 @@ def test_joint_actor_gets_one_reference_model(tokenizer):
 
 def test_rejects_multiple_actors(tokenizer):
     with pytest.raises(ValueError, match="exactly one actor"):
-        CentralizedMAGRPOTrainer(
+        MAGRPOTrainer(
             agents=[model_for(tokenizer), model_for(tokenizer)],
             centralized_adapter=JointAdapter(),
-            args=CentralizedMAGRPOConfig(agent_devices="cpu"),
+            args=MAGRPOConfig(
+                collaboration_mode="centralized", num_turns=1, agent_devices="cpu"
+            ),
         )
 
 

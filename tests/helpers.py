@@ -12,13 +12,9 @@ from tokenizers.pre_tokenizers import WhitespaceSplit
 import torch
 from transformers import GPT2Config, GPT2LMHeadModel, PreTrainedTokenizerFast
 
-from comlrl.trainers.preference import (
-    MADPOIterConfig,
-    MARLHFConfig,
-    MARLHFIterConfig,
-    TaggedCentralizedComparatorAdapter,
-)
-from comlrl.trainers.reinforce import CentralizedMAGRPOConfig, CentralizedMAGRPOTrainer
+from comlrl.trainers.centralized import TaggedCentralizedComparatorAdapter
+from comlrl.trainers.pbrl import MADPOIterConfig, MARLHFConfig, MARLHFIterConfig
+from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
 from comlrl.utils.reward_utils import set_reward_range
 
 GOOD = "<agent_0> good </agent_0> <agent_1> good </agent_1>"
@@ -167,6 +163,8 @@ def make_preference_trainer(cls, config_cls, tokenizer, tmp_path, **overrides):
 def make_centralized_magrpo_trainer(tokenizer, **overrides):
     """A centralized MAGRPO trainer whose actor alternates GOOD/BAD samples."""
     options = dict(
+        collaboration_mode="centralized",
+        num_turns=1,
         agent_devices="cpu",
         num_agents=2,
         num_train_epochs=1,
@@ -199,11 +197,11 @@ def make_centralized_magrpo_trainer(tokenizer, **overrides):
 
     model.generate = generate
     dataset = Dataset.from_list([{"id": "task", "prompt": "task prompt"}])
-    trainer = CentralizedMAGRPOTrainer(
+    trainer = MAGRPOTrainer(
         agents=[model],
         num_agents=2,
         tokenizer=tokenizer,
-        args=CentralizedMAGRPOConfig(**options),
+        args=MAGRPOConfig(**options),
         train_dataset=dataset,
         eval_dataset=dataset,
         reward_func=task_reward,

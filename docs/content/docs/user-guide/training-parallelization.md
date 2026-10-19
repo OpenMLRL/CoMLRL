@@ -11,7 +11,7 @@ Each model runs entirely on its assigned device and is not split across GPUs. De
 The following configuration puts each model of an iterative MARLHF run on its own GPU: two agents, a centralized critic for MAAC policy learning, the reward model, and copies of the current agents as comparators.
 
 ```python
-from comlrl.trainers.preference import MARLHFIterConfig
+from comlrl.trainers.pbrl import MARLHFIterConfig
 
 config = MARLHFIterConfig(
     num_agents=2,

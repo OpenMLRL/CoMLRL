@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import torch
 
-from comlrl.trainers.preference.iterative import MADPOIterTrainer
+from comlrl.trainers.pbrl.iterative import MADPOIterTrainer
 import comlrl.utils.checkpoint as checkpoint
 from comlrl.utils.checkpoint import capture_trainer_state, restore_trainer_state
 
