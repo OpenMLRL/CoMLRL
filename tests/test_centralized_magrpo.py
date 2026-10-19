@@ -107,3 +107,24 @@ def test_wandb_does_not_claim_a_comparator(tokenizer, monkeypatch):
     assert captured["config"]["num_roles"] == 2
     assert captured["config"]["num_actor_models"] == 1
     assert "comparator_generation_mode" not in captured["config"]
+
+
+def test_matching_the_decentralized_loss_reuses_the_magrpo_objective(tokenizer):
+    from comlrl.trainers.reinforce import MAGRPOTrainer
+
+    trainer, _ = make_centralized_magrpo_trainer(
+        tokenizer, match_decentralized_loss=True
+    )
+    model = trainer.agents[0]
+    prompt = torch.tensor(tokenizer.encode("joint left right"))
+    sequences = [torch.tensor(tokenizer.encode(text)) for text in (GOOD, BAD)]
+    data = {"prompt_input_ids": prompt[None], "completion_input_ids": [sequences]}
+    actual = trainer._compute_loss_with_gradients(model, data, [2.0, 0.0])
+    expected = MAGRPOTrainer._compute_loss_with_gradients(
+        trainer, model, data, [2.0, 0.0]
+    )
+    torch.testing.assert_close(actual, expected)
+    trainer.args.match_decentralized_loss = False
+    joint = trainer._compute_loss_with_gradients(model, data, [2.0, 0.0])
+    # The joint loss also scores each sequence's last token; MAGRPO's does not.
+    assert not torch.allclose(joint, actual)

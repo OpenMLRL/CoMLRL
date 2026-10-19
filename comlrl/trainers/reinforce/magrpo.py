@@ -76,6 +76,9 @@ class MAGRPOConfig:
     train_batch_size: Optional[int] = None
     advantage_normalization: bool = True
     advantage_mode: str = "mean"
+    # Without a gradient (every advantage zero), AdamW would still move weights
+    # along its stored momentum; skipping keeps such updates from changing them.
+    skip_zero_grad_steps: bool = False
     reference_kl_enabled: bool = False
     reference_kl_coef: float = 0.1
     reference_devices: Optional[Union[str, Sequence[str]]] = None
@@ -126,6 +129,16 @@ class NodeSample:
     node_mean_reward: float
     node_mean_return: float
     node_env_step: int
+
+
+def _has_gradient(optimizer) -> bool:
+    """Whether any parameter of the optimizer holds a nonzero gradient."""
+    return any(
+        bool(param.grad.ne(0).any())
+        for group in optimizer.param_groups
+        for param in group["params"]
+        if param.grad is not None
+    )
 
 
 class MAGRPOTrainer(TrainingCheckpointMixin):
@@ -1585,6 +1598,10 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
                     sample.returns,
                 )
                 (loss * scale).backward()
+            if getattr(self.args, "skip_zero_grad_steps", False) and not _has_gradient(
+                self.optimizers[agent_idx]
+            ):
+                continue
             self.optimizers[agent_idx].step()
 
     def _compute_advantages(self, returns_tensor: torch.Tensor) -> torch.Tensor:

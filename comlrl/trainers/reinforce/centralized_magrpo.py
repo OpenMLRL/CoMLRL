@@ -9,6 +9,10 @@ from .magrpo import MAGRPOConfig, MAGRPOTrainer
 class CentralizedMAGRPOConfig(MAGRPOConfig):
     num_turns: int = 1
     collaboration_mode: str = "centralized"
+    # Score the joint response with MAGRPOTrainer's decentralized loss (the same
+    # token range, precision and non-finite fallback), so both modes share one
+    # objective implementation. The default keeps the joint-sequence loss.
+    match_decentralized_loss: bool = False
 
     def __post_init__(self):
         super().__post_init__()
@@ -92,6 +96,10 @@ class CentralizedMAGRPOTrainer(MAGRPOTrainer):
         return super()._log_eval_metrics(role_outputs, *args, **kwargs)
 
     def _compute_loss_with_gradients(self, agent, completions_data, returns):
+        if getattr(self.args, "match_decentralized_loss", False):
+            return MAGRPOTrainer._compute_loss_with_gradients(
+                self, agent, completions_data, returns
+            )
         from ..preference.collaboration import joint_policy_gradient_loss
 
         return joint_policy_gradient_loss(self, agent, completions_data, returns)

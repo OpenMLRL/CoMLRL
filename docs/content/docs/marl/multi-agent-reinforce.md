@@ -75,6 +75,7 @@ The current `MAGRPOTrainer` loss slice omits the final completion token, so its 
 - `eval_batch_size`: Evaluation DataLoader batch size
 - `external_prompt_passthrough`: Whether to use external prompts directly in multi-turn training
 - `advantage_mode`: Baseline mode (`mean`, `max`, `rloo`, `raw`)
+- `skip_zero_grad_steps`: Whether an optimizer step is skipped when all of its gradients are zero, for example when every advantage in the batch is zero; otherwise AdamW keeps moving the weights along its stored momentum (default `False`)
 - `parallel_training`: Agent execution mode (`none` or `mp`)
 - `agent_devices`: Agent device placement; required explicitly for `parallel_training="mp"`
 - `reference_kl_enabled`: Whether to enable a frozen-reference KL penalty (default `False`)
