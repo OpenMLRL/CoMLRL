@@ -14,7 +14,7 @@ aliases:
   - /docs/user-guide/multi-agent-preference-learning/
 ---
 
-Multi-agent PbRL trains collaborating LLM agents from preferences between their joint responses. CoMLRL builds the preference data from task items and learns from it with one of two algorithms: **MARLHF** fits a joint reward model and then trains the policies with RL, while **MADPO** optimizes the policies directly from the preferences. `MARLHFTrainer`, `MADPOTrainer`, and their iterative variants `MARLHFIterTrainer` and `MADPOIterTrainer` are available from `comlrl.trainers.preference`.
+Multi-agent PbRL trains collaborating LLM agents from preferences between their joint responses. CoMLRL builds the preference data from task items and learns from it with one of two algorithms: **MARLHF** fits a joint reward model and then trains the policies with RL, while **MADPO** optimizes the policies directly from the preferences. `MARLHFTrainer`, `MADPOTrainer`, and their iterative variants `MARLHFIterTrainer` and `MADPOIterTrainer` are available from `comlrl.trainers.pbrl`.
 
 {{% hint warning %}}
 All four trainers currently require `num_turns=1` and aligned joint responses (`joint_mode="aligned"`). An iteration of the iterative trainers is a round of data collection and training, not a dialog turn.

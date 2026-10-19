@@ -27,6 +27,7 @@ from comlrl.utils.reference_kl import (
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizers
 from comlrl.utils.wandb_utils import verbose_from_wandb_config, wandb_init_kwargs
+from ..centralized import validate_collaboration_mode
 from .ac_base import ActorCriticTrainerBase
 from .iac import RolloutSample
 
@@ -53,6 +54,8 @@ class MAACConfig:
     num_agents: int = 2
     num_generations: int = 1
     num_turns: int = 2
+    # "centralized" trains one joint actor that answers for all num_agents roles.
+    collaboration_mode: str = "decentralized"
     parallel_training: str = "none"
     agent_devices: Optional[Union[str, Sequence[str]]] = None
     critic_devices: Optional[Union[str, Sequence[str]]] = None
@@ -81,6 +84,9 @@ class MAACConfig:
             raise ValueError("num_generations must be >= 1.")
         if self.num_turns < 1:
             raise ValueError("num_turns must be >= 1.")
+        validate_collaboration_mode(self.collaboration_mode)
+        if self.collaboration_mode == "centralized" and self.num_turns != 1:
+            raise ValueError("Centralized MAAC currently supports num_turns=1 only.")
         if self.num_turns > 1 and self.num_generations != 1:
             raise ValueError("Multi-turn MAAC currently supports num_generations == 1.")
         critic_type = (self.critic_type or "v").lower()
@@ -105,7 +111,9 @@ class MAACConfig:
                     "parallel_training='mp' requires explicit critic_devices."
                 )
         self.parallel_training = mode
-        validate_reference_kl_config(self, self.num_agents)
+        validate_reference_kl_config(
+            self, 1 if self.collaboration_mode == "centralized" else self.num_agents
+        )
 
 
 class MAACTrainer(ActorCriticTrainerBase):
@@ -136,15 +144,25 @@ class MAACTrainer(ActorCriticTrainerBase):
         critics: Optional[
             Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]
         ] = None,
+        *,
+        centralized_adapter: Optional[Any] = None,
     ) -> None:
         self.args = args if args is not None else MAACConfig()
+        reward_func, formatters, self.num_agents = self._setup_collaboration(
+            centralized_adapter,
+            agents=agents,
+            tokenizer=tokenizer,
+            reward_func=reward_func,
+            formatters=formatters,
+            num_agents=self.args.num_agents,
+        )
         if reward_func is None or not callable(reward_func):
             raise ValueError("reward_func must be a callable.")
         if agent_model is None and agents is None:
             raise ValueError("Either agent_model or agents must be provided.")
         if (
             agents is None
-            and self.args.num_agents > 1
+            and self.num_agents > 1
             and isinstance(agent_model, PreTrainedModel)
         ):
             raise ValueError(
@@ -162,7 +180,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         self.reward_processor = reward_processor or (lambda x: x)
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
-        self.metrics_callback = metrics_callback
+        self.metrics_callback = self._role_metrics_callback(metrics_callback)
         self.model_config = model_config or {}
         self.parallel_training = normalize_parallel_training(
             getattr(self.args, "parallel_training", "none")
@@ -170,7 +188,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         if self.parallel_training == "mp":
             self.agent_devices = DeviceScheduler.resolve_devices(
                 getattr(self.args, "agent_devices", None),
-                self.args.num_agents,
+                self.num_agents,
                 kind="agent_devices",
             )
             self.critic_device = DeviceScheduler.assign_shared_critic_device(
@@ -181,7 +199,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 getattr(self.args, "agent_devices", None),
                 getattr(self.args, "critic_devices", None),
             )
-            self.agent_devices = [single_device] * self.args.num_agents
+            self.agent_devices = [single_device] * self.num_agents
             self.critic_device = single_device
         self.device = self.agent_devices[0]
         self.dist_env = local_context(self.device)
@@ -192,7 +210,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             self.tokenizers = tokenizers
             self.tokenizer = tokenizers[0] if tokenizers else None
         else:
-            self.tokenizers = [tokenizers] * self.args.num_agents
+            self.tokenizers = [tokenizers] * self.num_agents
             self.tokenizer = tokenizers
         self.external_transition = external_transition
 
@@ -201,7 +219,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             kind="agents",
             model=agent_model,
             models=agents,
-            expected_count=self.args.num_agents,
+            expected_count=self.num_agents,
             model_label="agent_model",
         )
         actor_model_kwargs = resolve_model_kwargs(
@@ -285,7 +303,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             self.reference_devices = resolve_reference_devices(
                 self.args,
                 self.agent_devices,
-                self.args.num_agents,
+                self.num_agents,
             )
             if actor_sources and all(isinstance(src, str) for src in actor_sources):
                 self.reference_models = load_reference_models_from_sources(
@@ -311,7 +329,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 self.tokenizer, [*self.agents, self.critics[0], *self.reference_models]
             )
 
-        self.formatters = build_formatters(formatters, self.args.num_agents)
+        self.formatters = build_formatters(formatters, self.num_agents)
         try:
             self._reward_signature = inspect.signature(reward_func)
         except (TypeError, ValueError):
@@ -330,7 +348,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             lr=self.args.critic_learning_rate,
         )
 
-        self.rollout_buffers = [[] for _ in range(self.args.num_agents)]
+        self.rollout_buffers = [[] for _ in range(self.num_agents)]
         self.wandb_config = wandb_config
         self.wandb_initialized = False
         self.env_step = 0
@@ -346,7 +364,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             self.wandb_config = {}
         config_dict: Dict[str, Any] = {
             "algorithm": self.algorithm_name,
-            "num_agents": self.args.num_agents,
+            "num_agents": self.num_agents,
             "num_turns": self.args.num_turns,
             "agent_learning_rate": self.args.agent_learning_rate,
             "critic_learning_rate": self.args.critic_learning_rate,
@@ -357,6 +375,11 @@ class MAACTrainer(ActorCriticTrainerBase):
             "reference_kl_coef": reference_kl_coef(self.args),
             "reference_devices": getattr(self.args, "reference_devices", None),
         }
+
+        if self.is_centralized:
+            config_dict["collaboration_mode"] = "centralized"
+            config_dict["num_roles"] = self.centralized_collaboration.num_roles
+            config_dict["num_actor_models"] = len(self.agents)
 
         previous_run = wandb.run
         self._checkpoint_record_wandb_run(
@@ -382,6 +405,22 @@ class MAACTrainer(ActorCriticTrainerBase):
         for idx, comp in enumerate(action_completions):
             action_lines.append(f"[Agent {idx} action]\n{comp}")
         return base + "\n\n" + "\n\n".join(action_lines)
+
+    def _critic_input_for(
+        self,
+        item: Dict[str, Any],
+        prompts: Sequence[str],
+        joint_action: Optional[Sequence[str]] = None,
+    ) -> str:
+        """Critic text for one item; a joint actor's output is split into role outputs."""
+        collaboration = self.centralized_collaboration
+        if collaboration is None:
+            return self._build_critic_input(prompts, joint_action)
+        role_prompts = [formatter(item) for formatter in collaboration.formatters]
+        role_actions = (
+            None if joint_action is None else collaboration.split(joint_action[0], item)
+        )
+        return self._build_critic_input(role_prompts, role_actions)
 
     def _critic_value_from_text(self, critic_input: str) -> Dict[str, Any]:
         encoded = self._encode_prompt(
@@ -505,7 +544,7 @@ class MAACTrainer(ActorCriticTrainerBase):
         )
         turn_prompts = [
             self._resolve_turn_prompt(item, agent_idx)
-            for agent_idx in range(self.args.num_agents)
+            for agent_idx in range(self.num_agents)
         ]
 
         def _generate_agent(agent_idx: int) -> Dict[str, Any]:
@@ -533,13 +572,13 @@ class MAACTrainer(ActorCriticTrainerBase):
             self.reward_func,
             prompts,
             completions_per_agent,
-            num_agents=self.args.num_agents,
+            num_agents=self.num_agents,
             batch_items=[item],
             signature=self._reward_signature,
         )
         rewards = normalize_reward_lengths(
             [float(self.reward_processor(r)) for r in rewards],
-            num_agents=self.args.num_agents,
+            num_agents=self.num_agents,
             num_generations=num_ret,
             algorithm="MAAC",
         )
@@ -552,15 +591,15 @@ class MAACTrainer(ActorCriticTrainerBase):
         critic_type = (self.args.critic_type or "v").lower()
         critic_values_by_i: List[Dict[str, Any]] = []
         if critic_type == "v":
-            critic_input = self._build_critic_input(prompts)
+            critic_input = self._critic_input_for(item, prompts)
             with torch.no_grad():
                 critic_values_by_i = [self._critic_value_from_text(critic_input)]
         else:
             for i in range(num_ret):
                 joint_action = [
-                    completions_per_agent[a][i] for a in range(self.args.num_agents)
+                    completions_per_agent[a][i] for a in range(self.num_agents)
                 ]
-                critic_input = self._build_critic_input(prompts, joint_action)
+                critic_input = self._critic_input_for(item, prompts, joint_action)
                 with torch.no_grad():
                     critic_values_by_i.append(
                         self._critic_value_from_text(critic_input)
@@ -639,11 +678,11 @@ class MAACTrainer(ActorCriticTrainerBase):
         if self.args.num_generations != 1:
             raise ValueError("Multi-turn MAAC currently supports num_generations == 1.")
 
-        prompt_history = [[] for _ in range(self.args.num_agents)]
-        response_history = [[] for _ in range(self.args.num_agents)]
-        previous_completions: List[Optional[str]] = [None] * self.args.num_agents
+        prompt_history = [[] for _ in range(self.num_agents)]
+        response_history = [[] for _ in range(self.num_agents)]
+        previous_completions: List[Optional[str]] = [None] * self.num_agents
         per_agent_samples: List[List[RolloutSample]] = [
-            [] for _ in range(self.args.num_agents)
+            [] for _ in range(self.num_agents)
         ]
         rollouts: List[RolloutSample] = []
         value_discount = float(getattr(self.args, "discount", 1.0))
@@ -652,7 +691,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             if turn_idx == 0:
                 turn_prompts = [
                     self._resolve_turn_prompt(item, agent_idx)
-                    for agent_idx in range(self.args.num_agents)
+                    for agent_idx in range(self.num_agents)
                 ]
             else:
                 if self.external_transition is None:
@@ -660,13 +699,13 @@ class MAACTrainer(ActorCriticTrainerBase):
                 transition_result = self.external_transition(
                     prompt=item.get("prompt", ""),
                     agent_completions=previous_completions,
-                    num_agents=self.args.num_agents,
+                    num_agents=self.num_agents,
                     prompt_history_per_agent=prompt_history,
                     response_history_per_agent=response_history,
                 )
                 if (
                     not isinstance(transition_result, (list, tuple))
-                    or len(transition_result) != self.args.num_agents
+                    or len(transition_result) != self.num_agents
                 ):
                     raise ValueError(
                         "External transition must return per-agent prompts"
@@ -676,7 +715,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                     self._resolve_turn_prompt(
                         item, agent_idx, external_prompt=external_prompts[agent_idx]
                     )
-                    for agent_idx in range(self.args.num_agents)
+                    for agent_idx in range(self.num_agents)
                 ]
 
             completions_per_agent: List[List[str]] = []
@@ -707,13 +746,13 @@ class MAACTrainer(ActorCriticTrainerBase):
                 self.reward_func,
                 turn_prompts,
                 completions_per_agent,
-                num_agents=self.args.num_agents,
+                num_agents=self.num_agents,
                 batch_items=[item],
                 signature=self._reward_signature,
             )
             rewards = normalize_reward_lengths(
                 [float(self.reward_processor(r)) for r in rewards],
-                num_agents=self.args.num_agents,
+                num_agents=self.num_agents,
                 num_generations=1,
                 algorithm="MAAC",
             )
@@ -786,7 +825,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 if mean_reward > float(term_threshold):
                     break
 
-        for agent_idx in range(self.args.num_agents):
+        for agent_idx in range(self.num_agents):
             traj = per_agent_samples[agent_idx]
             for t, sample in enumerate(traj):
                 r = float(sample.returns.view(-1)[0].item())
@@ -798,7 +837,7 @@ class MAACTrainer(ActorCriticTrainerBase):
                 sample.metadata["adv_target"] = torch.tensor([target]).cpu()
                 sample.metadata["value_target"] = torch.tensor([target]).cpu()
 
-        for agent_idx in range(self.args.num_agents):
+        for agent_idx in range(self.num_agents):
             future = 0.0
             for sample in reversed(per_agent_samples[agent_idx]):
                 immediate = float(sample.returns.view(-1)[0].item())

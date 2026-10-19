@@ -73,6 +73,12 @@ class CollaborationModeMixin:
             1,
         )
 
+    def _role_metrics_callback(self, callback):
+        """Give a rollout-metrics callback per-role samples (no-op when decentralized)."""
+        if callback is None or self.centralized_collaboration is None:
+            return callback
+        return self.centralized_collaboration.wrap_metrics_callback(callback)
+
     def _role_completions(self, agent_completions_turns, batch_items):
         """Split joint completions into per-role completions (no-op when decentralized)."""
         if self.centralized_collaboration is None:

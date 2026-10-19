@@ -13,9 +13,23 @@ from comlrl.models.actor_critic import CausalLMWithValueHead
 from comlrl.utils.checkpoint import TrainingCheckpointMixin
 from comlrl.utils.reference_kl import reference_kl_coef, reference_kl_enabled
 
+from ..centralized import CollaborationModeMixin
 
-class ActorCriticTrainerBase(TrainingCheckpointMixin):
+
+class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
     """Shared training utilities for actor-critic style trainers."""
+
+    @property
+    def num_agents(self) -> int:
+        """Actor models trained: ``args.num_agents``, or one joint actor when centralized."""
+        actors = self.__dict__.get("_num_actors")
+        if actors is None:
+            actors = getattr(getattr(self, "args", None), "num_agents", 0)
+        return int(actors or 0)
+
+    @num_agents.setter
+    def num_agents(self, value: int) -> None:
+        self._num_actors = int(value)
 
     def _kl_shaped_reward(
         self, reward: float, data: Dict[str, Any], index: int
@@ -34,7 +48,7 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
         }
 
     def _expand_rewards(self, rewards: List[float], num_ret: int) -> List[List[float]]:
-        num_agents = self.args.num_agents
+        num_agents = self.num_agents
         if len(rewards) == 1:
             return [[rewards[0]] * num_ret for _ in range(num_agents)]
         if len(rewards) == num_ret:
@@ -105,7 +119,7 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
     def _parallel_agent_mode_enabled(self) -> bool:
         if str(getattr(self, "parallel_training", "")).lower() != "mp":
             return False
-        num_agents = int(getattr(getattr(self, "args", None), "num_agents", 0) or 0)
+        num_agents = self.num_agents
         if num_agents <= 1:
             return False
         devices = getattr(self, "agent_devices", None)
@@ -121,7 +135,7 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
         agent_indices: Optional[List[int]] = None,
         parallel: Optional[bool] = None,
     ) -> List[Any]:
-        num_agents = int(getattr(getattr(self, "args", None), "num_agents", 0) or 0)
+        num_agents = self.num_agents
         indices = (
             list(agent_indices)
             if agent_indices is not None
@@ -425,9 +439,9 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
     def _run_batch(self, batch, epoch_metrics: Dict[str, List[float]]) -> None:
         for item in batch:
             rollouts = self._collect_rollouts(item)
-            if self.args.num_agents > 0:
+            if self.num_agents > 0:
                 # Count joint-action reward evaluations (one per agent group).
-                self.env_step += len(rollouts) // self.args.num_agents
+                self.env_step += len(rollouts) // self.num_agents
             self._log_domain_metrics(rollouts)
 
             ready_agents: List[int] = []
