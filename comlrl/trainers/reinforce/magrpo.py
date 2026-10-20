@@ -17,7 +17,7 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from comlrl.schedulers import DeviceScheduler
 from comlrl.schedulers.device_scheduler import normalize_parallel_training
-from comlrl.utils.checkpoint import TrainingCheckpointMixin
+from comlrl.utils.checkpoint import TrainingCheckpointMixin, register_checkpoint_record
 from comlrl.utils.distributed import local_context, unwrap_model
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import (
@@ -132,6 +132,7 @@ class MAGRPOConfig:
         validate_reference_kl_config(self, actor_count)
 
 
+@register_checkpoint_record
 @dataclass
 class NodeSample:
     agent_idx: int

@@ -225,7 +225,7 @@ class MARLHFTrainer(MADPOTrainer):
             ):
                 return self._train_marlhf_checkpointed(**kwargs)
 
-        self._checkpoint_untracked_preference = True
+        self._checkpoint_untracked = True
         if int(self.args.num_turns) != 1:
             raise ValueError("MARLHF currently supports num_turns=1 only.")
 

@@ -196,7 +196,7 @@ def test_public_load_rejects_unallowlisted_pickle_without_mutation(tmp_path):
     assert_nested_equal(capture_trainer_state(target), before)
 
 
-def test_public_load_rejects_unallowlisted_record_without_mutation(tmp_path):
+def test_public_load_rejects_unregistered_record_without_mutation(tmp_path):
     target = TinyTrainer()
     before = capture_trainer_state(target)
     path = tmp_path / "unknown-record.pt"

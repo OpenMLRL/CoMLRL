@@ -377,7 +377,7 @@ def test_plain_preference_training_does_not_retain_checkpoint_data(tmp_path, kin
         trainer = toy_trainer(MARLHFIterTrainer)
         trainer.args.num_iterations = 0
     trainer.train()
-    assert trainer._checkpoint_untracked_preference
+    assert trainer._checkpoint_untracked
     assert not getattr(trainer, "_checkpoint_progress", {}).get("preference_pairs")
     with pytest.raises(RuntimeError, match="checkpoint_dir"):
         trainer.save_checkpoint(tmp_path / "manual")

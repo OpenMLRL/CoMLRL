@@ -10,6 +10,7 @@ import wandb
 from tqdm import tqdm  # type: ignore
 
 from comlrl.schedulers.device_scheduler import normalize_parallel_training
+from comlrl.utils.checkpoint import register_checkpoint_record
 from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.reference_kl import validate_reference_kl_config
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials
@@ -23,6 +24,7 @@ from ..centralized import (
 )
 
 
+@register_checkpoint_record
 @dataclass
 class AgentPreferenceTensors:
     prompt_input_ids: torch.Tensor
@@ -30,6 +32,7 @@ class AgentPreferenceTensors:
     loser_completion_ids: torch.Tensor
 
 
+@register_checkpoint_record
 @dataclass
 class PreferencePair:
     prompts: List[str]
@@ -239,7 +242,7 @@ class MADPOTrainer(MAGRPOTrainer):
             ):
                 return self._train_madpo_checkpointed(**kwargs)
 
-        self._checkpoint_untracked_preference = True
+        self._checkpoint_untracked = True
         if int(self.args.num_turns) != 1:
             raise ValueError("MADPO currently supports num_turns=1 only.")
 
@@ -361,6 +364,11 @@ class MADPOTrainer(MAGRPOTrainer):
         from .checkpoint_extras import load_preference_assets
 
         load_preference_assets(self, checkpoint_dir, assets)
+
+    def _checkpoint_prune_assets(self, checkpoint_root):
+        from .checkpoint_extras import prune_preference_asset_pool
+
+        prune_preference_asset_pool(checkpoint_root)
 
     def _checkpoint_validate_assets(self, checkpoint_dir, assets):
         from .checkpoint_extras import validate_preference_assets

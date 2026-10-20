@@ -7,7 +7,6 @@ compatible trainer (including datasets and callbacks), then resume its loop with
 
 from contextlib import contextmanager
 from dataclasses import fields, is_dataclass
-import importlib
 import inspect
 import hashlib
 import json
@@ -29,13 +28,8 @@ from comlrl.utils.distributed import unwrap_model
 CHECKPOINT_VERSION = 1
 STATE_FILENAME = "training_state.pt"
 _OWNER_FILENAME = "checkpoint_owner.json"
-_DATACLASSES = {
-    "comlrl.trainers.reinforce.magrpo.NodeSample",
-    "comlrl.trainers.actor_critic.iac.RolloutSample",
-    "comlrl.trainers.pbrl.madpo.PreferencePair",
-    "comlrl.trainers.pbrl.madpo.AgentPreferenceTensors",
-    "comlrl.trainers.pbrl.iterative.PreferenceReplayShard",
-}
+# Trainer dataclasses allowed in checkpoints; see register_checkpoint_record.
+_RECORDS = {}
 _MODEL_FIELDS = ("agents", "critics", "reference_models", "reward_model")
 _OPTIMIZER_FIELDS = (
     "optimizers",
@@ -172,6 +166,14 @@ def _class_name(value):
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
+def register_checkpoint_record(cls):
+    """Allow instances of a trainer dataclass in training checkpoints."""
+    if not isinstance(cls, type) or not is_dataclass(cls):
+        raise TypeError("Checkpoint records must be dataclass types.")
+    _RECORDS[f"{cls.__module__}.{cls.__qualname__}"] = cls
+    return cls
+
+
 def _encode(value, *, copy_tensors=True):
     """Copy tensors to CPU and encode known records using safe built-in types."""
     if value is None or type(value) in (bool, int, float, str, bytes):
@@ -193,7 +195,7 @@ def _encode(value, *, copy_tensors=True):
         return {"__kind__": "text", "value": str(value)}
     if is_dataclass(value) and not isinstance(value, type):
         name = _class_name(value)
-        if name not in _DATACLASSES:
+        if name not in _RECORDS:
             raise TypeError(f"Unsupported checkpoint record: {name}")
         return {
             "__kind__": "record",
@@ -242,10 +244,9 @@ def _decode(value):
         return np.frombuffer(value["data"], dtype=dtype).reshape(value["shape"]).copy()
     if kind == "record":
         name = value["class"]
-        if name not in _DATACLASSES:
+        if name not in _RECORDS:
             raise ValueError(f"Unsupported checkpoint record: {name}")
-        module, _, attr = name.rpartition(".")
-        cls = getattr(importlib.import_module(module), attr)
+        cls = _RECORDS[name]
         return cls(**{key: _decode(item) for key, item in value["fields"].items()})
     raise ValueError("Invalid checkpoint value encoding.")
 
@@ -949,7 +950,7 @@ def restore_trainer_state(trainer, state, checkpoint_dir=None, restore_rng=True)
     if restore_rng:
         _restore_trainer_rng(trainer, state, additional_devices)
     trainer._checkpoint_save_blocked = False
-    trainer._checkpoint_untracked_preference = False
+    trainer._checkpoint_untracked = False
 
 
 def _fsync_directory(directory):
@@ -1113,9 +1114,9 @@ class TrainingCheckpointMixin:
             raise RuntimeError(
                 "Training did not reach a completed checkpoint boundary; resume the last saved checkpoint."
             )
-        if getattr(self, "_checkpoint_untracked_preference", False):
+        if getattr(self, "_checkpoint_untracked", False):
             raise RuntimeError(
-                "Preference checkpoint tracking was not enabled. Use train(checkpoint_dir=...) to retain resumable state."
+                "Checkpoint tracking was not enabled. Use train(checkpoint_dir=...) to retain resumable state."
             )
         target = Path(output_dir).expanduser().absolute()
         if target.is_symlink() or (
@@ -1228,7 +1229,7 @@ class TrainingCheckpointMixin:
         self._checkpoint_context_active = True
         self._checkpoint_safe_to_save = False
         self._checkpoint_save_blocked = True
-        self._checkpoint_untracked_preference = False
+        self._checkpoint_untracked = False
         try:
             yield self._checkpoint_progress
         except BaseException:
@@ -1293,9 +1294,6 @@ class TrainingCheckpointMixin:
         for _, path in older[max(0, int(limit) - 1) :]:
             shutil.rmtree(path)
         _fsync_directory(root)
-        if callable(getattr(self, "_checkpoint_save_assets", None)):
-            from comlrl.trainers.pbrl.checkpoint_extras import (
-                prune_preference_asset_pool,
-            )
-
-            prune_preference_asset_pool(root)
+        prune_assets = getattr(self, "_checkpoint_prune_assets", None)
+        if callable(prune_assets):
+            prune_assets(root)

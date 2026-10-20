@@ -11,6 +11,7 @@ from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokeni
 from comlrl.models.actor_critic import CausalLMWithValueHead
 from comlrl.schedulers import DeviceScheduler
 from comlrl.schedulers.device_scheduler import normalize_parallel_training
+from comlrl.utils.checkpoint import register_checkpoint_record
 from comlrl.utils.distributed import local_context, unwrap_model
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_kwargs, resolve_model_sources
@@ -124,6 +125,7 @@ class IACConfig:
         )
 
 
+@register_checkpoint_record
 @dataclass
 class RolloutSample:
     agent_idx: int

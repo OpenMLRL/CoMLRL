@@ -18,6 +18,7 @@ import wandb
 from transformers import AutoModelForCausalLM
 
 from comlrl.schedulers import DeviceScheduler
+from comlrl.utils.checkpoint import register_checkpoint_record
 from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.model_loading import (
     freeze_model,
@@ -328,6 +329,7 @@ class MARLHFIterConfig(_IterativePreferenceConfig, MARLHFConfig):
         )
 
 
+@register_checkpoint_record
 @dataclass
 class PreferenceReplayShard:
     iteration: int
@@ -633,7 +635,7 @@ class MADPOIterTrainer(MADPOTrainer):
             ):
                 return train_iterations_checkpointed(self, reward_model=False, **kwargs)
 
-        self._checkpoint_untracked_preference = True
+        self._checkpoint_untracked = True
         if int(self.args.num_turns) != 1:
             raise ValueError("MADPOIter currently supports num_turns=1 only.")
 
@@ -2916,7 +2918,7 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
             ):
                 return train_iterations_checkpointed(self, reward_model=True, **kwargs)
 
-        self._checkpoint_untracked_preference = True
+        self._checkpoint_untracked = True
         if int(self.args.num_turns) != 1:
             raise ValueError("MARLHFIter currently supports num_turns=1 only.")
 
