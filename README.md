@@ -41,6 +41,16 @@ length. The examples leave W&B logging disabled by default; enable it explicitly
 python examples/story-len-ratio.py --wandb
 ```
 
+Two more examples cover other trainers and tasks. `leetcode-func-print.py` trains a
+function-writing agent and a test-writing agent with MAGRPO, rewarding runnable code
+and correct test prints. `tldr-len-ratio.py` trains two IAC agents to summarize Reddit
+posts, the second TL;DR about 2–3 times longer than the first.
+
+```bash
+python examples/leetcode-func-print.py
+python examples/tldr-len-ratio.py
+```
+
 For use in your own Python programs, CoMLRL is also available via PyPI or conda-forge:
 
 ```bash
