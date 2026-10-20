@@ -1,11 +1,17 @@
-"""Reward, formatter and W&B helpers in comlrl.utils."""
+"""Reward, formatter, W&B and distributed helpers in comlrl.utils."""
 
 import inspect
 
 import pytest
 import torch
 
-from comlrl.utils import RewardProcessors, build_formatters, call_reward_function
+from comlrl.utils import (
+    DistributedContext,
+    RewardProcessors,
+    build_formatters,
+    call_reward_function,
+    local_context,
+)
 from comlrl.utils.wandb_utils import wandb_init_kwargs
 
 
@@ -151,3 +157,9 @@ def test_wandb_init_kwargs_keeps_every_config_section():
         "dataset_name": "data",
         "dataset_type": "task",
     }
+
+
+def test_local_context_is_a_deprecated_single_process_context():
+    with pytest.warns(DeprecationWarning, match="deprecated"):
+        ctx = local_context(torch.device("cpu"))
+    assert ctx == DistributedContext(is_main=True, device=torch.device("cpu"))
