@@ -45,8 +45,6 @@ class IACConfig:
     critic_learning_rate: Optional[float] = 5e-6
     rollout_buffer_size: int = 8
     train_batch_size: Optional[int] = None
-    # Same update with one sample's activations in memory instead of a mini-batch's.
-    per_sample_backward: bool = False
     value_clip_range: Optional[float] = 0.2
     value_loss_coef: float = 0.6
     advantage_normalization: bool = True
@@ -77,6 +75,9 @@ class IACConfig:
     reference_kl_enabled: bool = False
     reference_kl_coef: float = 0.1
     reference_devices: Optional[Union[str, Sequence[str]]] = None
+    # Mathematically the same update, holding one sample's activations at a time
+    # (last, so positional arguments keep their meaning).
+    per_sample_backward: bool = False
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:

@@ -331,6 +331,29 @@ def test_ac_step_matches_analytic_gradients(
         assert actor.calls == [(3, False), (value_length, True)] * 2
 
 
+def test_sample_loss_shares_stay_within_the_batch_mean_range():
+    """fp16: 2 * 59840 overflows, but 59840 / 4 * 2 equals the weighted batch mean."""
+    trainer = ActorCriticTrainerBase.__new__(ActorCriticTrainerBase)
+    trainer.args = SimpleNamespace(value_loss_coef=2.0)
+    actor_share, value_share = trainer._sample_loss_shares(
+        torch.tensor([1.0], dtype=torch.float16),
+        torch.tensor([59840.0], dtype=torch.float16),
+        batch_size=4,
+    )
+    assert actor_share.item() == 0.25
+    assert value_share.item() == 29920.0
+
+
+@pytest.mark.parametrize(
+    "config_cls,fifth",
+    [(MAACConfig, "value_loss_coef"), (IACConfig, "value_clip_range")],
+)
+def test_per_sample_backward_keeps_positional_config_arguments(config_cls, fifth):
+    config = config_cls(5e-6, 5e-6, 8, 4, 0.1)
+    assert getattr(config, fifth) == 0.1
+    assert config.per_sample_backward is False
+
+
 def test_log_metrics_logs_each_call_directly(monkeypatch):
     trainer = ActorCriticTrainerBase()
     trainer.wandb_initialized = True
