@@ -45,6 +45,8 @@ class IACConfig:
     critic_learning_rate: Optional[float] = 5e-6
     rollout_buffer_size: int = 8
     train_batch_size: Optional[int] = None
+    # Same update with one sample's activations in memory instead of a mini-batch's.
+    per_sample_backward: bool = False
     value_clip_range: Optional[float] = 0.2
     value_loss_coef: float = 0.6
     advantage_normalization: bool = True
@@ -876,6 +878,13 @@ class IACTrainer(ActorCriticTrainerBase):
         value_losses: List[torch.Tensor] = []
         agent_device = self.agent_devices[agent_idx]
         critic_device = self._critic_device(agent_idx)
+        per_sample = getattr(self.args, "per_sample_backward", False)
+        if per_sample:
+            if self.args.use_separate_critic and critic_optimizer is None:
+                raise RuntimeError("Critic optimizer missing.")
+            agent_optimizer.zero_grad()
+            if critic_optimizer is not None:
+                critic_optimizer.zero_grad()
 
         for sample in batch:
             sequences = sample.full_input_ids.to(agent_device).unsqueeze(0)
@@ -958,9 +967,24 @@ class IACTrainer(ActorCriticTrainerBase):
             else:
                 value_error = (value_target - value) ** 2
 
+            if per_sample:
+                actor_share, value_share = self._sample_loss_shares(
+                    policy_loss, value_error, len(batch)
+                )
+                if self.args.use_separate_critic:
+                    actor_share.backward()
+                    value_share.backward()
+                else:
+                    (actor_share + value_share).backward()
+                continue
             actor_losses.append(policy_loss)
             value_losses.append(value_error)
 
+        if per_sample:
+            agent_optimizer.step()
+            if self.args.use_separate_critic:
+                critic_optimizer.step()
+            return
         actor_loss = torch.stack(actor_losses).mean()
         value_loss = torch.stack(value_losses).mean()
         if not torch.isfinite(actor_loss) or not torch.isfinite(value_loss):

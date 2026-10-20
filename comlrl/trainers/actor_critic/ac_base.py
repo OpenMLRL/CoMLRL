@@ -58,6 +58,18 @@ class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
             "Reward function must return 1 value, num_generations values, or num_agents values."
         )
 
+    def _sample_loss_shares(self, policy_loss, value_error, batch_size: int):
+        """One sample's share of a mini-batch's mean actor and weighted value losses.
+
+        Backpropagating each share as soon as it is computed keeps one sample's
+        activations in memory; the summed gradients equal those of the batch means.
+        """
+        actor_share = policy_loss.mean() / batch_size
+        value_share = self.args.value_loss_coef * value_error.mean() / batch_size
+        if not torch.isfinite(actor_share) or not torch.isfinite(value_share):
+            raise FloatingPointError("Non-finite loss detected.")
+        return actor_share, value_share
+
     def _value_on_prompt_only(
         self,
         model: CausalLMWithValueHead,

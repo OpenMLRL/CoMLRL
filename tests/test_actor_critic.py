@@ -252,6 +252,7 @@ def test_ac_step_reads_mask_from_rollout_metadata(trainer_cls):
     assert actor.logits.grad[:, [0, 2, 4]].count_nonzero() == 0
 
 
+@pytest.mark.parametrize("per_sample", [False, True])
 @pytest.mark.parametrize(
     "trainer_cls,separate,critic_type",
     [
@@ -263,10 +264,16 @@ def test_ac_step_reads_mask_from_rollout_metadata(trainer_cls):
         (MAACTrainer, True, "q"),
     ],
 )
-def test_ac_step_matches_analytic_gradients(trainer_cls, separate, critic_type):
+def test_ac_step_matches_analytic_gradients(
+    trainer_cls, separate, critic_type, per_sample
+):
+    """Per-sample backward gives the same gradients and update as the batch mean."""
     trainer = trainer_cls.__new__(trainer_cls)
     trainer.args = SimpleNamespace(
-        use_separate_critic=separate, value_loss_coef=0.6, value_clip_range=0.2
+        use_separate_critic=separate,
+        value_loss_coef=0.6,
+        value_clip_range=0.2,
+        per_sample_backward=per_sample,
     )
     trainer.critic_type = critic_type
     trainer.agent_devices = trainer.critic_devices = [torch.device("cpu")]

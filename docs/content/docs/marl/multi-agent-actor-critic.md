@@ -45,6 +45,7 @@ In Q mode, the implementation uses the same TD-residual actor weight, with a sam
 - `advantage_normalization`: Whether to normalize advantages before updates
 - `rollout_buffer_size`: Number of samples to collect per agent before an update
 - `train_batch_size`: Mini-batch size within each update
+- `per_sample_backward`: Backpropagates each sample as soon as its loss is computed and steps once per mini-batch, which gives the same update with one sample's activations in memory instead of the whole mini-batch's (default `False`)
 - `max_new_tokens`: Maximum tokens to generate per completion
 - `temperature`: Temperature for sampling
 - `top_p`: Top-p for nucleus sampling
@@ -135,6 +136,7 @@ where {{< katex >}}\hat{V}_t{{< /katex >}} is the TD target, {{< katex >}}\epsil
 - `advantage_normalization`: Whether to normalize advantages
 - `rollout_buffer_size`: Number of samples to collect before an update
 - `train_batch_size`: Mini-batch size for policy updates
+- `per_sample_backward`: Backpropagates each sample as soon as its loss is computed and steps once per mini-batch, which gives the same update with one sample's activations in memory instead of the whole mini-batch's (default `False`)
 - `max_new_tokens`: Maximum new tokens to generate
 - `temperature`: Temperature for sampling
 - `top_p`: Top-p for nucleus sampling

@@ -43,6 +43,8 @@ class MAACConfig:
     critic_learning_rate: float = 5e-6
     rollout_buffer_size: int = 8
     train_batch_size: Optional[int] = None
+    # Same update with one sample's activations in memory instead of a mini-batch's.
+    per_sample_backward: bool = False
     value_loss_coef: float = 0.6
     advantage_normalization: bool = True
     max_new_tokens: int = 256
@@ -861,6 +863,10 @@ class MAACTrainer(ActorCriticTrainerBase):
         value_losses: List[torch.Tensor] = []
         agent_device = self.agent_devices[agent_idx]
         critic_device = self.critic_device
+        per_sample = getattr(self.args, "per_sample_backward", False)
+        if per_sample:
+            agent_optimizer.zero_grad()
+            self.critic_optimizer.zero_grad()
 
         for sample in batch:
             sequences = sample.full_input_ids.to(agent_device).unsqueeze(0)
@@ -908,9 +914,20 @@ class MAACTrainer(ActorCriticTrainerBase):
             policy_loss = -(logprob * policy_advantage)
             value_error = (returns - value) ** 2
 
+            if per_sample:
+                actor_share, value_share = self._sample_loss_shares(
+                    policy_loss, value_error, len(batch)
+                )
+                actor_share.backward()
+                value_share.backward()
+                continue
             actor_losses.append(policy_loss)
             value_losses.append(value_error)
 
+        if per_sample:
+            agent_optimizer.step()
+            self.critic_optimizer.step()
+            return
         actor_loss = torch.stack(actor_losses).mean()
         value_loss = torch.stack(value_losses).mean()
         value_total = self.args.value_loss_coef * value_loss
