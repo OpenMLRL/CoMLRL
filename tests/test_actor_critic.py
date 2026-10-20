@@ -12,7 +12,6 @@ from comlrl.trainers.actor_critic import IACTrainer, MAACTrainer, RolloutSample
 from comlrl.trainers.actor_critic.ac_base import ActorCriticTrainerBase
 from comlrl.trainers.actor_critic.iac import IACConfig
 from comlrl.trainers.actor_critic.maac import MAACConfig
-from comlrl.utils.distributed import DistributedContext
 
 from helpers import tiny_gpt2, zero_reward
 
@@ -47,11 +46,6 @@ class _ConstantActorCritic(nn.Module):
         return SimpleNamespace(logits=logits, values=values)
 
 
-def _cpu_context():
-    return DistributedContext(is_main=True, device=torch.device("cpu"))
-
-
-@pytest.mark.parametrize("trainer_cls", TRAINERS)
 @pytest.mark.parametrize(
     "num_agents,num_ret,rewards,expected",
     [
@@ -62,9 +56,9 @@ def _cpu_context():
     ],
 )
 def test_expand_rewards_preserves_generation_precedence(
-    trainer_cls, num_agents, num_ret, rewards, expected
+    num_agents, num_ret, rewards, expected
 ):
-    trainer = trainer_cls.__new__(trainer_cls)
+    trainer = ActorCriticTrainerBase.__new__(ActorCriticTrainerBase)
     trainer.args = SimpleNamespace(num_agents=num_agents)
     result = trainer._expand_rewards(rewards, num_ret)
     assert result == expected
@@ -72,9 +66,8 @@ def test_expand_rewards_preserves_generation_precedence(
     assert result[1] == expected[1]
 
 
-@pytest.mark.parametrize("trainer_cls", TRAINERS)
-def test_expand_rewards_rejects_unsupported_lengths(trainer_cls):
-    trainer = trainer_cls.__new__(trainer_cls)
+def test_expand_rewards_rejects_unsupported_lengths():
+    trainer = ActorCriticTrainerBase.__new__(ActorCriticTrainerBase)
     trainer.args = SimpleNamespace(num_agents=2)
     with pytest.raises(ValueError, match="Reward function must return 1 value"):
         trainer._expand_rewards([1.0] * 4, 3)
@@ -127,9 +120,8 @@ def test_maac_single_turn_does_not_dispatch_multi_turn_reward_override():
     ]
 
 
-@pytest.mark.parametrize("trainer_cls", TRAINERS)
-def test_sequence_stats_exclude_prompt_and_trailing_tokens(trainer_cls):
-    trainer = trainer_cls.__new__(trainer_cls)
+def test_sequence_stats_exclude_prompt_and_trailing_tokens():
+    trainer = ActorCriticTrainerBase.__new__(ActorCriticTrainerBase)
     probabilities = torch.tensor(
         [[[0.2, 0.8], [0.3, 0.7], [0.4, 0.6], [0.9, 0.1], [0.5, 0.5]]],
         dtype=torch.float64,
@@ -260,6 +252,7 @@ def test_ac_step_reads_mask_from_rollout_metadata(trainer_cls):
     assert actor.logits.grad[:, [0, 2, 4]].count_nonzero() == 0
 
 
+@pytest.mark.parametrize("per_sample", [False, True])
 @pytest.mark.parametrize(
     "trainer_cls,separate,critic_type",
     [
@@ -271,10 +264,16 @@ def test_ac_step_reads_mask_from_rollout_metadata(trainer_cls):
         (MAACTrainer, True, "q"),
     ],
 )
-def test_ac_step_matches_analytic_gradients(trainer_cls, separate, critic_type):
+def test_ac_step_matches_analytic_gradients(
+    trainer_cls, separate, critic_type, per_sample
+):
+    """Per-sample backward gives the same gradients and update as the batch mean."""
     trainer = trainer_cls.__new__(trainer_cls)
     trainer.args = SimpleNamespace(
-        use_separate_critic=separate, value_loss_coef=0.6, value_clip_range=0.2
+        use_separate_critic=separate,
+        value_loss_coef=0.6,
+        value_clip_range=0.2,
+        per_sample_backward=per_sample,
     )
     trainer.critic_type = critic_type
     trainer.agent_devices = trainer.critic_devices = [torch.device("cpu")]
@@ -332,9 +331,31 @@ def test_ac_step_matches_analytic_gradients(trainer_cls, separate, critic_type):
         assert actor.calls == [(3, False), (value_length, True)] * 2
 
 
+def test_sample_loss_shares_stay_within_the_batch_mean_range():
+    """fp16: 2 * 59840 overflows, but 59840 / 4 * 2 equals the weighted batch mean."""
+    trainer = ActorCriticTrainerBase.__new__(ActorCriticTrainerBase)
+    trainer.args = SimpleNamespace(value_loss_coef=2.0)
+    actor_share, value_share = trainer._sample_loss_shares(
+        torch.tensor([1.0], dtype=torch.float16),
+        torch.tensor([59840.0], dtype=torch.float16),
+        batch_size=4,
+    )
+    assert actor_share.item() == 0.25
+    assert value_share.item() == 29920.0
+
+
+@pytest.mark.parametrize(
+    "config_cls,fifth",
+    [(MAACConfig, "value_loss_coef"), (IACConfig, "value_clip_range")],
+)
+def test_per_sample_backward_keeps_positional_config_arguments(config_cls, fifth):
+    config = config_cls(5e-6, 5e-6, 8, 4, 0.1)
+    assert getattr(config, fifth) == 0.1
+    assert config.per_sample_backward is False
+
+
 def test_log_metrics_logs_each_call_directly(monkeypatch):
     trainer = ActorCriticTrainerBase()
-    trainer.dist_env = _cpu_context()
     trainer.wandb_initialized = True
     trainer.env_step = 5
     trainer.args = SimpleNamespace(logging_steps=1)
@@ -356,7 +377,6 @@ def test_evaluate_collects_rollouts_in_eval_mode():
             self.args = SimpleNamespace(eval_batch_size=1, eval_num_samples=1)
             self.wandb_initialized = False
             self.env_step = 0
-            self.dist_env = _cpu_context()
             self.verbose = False
             self.eval_flags = []
 

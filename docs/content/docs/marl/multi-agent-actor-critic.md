@@ -36,6 +36,7 @@ In Q mode, the implementation uses the same TD-residual actor weight, with a sam
 **MAACConfig** parameters:
 - `num_agents`: Number of agents
 - `num_turns`: Number of turns
+- `collaboration_mode`: `"decentralized"` (default) trains one actor per agent; `"centralized"` trains one actor that writes the complete joint response for all `num_agents` roles and requires `num_turns=1`. The shared critic still reads each role's prompt and parsed output, in the same format as in decentralized training
 - `critic_type`: Critic target type (`v` for V(h), `q` for Q(h,a))
 - `num_train_epochs`: Number of training epochs
 - `agent_learning_rate`: Learning rate for agents
@@ -44,6 +45,7 @@ In Q mode, the implementation uses the same TD-residual actor weight, with a sam
 - `advantage_normalization`: Whether to normalize advantages before updates
 - `rollout_buffer_size`: Number of samples to collect per agent before an update
 - `train_batch_size`: Mini-batch size within each update
+- `per_sample_backward`: Backpropagates each sample as soon as its loss is computed and steps once per mini-batch, so only one sample's activations stay in memory instead of the whole mini-batch's; the update is mathematically the same, though floating-point sums may differ slightly (default `False`)
 - `max_new_tokens`: Maximum tokens to generate per completion
 - `temperature`: Temperature for sampling
 - `top_p`: Top-p for nucleus sampling
@@ -77,6 +79,7 @@ In Q mode, the implementation uses the same TD-residual actor weight, with a sam
 - `model_config`: Model loading options; `critic_value_head_hidden_dim` configures the centralized critic's value head (optional)
 - `wandb_config`: Weights & Biases logging configuration (optional)
 - `metrics_callback`: Optional callback taking rollout samples and returning a dictionary of scalar metrics
+- `centralized_adapter`: Joint prompt builder and role parser (`build_prompt`, `parse_completion`) for a centralized actor; required with `collaboration_mode="centralized"`. Rewards, the critic and `metrics_callback` receive the parsed role outputs
 - `external_transition`: Transition function required when `num_turns > 1`
 {{% /hint %}}
 
@@ -124,6 +127,7 @@ where {{< katex >}}\hat{V}_t{{< /katex >}} is the TD target, {{< katex >}}\epsil
 
 - `num_agents`: Number of agents
 - `num_turns`: Number of turns
+- `collaboration_mode`: `"decentralized"` (default) trains one actor per agent; `"centralized"` trains one actor that writes the complete joint response for all `num_agents` roles and requires `num_turns=1`. Its critic conditions on the joint prompt
 - `num_train_epochs`: Number of training epochs
 - `agent_learning_rate`: Learning rate for agents
 - `critic_learning_rate`: Learning rate for separate critics; shared models use `agent_learning_rate` for both actor and value head
@@ -132,6 +136,7 @@ where {{< katex >}}\hat{V}_t{{< /katex >}} is the TD target, {{< katex >}}\epsil
 - `advantage_normalization`: Whether to normalize advantages
 - `rollout_buffer_size`: Number of samples to collect before an update
 - `train_batch_size`: Mini-batch size for policy updates
+- `per_sample_backward`: Backpropagates each sample as soon as its loss is computed and steps once per mini-batch, so only one sample's activations stay in memory instead of the whole mini-batch's; the update is mathematically the same, though floating-point sums may differ slightly (default `False`)
 - `max_new_tokens`: Maximum new tokens to generate
 - `temperature`: Temperature for sampling
 - `top_p`: Top-p for nucleus sampling
@@ -169,6 +174,7 @@ where {{< katex >}}\hat{V}_t{{< /katex >}} is the TD target, {{< katex >}}\epsil
 - `model_config`: Model configuration dictionary (optional)
 - `wandb_config`: Configuration for Weights & Biases logging (optional)
 - `metrics_callback`: Optional callback taking rollout samples and returning a dictionary of scalar metrics
+- `centralized_adapter`: Joint prompt builder and role parser (`build_prompt`, `parse_completion`) for a centralized actor; required with `collaboration_mode="centralized"`. Rewards and `metrics_callback` receive the parsed role outputs
 - `external_transition`: Optional transition function required for multi-turn training
 {{% /hint %}}
 

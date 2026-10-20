@@ -1,5 +1,4 @@
 import inspect
-import numbers
 import os
 import random
 from dataclasses import dataclass
@@ -17,8 +16,8 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from comlrl.schedulers import DeviceScheduler
 from comlrl.schedulers.device_scheduler import normalize_parallel_training
-from comlrl.utils.checkpoint import TrainingCheckpointMixin
-from comlrl.utils.distributed import local_context, unwrap_model
+from comlrl.utils.checkpoint import TrainingCheckpointMixin, register_checkpoint_record
+from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import (
     infer_model_name,
@@ -26,12 +25,11 @@ from comlrl.utils.model_loading import (
     resolve_model_sources,
 )
 from comlrl.utils.reference_kl import (
-    _sequence_kl_values,
     clone_reference_models,
     load_reference_models_from_sources,
     reference_kl_coef,
     reference_kl_enabled,
-    reference_kl_for_sequence,
+    reference_kl_values,
     resolve_reference_devices,
     validate_reference_kl_config,
 )
@@ -41,6 +39,12 @@ from comlrl.utils.tokenizer_utils import (
     resolve_tokenizers,
 )
 from comlrl.utils.wandb_utils import verbose_from_wandb_config, wandb_init_kwargs
+
+from ..centralized import (
+    CollaborationModeMixin,
+    joint_policy_gradient_loss,
+    validate_collaboration_mode,
+)
 
 
 @dataclass
@@ -76,6 +80,16 @@ class MAGRPOConfig:
     train_batch_size: Optional[int] = None
     advantage_normalization: bool = True
     advantage_mode: str = "mean"
+    # Without a gradient (every advantage zero), AdamW would still move weights
+    # along its stored momentum; skipping keeps such updates from changing them.
+    skip_zero_grad_steps: bool = False
+    # "centralized" trains one joint actor that answers for all num_agents roles;
+    # role outputs are split from its response only for rewards and evaluation.
+    collaboration_mode: str = "decentralized"
+    # Centralized only: score the joint response with the decentralized loss (the
+    # same token range, precision and non-finite fallback) instead of the
+    # joint-sequence loss, so both modes share one objective implementation.
+    match_decentralized_loss: bool = False
     reference_kl_enabled: bool = False
     reference_kl_coef: float = 0.1
     reference_devices: Optional[Union[str, Sequence[str]]] = None
@@ -99,6 +113,9 @@ class MAGRPOConfig:
             raise ValueError("eval_batch_size must be >= 1.")
         if self.num_turns < 1:
             raise ValueError("num_turns must be >= 1.")
+        validate_collaboration_mode(self.collaboration_mode)
+        if self.collaboration_mode == "centralized" and self.num_turns != 1:
+            raise ValueError("Centralized MAGRPO currently supports num_turns=1 only.")
         if self.logging_steps < 1:
             raise ValueError("logging_steps must be >= 1.")
         if self.train_batch_size is None:
@@ -109,14 +126,11 @@ class MAGRPOConfig:
         if mode == "mp" and self.agent_devices is None:
             raise ValueError("parallel_training='mp' requires explicit agent_devices.")
         self.parallel_training = mode
-        actor_count = (
-            1
-            if getattr(self, "collaboration_mode", None) == "centralized"
-            else self.num_agents
-        )
+        actor_count = 1 if self.collaboration_mode == "centralized" else self.num_agents
         validate_reference_kl_config(self, actor_count)
 
 
+@register_checkpoint_record
 @dataclass
 class NodeSample:
     agent_idx: int
@@ -128,7 +142,17 @@ class NodeSample:
     node_env_step: int
 
 
-class MAGRPOTrainer(TrainingCheckpointMixin):
+def _has_gradient(optimizer) -> bool:
+    """Whether any parameter of the optimizer holds a nonzero gradient."""
+    return any(
+        bool(param.grad.ne(0).any())
+        for group in optimizer.param_groups
+        for param in group["params"]
+        if param.grad is not None
+    )
+
+
+class MAGRPOTrainer(CollaborationModeMixin, TrainingCheckpointMixin):
     """
     Multi-Agent Group Relative Policy Optimization Trainer (MAGRPO).
     Supports both single-turn and multi-turn training with external transitions.
@@ -154,6 +178,10 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
         eval_aggregator: Called as ``eval_aggregator(metrics, num_turns=...)`` and
             returns ``turn_k/...`` metrics, logged under ``eval/``
         external_transition: Function that provides external transitions between turns
+        centralized_adapter: With ``args.collaboration_mode="centralized"``, builds one
+            joint prompt from the role prompts and splits the joint response back into
+            ``num_agents`` role outputs (``build_prompt`` / ``parse_completion``). One
+            actor is then trained; rewards and evaluation see the split role outputs.
     """
 
     default_config_cls: Type[Any] = MAGRPOConfig
@@ -179,8 +207,18 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
         eval_logger: Optional[Callable] = None,
         eval_aggregator: Optional[Callable] = None,
         args: Optional[Any] = None,
+        *,
+        centralized_adapter: Optional[Any] = None,
     ):
         self.args = args if args is not None else self.default_config_cls()
+        reward_func, formatters, num_agents = self._setup_collaboration(
+            centralized_adapter,
+            agents=agents,
+            tokenizer=tokenizer,
+            reward_func=reward_func,
+            formatters=formatters,
+            num_agents=num_agents,
+        )
         self.parallel_training = normalize_parallel_training(
             getattr(self.args, "parallel_training", "none")
         )
@@ -245,7 +283,6 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
             )
             self.agent_devices = [single_device] * self.num_agents
         self.device = self.agent_devices[0]
-        self.dist_env = local_context(self.device)
         model_kwargs = resolve_model_kwargs(self.model_config)
         if actor_sources and all(isinstance(src, str) for src in actor_sources):
             from transformers import AutoModelForCausalLM
@@ -337,7 +374,7 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
 
         self.wandb_config = wandb_config
         self.wandb_initialized = False
-        if self.wandb_config is not None and self.dist_env.is_main:
+        if self.wandb_config is not None:
             self._init_wandb()
 
         self.verbose = verbose_from_wandb_config(self.wandb_config)
@@ -423,8 +460,6 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
 
     def _init_wandb(self):
         """Initialize Weights & Biases for tracking with multi-turn config."""
-        if not self.dist_env.is_main:
-            return
         if not self.wandb_initialized:
             if self.wandb_config is None:
                 self.wandb_config = {}
@@ -445,7 +480,7 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
             }
             if hasattr(self.args, "num_generations"):
                 config_dict["num_generations"] = self.args.num_generations
-            if getattr(self, "centralized_collaboration", None) is not None:
+            if self.is_centralized:
                 config_dict["collaboration_mode"] = "centralized"
                 config_dict["num_roles"] = self.centralized_collaboration.num_roles
                 config_dict["num_actor_models"] = len(self.agents)
@@ -663,6 +698,9 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
         extra_metrics: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, float]:
         """Log evaluation metrics for any number of turns."""
+        all_agent_completions_turns = self._role_completions(
+            all_agent_completions_turns, all_batch_items
+        )
         eval_metrics = {}
 
         # Detailed logging (if logger is provided), standardized to modern interface
@@ -709,24 +747,14 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
         their logs have been processed. The configured epoch count is the total
         for the run, including epochs already completed in a resumed checkpoint.
         """
-        if (
-            isinstance(checkpoint_interval, bool)
-            or not isinstance(checkpoint_interval, numbers.Integral)
-            or checkpoint_interval < 1
-        ):
-            raise ValueError("checkpoint_interval must be a positive integer.")
-        if (
-            resume_from_checkpoint is not None
-            or checkpoint_dir is not None
-            or checkpoint_interval != 1
-            or checkpoint_total_limit is not None
-        ):
-            with self._checkpoint_context(
-                resume_from_checkpoint=resume_from_checkpoint,
-                checkpoint_dir=checkpoint_dir,
-                checkpoint_interval=checkpoint_interval,
-                checkpoint_total_limit=checkpoint_total_limit,
-            ):
+        checkpointing = self._checkpoint_arguments(
+            resume_from_checkpoint,
+            checkpoint_dir,
+            checkpoint_interval,
+            checkpoint_total_limit,
+        )
+        if checkpointing is not None:
+            with self._checkpoint_context(**checkpointing):
                 return self._train_checkpoint_epochs(
                     self._checkpoint_progress, self._checkpoint_commit, **kwargs
                 )
@@ -736,39 +764,7 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
 
         if self.wandb_config is not None and not self.wandb_initialized:
             self._init_wandb()
-
-        for agent_idx, agent in enumerate(self.agents):
-            agent.to(self.agent_devices[agent_idx])
-            agent.train()
-
-        for epoch in range(0, int(self.args.num_train_epochs)):
-            dl = self.get_train_dataloader()
-            if getattr(self, "verbose", True):
-                it = enumerate(
-                    tqdm(
-                        dl,
-                        total=len(dl),
-                        desc=f"Epoch {epoch+1}/{int(self.args.num_train_epochs)}",
-                    )
-                )
-            else:
-                it = enumerate(dl)
-            for batch_idx, batch in it:
-                if int(self.args.eval_interval) > 0 and (
-                    batch_idx % int(self.args.eval_interval) == 0
-                ):
-                    _ = self.evaluate(num_eval_samples=int(self.args.eval_num_samples))
-
-                # Process single batch item (batch_size=1 enforced)
-                batch_item = batch[0]
-                self._train_step_returns(batch_item, **kwargs)
-
-            ready_agents = [
-                agent_idx
-                for agent_idx, buffer in enumerate(self.rollout_buffers)
-                if buffer
-            ]
-            self._drain_ready_buffers(ready_agents)
+        self._run_epochs(0, None, kwargs)
 
         if not getattr(self, "_checkpoint_context_active", False):
             self._checkpoint_progress = {
@@ -828,7 +824,6 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
 
     def _train_checkpoint_epochs(self, progress, commit, **kwargs):
         """Run complete RL epochs, optionally inside a parent trainer's context."""
-        total_epochs = int(self.args.num_train_epochs)
         # Preference subclasses have an outer cursor validator; this loop uses RL epochs.
         start_epoch = MAGRPOTrainer._checkpoint_validate_progress(
             self,
@@ -837,10 +832,13 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
                 "runtime": {"rollout_buffers": self.rollout_buffers},
             },
         )
-        self._on_checkpoint_train_start(start_epoch, total_epochs)
-
+        self._on_checkpoint_train_start(start_epoch, int(self.args.num_train_epochs))
         self._checkpoint_init_wandb()
+        self._run_epochs(start_epoch, commit, kwargs)
 
+    def _run_epochs(self, start_epoch, commit, generation_kwargs):
+        """Train epochs ``start_epoch`` onward; ``commit`` (if given) follows each epoch."""
+        total_epochs = int(self.args.num_train_epochs)
         for agent_idx, agent in enumerate(self.agents):
             agent.to(self.agent_devices[agent_idx])
             agent.train()
@@ -863,8 +861,9 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
                 ):
                     _ = self.evaluate(num_eval_samples=int(self.args.eval_num_samples))
 
+                # Process single batch item (batch_size=1 enforced)
                 batch_item = batch[0]
-                self._train_step_returns(batch_item, **kwargs)
+                self._train_step_returns(batch_item, **generation_kwargs)
 
             ready_agents = [
                 agent_idx
@@ -872,10 +871,11 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
                 if buffer
             ]
             self._drain_ready_buffers(ready_agents)
-            commit(
-                {"kind": "magrpo", "epoch": epoch + 1},
-                force=epoch + 1 == total_epochs,
-            )
+            if commit is not None:
+                commit(
+                    {"kind": "magrpo", "epoch": epoch + 1},
+                    force=epoch + 1 == total_epochs,
+                )
 
     def _train_step_returns(
         self,
@@ -1229,7 +1229,7 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
         completion_input_ids = generation_output.sequences
 
         prompt_len = prompt_input_ids[0].shape[0]
-        joint_actor = getattr(self, "centralized_collaboration", None) is not None
+        joint_actor = self.is_centralized
         # Joint prompts can contain EOS even when it is also the padding token.
         if not joint_actor:
             pad_positions = (prompt_input_ids[0] == tokenizer.pad_token_id).nonzero()
@@ -1430,31 +1430,7 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
             "reference_kls": list(completions_data.get("reference_kls") or []),
         }
 
-    def _reference_kl_values(
-        self,
-        agent_idx: int,
-        policy_model: Any,
-        sequences: torch.Tensor,
-        attention_mask: torch.Tensor,
-        prompt_len: int,
-        response_lens: Sequence[int],
-    ) -> List[float]:
-        if not reference_kl_enabled(self.args):
-            return []
-        if not getattr(self, "reference_models", None):
-            raise RuntimeError(
-                "Reference KL is enabled but reference models are missing."
-            )
-        reference_model = self.reference_models[agent_idx]
-        return _sequence_kl_values(
-            policy_model,
-            reference_model,
-            sequences,
-            attention_mask,
-            prompt_len,
-            response_lens,
-            sequence_kl=reference_kl_for_sequence,
-        )
+    _reference_kl_values = reference_kl_values
 
     def _apply_reference_kl_to_returns(
         self, returns_tensor: torch.Tensor, completions_data: Dict[str, Any]
@@ -1585,6 +1561,10 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
                     sample.returns,
                 )
                 (loss * scale).backward()
+            if getattr(self.args, "skip_zero_grad_steps", False) and not _has_gradient(
+                self.optimizers[agent_idx]
+            ):
+                continue
             self.optimizers[agent_idx].step()
 
     def _compute_advantages(self, returns_tensor: torch.Tensor) -> torch.Tensor:
@@ -1615,6 +1595,10 @@ class MAGRPOTrainer(TrainingCheckpointMixin):
         Returns:
             torch.Tensor: The computed loss with gradients attached
         """
+        if self.is_centralized and not getattr(
+            self.args, "match_decentralized_loss", False
+        ):
+            return joint_policy_gradient_loss(self, agent, completions_data, returns)
         agent_module = unwrap_model(agent)
         device = next(agent_module.parameters()).device
 

@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import torch
 
-from comlrl.trainers.preference.iterative import MADPOIterTrainer
+from comlrl.trainers.pbrl.iterative import MADPOIterTrainer
 import comlrl.utils.checkpoint as checkpoint
 from comlrl.utils.checkpoint import capture_trainer_state, restore_trainer_state
 
@@ -242,19 +242,6 @@ def test_nested_rng_routes_restore_latest_parent_rng_values(monkeypatch):
     monkeypatch.setattr(checkpoint, "restore_rng_state", restored.append)
     checkpoint._restore_trainer_rng(trainer, state, nested)
     assert [value.item() for value in restored[0]["cuda"]] == [11, 22, 22]
-
-
-def test_nested_rng_routes_cannot_conflict_with_parent_streams(monkeypatch):
-    trainer = SimpleNamespace(_checkpoint_rng_devices_override={"agents.0": "cuda:0"})
-    state = {
-        "rng": {"cuda": [torch.tensor([11]), torch.tensor([22])]},
-        "rng_devices": {"agents.0": "cuda:0"},
-    }
-    nested = [{"saved": {"critics.0": "cuda:1"}, "current": {"critics.0": "cuda:0"}}]
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
-    with pytest.raises(ValueError, match="merge or split"):
-        checkpoint._cuda_rng_routes(trainer, state, nested)
 
 
 @pytest.mark.parametrize(

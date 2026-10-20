@@ -46,9 +46,11 @@ During decentralized execution, agents use their own prompts and policies. Indep
   - **_Multi-Agent REINFORCE:_** Critic-free policy gradient methods, including [MAREINFORCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/marloo.py), and [MAReMax](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/maremax.py).
     - Index-aligned joint responses with `joint_mode='aligned'`.
     - Cartesian-product joint responses with `joint_mode='cross'`.
+    - Decentralized actors or one centralized actor with `collaboration_mode='centralized'`.
   - **_Multi-Agent Actor-Critic:_** Actor-Critic methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/maac.py).
     - Independent actor-critic (separate critic or value head over the LLM backbone).
     - Centralized critic over joint prompts with separate actors.
+    - Decentralized actors or one centralized actor with `collaboration_mode='centralized'`.
   - **_Multi-Agent PbRL:_** MADPO, MARLHF, and their iterative variants.
     - Direct joint preference optimization or a learned joint reward followed by RL.
     - Decentralized actors or one centralized actor with role-aware joint responses.

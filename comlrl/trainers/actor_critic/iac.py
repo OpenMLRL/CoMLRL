@@ -11,22 +11,23 @@ from transformers import AutoModelForCausalLM, PreTrainedModel, PreTrainedTokeni
 from comlrl.models.actor_critic import CausalLMWithValueHead
 from comlrl.schedulers import DeviceScheduler
 from comlrl.schedulers.device_scheduler import normalize_parallel_training
-from comlrl.utils.distributed import local_context, unwrap_model
+from comlrl.utils.checkpoint import register_checkpoint_record
+from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_kwargs, resolve_model_sources
 from comlrl.utils.reference_kl import (
-    _sequence_kl_values,
     clone_reference_models,
     load_reference_models_from_sources,
     reference_kl_coef,
     reference_kl_enabled,
-    reference_kl_for_sequence,
+    reference_kl_values,
     resolve_reference_devices,
     validate_reference_kl_config,
 )
 from comlrl.utils.reward_utils import call_reward_function, normalize_reward_lengths
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials, resolve_tokenizers
 from comlrl.utils.wandb_utils import verbose_from_wandb_config, wandb_init_kwargs
+from ..centralized import validate_collaboration_mode
 from .ac_base import ActorCriticTrainerBase
 import wandb
 
@@ -58,6 +59,8 @@ class IACConfig:
     value_head_hidden_dim: Optional[int] = None
     num_agents: int = 2
     num_turns: int = 2
+    # "centralized" trains one joint actor that answers for all num_agents roles.
+    collaboration_mode: str = "decentralized"
     parallel_training: str = "none"
     agent_devices: Optional[Union[str, Sequence[str]]] = None
     critic_devices: Optional[Union[str, Sequence[str]]] = None
@@ -72,6 +75,9 @@ class IACConfig:
     reference_kl_enabled: bool = False
     reference_kl_coef: float = 0.1
     reference_devices: Optional[Union[str, Sequence[str]]] = None
+    # Mathematically the same update, holding one sample's activations at a time
+    # (last, so positional arguments keep their meaning).
+    per_sample_backward: bool = False
 
     def __post_init__(self) -> None:
         if self.rollout_buffer_size < 1:
@@ -84,6 +90,9 @@ class IACConfig:
             raise ValueError("num_agents must be >= 1.")
         if self.num_turns < 1:
             raise ValueError("num_turns must be >= 1.")
+        validate_collaboration_mode(self.collaboration_mode)
+        if self.collaboration_mode == "centralized" and self.num_turns != 1:
+            raise ValueError("Centralized IAC currently supports num_turns=1 only.")
         if self.num_turns > 1 and self.num_generations != 1:
             raise ValueError("Multi-turn IAC currently supports num_generations == 1.")
         critic_type = (self.critic_type or "v").lower()
@@ -113,9 +122,12 @@ class IACConfig:
                     "use_separate_critic=True."
                 )
         self.parallel_training = mode
-        validate_reference_kl_config(self, self.num_agents)
+        validate_reference_kl_config(
+            self, 1 if self.collaboration_mode == "centralized" else self.num_agents
+        )
 
 
+@register_checkpoint_record
 @dataclass
 class RolloutSample:
     agent_idx: int
@@ -162,8 +174,18 @@ class IACTrainer(ActorCriticTrainerBase):
         critics: Optional[
             Sequence[Union[str, PreTrainedModel, CausalLMWithValueHead]]
         ] = None,
+        *,
+        centralized_adapter: Optional[Any] = None,
     ) -> None:
         self.args = args if args is not None else IACConfig()
+        reward_func, formatters, self.num_agents = self._setup_collaboration(
+            centralized_adapter,
+            agents=agents,
+            tokenizer=tokenizer,
+            reward_func=reward_func,
+            formatters=formatters,
+            num_agents=self.args.num_agents,
+        )
         if reward_func is None or not callable(reward_func):
             raise ValueError("reward_func must be a callable.")
         if agent_model is None and agents is None:
@@ -176,7 +198,7 @@ class IACTrainer(ActorCriticTrainerBase):
             )
         if (
             agents is None
-            and self.args.num_agents > 1
+            and self.num_agents > 1
             and isinstance(agent_model, PreTrainedModel)
         ):
             raise ValueError(
@@ -190,7 +212,7 @@ class IACTrainer(ActorCriticTrainerBase):
         self.reward_processor = reward_processor or (lambda x: x)
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
-        self.metrics_callback = metrics_callback
+        self.metrics_callback = self._role_metrics_callback(metrics_callback)
         self.model_config = model_config or {}
         self.critic_type = (self.args.critic_type or "v").lower()
         self.parallel_training = normalize_parallel_training(
@@ -198,7 +220,7 @@ class IACTrainer(ActorCriticTrainerBase):
         )
         if self.parallel_training == "mp":
             self.agent_devices, self.critic_devices = DeviceScheduler.assign_devices(
-                self.args.num_agents,
+                self.num_agents,
                 getattr(self.args, "agent_devices", None),
                 getattr(self.args, "critic_devices", None),
                 use_separate_critic=self.args.use_separate_critic,
@@ -208,10 +230,9 @@ class IACTrainer(ActorCriticTrainerBase):
                 getattr(self.args, "agent_devices", None),
                 getattr(self.args, "critic_devices", None),
             )
-            self.agent_devices = [single_device] * self.args.num_agents
-            self.critic_devices = [single_device] * self.args.num_agents
+            self.agent_devices = [single_device] * self.num_agents
+            self.critic_devices = [single_device] * self.num_agents
         self.device = self.agent_devices[0]
-        self.dist_env = local_context(self.device)
 
         self.agents: List[CausalLMWithValueHead] = []
         self.critics: List[CausalLMWithValueHead] = []
@@ -221,9 +242,9 @@ class IACTrainer(ActorCriticTrainerBase):
             self.tokenizers = tokenizers
             self.tokenizer = tokenizers[0] if tokenizers else None
         else:
-            self.tokenizers = [tokenizers] * self.args.num_agents
+            self.tokenizers = [tokenizers] * self.num_agents
             self.tokenizer = tokenizers
-        self.formatters = build_formatters(formatters, self.args.num_agents)
+        self.formatters = build_formatters(formatters, self.num_agents)
         try:
             self._reward_signature = inspect.signature(reward_func)
         except (TypeError, ValueError):
@@ -234,7 +255,7 @@ class IACTrainer(ActorCriticTrainerBase):
             kind="agents",
             model=agent_model,
             models=agents,
-            expected_count=self.args.num_agents,
+            expected_count=self.num_agents,
             model_label="agent_model",
         )
         actor_model_kwargs = resolve_model_kwargs(
@@ -280,7 +301,7 @@ class IACTrainer(ActorCriticTrainerBase):
                 kind="critics",
                 model=critic_model,
                 models=critics,
-                expected_count=self.args.num_agents,
+                expected_count=self.num_agents,
                 model_label="critic_model",
             )
             for idx, critic_source in enumerate(critic_sources):
@@ -322,7 +343,7 @@ class IACTrainer(ActorCriticTrainerBase):
             self.reference_devices = resolve_reference_devices(
                 self.args,
                 self.agent_devices,
-                self.args.num_agents,
+                self.num_agents,
             )
             if actor_sources and all(isinstance(src, str) for src in actor_sources):
                 self.reference_models = load_reference_models_from_sources(
@@ -368,11 +389,11 @@ class IACTrainer(ActorCriticTrainerBase):
                 self.critic_optimizers.append(optimizer)
 
         self.env_step = 0
-        self.rollout_buffers = [[] for _ in range(self.args.num_agents)]
+        self.rollout_buffers = [[] for _ in range(self.num_agents)]
         self.wandb_config = wandb_config
         self.wandb_initialized = False
         self._last_train_log_step = -1
-        if wandb_config is not None and self.dist_env.is_main:
+        if wandb_config is not None:
             self._init_wandb()
         self.verbose = verbose_from_wandb_config(self.wandb_config)
 
@@ -382,8 +403,6 @@ class IACTrainer(ActorCriticTrainerBase):
         return self.agent_devices[agent_idx]
 
     def _init_wandb(self) -> None:
-        if not self.dist_env.is_main:
-            return
         if self.wandb_initialized:
             return
         if self.wandb_config is None:
@@ -391,7 +410,7 @@ class IACTrainer(ActorCriticTrainerBase):
 
         config_dict: Dict[str, Any] = {
             "algorithm": self.algorithm_name,
-            "num_agents": self.args.num_agents,
+            "num_agents": self.num_agents,
             "num_turns": self.args.num_turns,
             "agent_learning_rate": self.args.agent_learning_rate,
             "critic_learning_rate": self.args.critic_learning_rate,
@@ -405,6 +424,11 @@ class IACTrainer(ActorCriticTrainerBase):
             "reference_kl_coef": reference_kl_coef(self.args),
             "reference_devices": getattr(self.args, "reference_devices", None),
         }
+
+        if self.is_centralized:
+            config_dict["collaboration_mode"] = "centralized"
+            config_dict["num_roles"] = self.centralized_collaboration.num_roles
+            config_dict["num_actor_models"] = len(self.agents)
 
         previous_run = wandb.run
         self._checkpoint_record_wandb_run(
@@ -442,6 +466,7 @@ class IACTrainer(ActorCriticTrainerBase):
         }
         if self.args.top_k is not None:
             generation_kwargs["top_k"] = self.args.top_k
+        generation_kwargs.update(self._generation_kwargs(agent_idx))
 
         generation_model = unwrap_model(agent_model)
         sequences = generation_model.generate(**generation_kwargs)
@@ -521,31 +546,7 @@ class IACTrainer(ActorCriticTrainerBase):
             "completions": completion_texts,
         }
 
-    def _reference_kl_values(
-        self,
-        agent_idx: int,
-        policy_model: CausalLMWithValueHead,
-        sequences: torch.Tensor,
-        attention_mask: torch.Tensor,
-        prompt_len: int,
-        response_lens: Sequence[int],
-    ) -> List[float]:
-        if not reference_kl_enabled(self.args):
-            return []
-        if not getattr(self, "reference_models", None):
-            raise RuntimeError(
-                "Reference KL is enabled but reference models are missing."
-            )
-        reference_model = self.reference_models[agent_idx]
-        return _sequence_kl_values(
-            policy_model,
-            reference_model,
-            sequences,
-            attention_mask,
-            prompt_len,
-            response_lens,
-            sequence_kl=reference_kl_for_sequence,
-        )
+    _reference_kl_values = reference_kl_values
 
     def _collect_rollouts(self, item: Dict[str, Any]) -> List[RolloutSample]:
         num_turns = max(1, int(getattr(self.args, "num_turns", 1)))
@@ -559,7 +560,7 @@ class IACTrainer(ActorCriticTrainerBase):
         )
         turn_prompts = [
             self._resolve_turn_prompt(item, agent_idx)
-            for agent_idx in range(self.args.num_agents)
+            for agent_idx in range(self.num_agents)
         ]
 
         def _generate_agent(agent_idx: int) -> Dict[str, Any]:
@@ -578,13 +579,13 @@ class IACTrainer(ActorCriticTrainerBase):
             self.reward_func,
             prompts,
             completions_per_agent,
-            num_agents=self.args.num_agents,
+            num_agents=self.num_agents,
             batch_items=[item],
             signature=self._reward_signature,
         )
         rewards = normalize_reward_lengths(
             [float(self.reward_processor(r)) for r in rewards],
-            num_agents=self.args.num_agents,
+            num_agents=self.num_agents,
             num_generations=num_ret,
             algorithm="IAC",
         )
@@ -645,11 +646,11 @@ class IACTrainer(ActorCriticTrainerBase):
         if self.external_transition is None:
             raise ValueError("external_transition is required for multi-turn IAC.")
 
-        prompt_history = [[] for _ in range(self.args.num_agents)]
-        response_history = [[] for _ in range(self.args.num_agents)]
-        previous_completions: List[Optional[str]] = [None] * self.args.num_agents
+        prompt_history = [[] for _ in range(self.num_agents)]
+        response_history = [[] for _ in range(self.num_agents)]
+        previous_completions: List[Optional[str]] = [None] * self.num_agents
         per_agent_samples: List[List[RolloutSample]] = [
-            [] for _ in range(self.args.num_agents)
+            [] for _ in range(self.num_agents)
         ]
         rollouts: List[RolloutSample] = []
         value_discount = float(getattr(self.args, "discount", 1.0))
@@ -658,19 +659,19 @@ class IACTrainer(ActorCriticTrainerBase):
             if turn_idx == 0:
                 turn_prompts = [
                     self._resolve_turn_prompt(item, agent_idx)
-                    for agent_idx in range(self.args.num_agents)
+                    for agent_idx in range(self.num_agents)
                 ]
             else:
                 transition_result = self.external_transition(
                     prompt=item.get("prompt", ""),
                     agent_completions=previous_completions,
-                    num_agents=self.args.num_agents,
+                    num_agents=self.num_agents,
                     prompt_history_per_agent=prompt_history,
                     response_history_per_agent=response_history,
                 )
                 if (
                     not isinstance(transition_result, (list, tuple))
-                    or len(transition_result) != self.args.num_agents
+                    or len(transition_result) != self.num_agents
                 ):
                     raise ValueError(
                         "External transition must return per-agent prompts"
@@ -680,7 +681,7 @@ class IACTrainer(ActorCriticTrainerBase):
                     self._resolve_turn_prompt(
                         item, agent_idx, external_prompt=external_prompts[agent_idx]
                     )
-                    for agent_idx in range(self.args.num_agents)
+                    for agent_idx in range(self.num_agents)
                 ]
 
             completions_per_agent: List[List[str]] = []
@@ -700,13 +701,13 @@ class IACTrainer(ActorCriticTrainerBase):
                 self.reward_func,
                 turn_prompts,
                 completions_per_agent,
-                num_agents=self.args.num_agents,
+                num_agents=self.num_agents,
                 batch_items=[item],
                 signature=self._reward_signature,
             )
             rewards = normalize_reward_lengths(
                 [float(self.reward_processor(r)) for r in rewards],
-                num_agents=self.args.num_agents,
+                num_agents=self.num_agents,
                 num_generations=1,
                 algorithm="IAC",
             )
@@ -759,7 +760,7 @@ class IACTrainer(ActorCriticTrainerBase):
                 if mean_reward > float(term_threshold):
                     break
 
-        for agent_idx in range(self.args.num_agents):
+        for agent_idx in range(self.num_agents):
             traj = per_agent_samples[agent_idx]
             for t, sample in enumerate(traj):
                 r = float(sample.returns.view(-1)[0].item())
@@ -771,7 +772,7 @@ class IACTrainer(ActorCriticTrainerBase):
                 sample.metadata["adv_target"] = torch.tensor([target]).cpu()
                 sample.metadata["value_target"] = torch.tensor([target]).cpu()
 
-        for agent_idx in range(self.args.num_agents):
+        for agent_idx in range(self.num_agents):
             future = 0.0
             for sample in reversed(per_agent_samples[agent_idx]):
                 immediate = float(sample.returns.view(-1)[0].item())
@@ -878,6 +879,13 @@ class IACTrainer(ActorCriticTrainerBase):
         value_losses: List[torch.Tensor] = []
         agent_device = self.agent_devices[agent_idx]
         critic_device = self._critic_device(agent_idx)
+        per_sample = getattr(self.args, "per_sample_backward", False)
+        if per_sample:
+            if self.args.use_separate_critic and critic_optimizer is None:
+                raise RuntimeError("Critic optimizer missing.")
+            agent_optimizer.zero_grad()
+            if critic_optimizer is not None:
+                critic_optimizer.zero_grad()
 
         for sample in batch:
             sequences = sample.full_input_ids.to(agent_device).unsqueeze(0)
@@ -960,9 +968,24 @@ class IACTrainer(ActorCriticTrainerBase):
             else:
                 value_error = (value_target - value) ** 2
 
+            if per_sample:
+                actor_share, value_share = self._sample_loss_shares(
+                    policy_loss, value_error, len(batch)
+                )
+                if self.args.use_separate_critic:
+                    actor_share.backward()
+                    value_share.backward()
+                else:
+                    (actor_share + value_share).backward()
+                continue
             actor_losses.append(policy_loss)
             value_losses.append(value_error)
 
+        if per_sample:
+            agent_optimizer.step()
+            if self.args.use_separate_critic:
+                critic_optimizer.step()
+            return
         actor_loss = torch.stack(actor_losses).mean()
         value_loss = torch.stack(value_losses).mean()
         if not torch.isfinite(actor_loss) or not torch.isfinite(value_loss):
@@ -1040,10 +1063,8 @@ class IACTrainer(ActorCriticTrainerBase):
         return averaged
 
     def save_model(self, output_dir: str) -> None:
-        if not self.dist_env.is_main:
-            return
         os.makedirs(output_dir, exist_ok=True)
-        if self.args.num_agents == 1:
+        if self.num_agents == 1:
             actor = unwrap_model(self.agents[0])
             actor.model.save_pretrained(output_dir)
             if actor.value_head is not None:
@@ -1085,7 +1106,7 @@ class IACTrainer(ActorCriticTrainerBase):
                     )
 
         if self.tokenizers:
-            if self.args.num_agents == 1:
+            if self.num_agents == 1:
                 self.tokenizers[0].save_pretrained(output_dir)
             else:
                 for idx, tok in enumerate(self.tokenizers):

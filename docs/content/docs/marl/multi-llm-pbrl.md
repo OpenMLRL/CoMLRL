@@ -14,7 +14,7 @@ aliases:
   - /docs/user-guide/multi-agent-preference-learning/
 ---
 
-Multi-agent PbRL trains collaborating LLM agents from preferences between their joint responses. CoMLRL builds the preference data from task items and learns from it with one of two algorithms: **MARLHF** fits a joint reward model and then trains the policies with RL, while **MADPO** optimizes the policies directly from the preferences. `MARLHFTrainer`, `MADPOTrainer`, and their iterative variants `MARLHFIterTrainer` and `MADPOIterTrainer` are available from `comlrl.trainers.preference`.
+Multi-agent PbRL trains collaborating LLM agents from preferences between their joint responses. CoMLRL builds the preference data from task items and learns from it with one of two algorithms: **MARLHF** fits a joint reward model and then trains the policies with RL, while **MADPO** optimizes the policies directly from the preferences. `MARLHFTrainer`, `MADPOTrainer`, and their iterative variants `MARLHFIterTrainer` and `MADPOIterTrainer` are available from `comlrl.trainers.pbrl`.
 
 {{% hint warning %}}
 All four trainers currently require `num_turns=1` and aligned joint responses (`joint_mode="aligned"`). An iteration of the iterative trainers is a round of data collection and training, not a dialog turn.
@@ -143,6 +143,7 @@ The `history` source saves policy checkpoints automatically. The two sides may s
 - `comparator_devices`: Device placement for local comparator models
 - `comparator_generation_mode`: `"decentralized"` (default) or `"centralized"`
 - `comparator_centralized_agent_index`: Role whose actor, checkpoint, or model writes a centralized comparator's joint response; defaults to 0, which a centralized actor requires
+- `comparator_centralized_max_new_tokens`: Token budget of a local centralized comparator's joint response, which holds every agent's output; defaults to `max_new_tokens`
 - `policy_checkpoint_dir`: Optional actor-checkpoint location; setting it also saves checkpoints for the other sources
 {{% /hint %}}
 
@@ -245,7 +246,7 @@ Historical modes assign each of the `preference_replay_sample_size` draws to a d
 `current` rejects `preference_replay_sample_size` and `preference_replay_lambda` and accepts `preference_replay_k` only as `None` or 1. The following configuration instead samples 256 pairs from all rounds, weighted toward recent ones:
 
 ```python
-from comlrl.trainers.preference import MADPOIterConfig
+from comlrl.trainers.pbrl import MADPOIterConfig
 
 args = MADPOIterConfig(
     num_agents=2,

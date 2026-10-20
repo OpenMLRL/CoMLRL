@@ -9,8 +9,6 @@ import torch
 
 from comlrl.trainers.actor_critic import IACConfig, IACTrainer, MAACConfig, MAACTrainer
 from comlrl.trainers.reinforce import (
-    CentralizedMAGRPOConfig,
-    CentralizedMAGRPOTrainer,
     MAGRPOConfig,
     MAGRPOTrainer,
     MAREINFORCEConfig,
@@ -134,10 +132,12 @@ def make_trainer(variant, tokenizer, seed, device):
         formatters=format_prompt,
     )
     if variant == "centralized-magrpo":
-        trainer = CentralizedMAGRPOTrainer(
+        trainer = MAGRPOTrainer(
             agents=[model_for(tokenizer)],
             num_agents=2,
-            args=CentralizedMAGRPOConfig(**common),
+            args=MAGRPOConfig(
+                **{**common, "collaboration_mode": "centralized", "num_turns": 1}
+            ),
             centralized_adapter=SplitRoles(),
             **kwargs,
         )

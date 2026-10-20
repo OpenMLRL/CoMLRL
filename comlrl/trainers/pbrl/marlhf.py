@@ -1,6 +1,5 @@
 import copy
 import gc
-import numbers
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, Union
@@ -11,19 +10,31 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.overrides import TorchFunctionMode
 from tqdm import tqdm  # type: ignore
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    GenerationConfig,
+    PreTrainedTokenizerBase,
+)
 
+from comlrl.schedulers import DeviceScheduler
+from comlrl.schedulers.device_scheduler import normalize_parallel_training
+from comlrl.utils.checkpoint import (
+    _validate_state,
+    capture_rng_state,
+    restore_rng_state,
+    restore_trainer_state,
+)
+from comlrl.utils.model_loading import resolve_model_kwargs
 from comlrl.utils.tokenizer_utils import ensure_pad_token
 
-from .collaboration import joint_policy_gradient_loss
+from ..centralized import joint_policy_gradient_loss
 from .madpo import MADPOConfig, MADPOTrainer, PreferencePair
 from ..actor_critic import IACConfig, IACTrainer, MAACConfig, MAACTrainer
 from ..reinforce.magrpo import MAGRPOTrainer
 
 
-_RL_ALGORITHM_ALIASES = {
-    "mareforce": "mareinforce",
-}
 _MAGRPO_ADVANTAGE_MODES = {
     "magrpo": "mean",
     "mareinforce": "raw",
@@ -34,8 +45,7 @@ _ACTOR_CRITIC_ALGORITHMS = {"maac", "iac"}
 
 
 def _normalize_rl_algorithm(name: Optional[str]) -> str:
-    algorithm = str(name or "magrpo").strip().lower()
-    return _RL_ALGORITHM_ALIASES.get(algorithm, algorithm)
+    return str(name or "magrpo").strip().lower()
 
 
 def _apply_magrpo_family_args(args: Any) -> None:
@@ -166,6 +176,7 @@ class MARLHFTrainer(MADPOTrainer):
 
     default_config_cls = MARLHFConfig
     algorithm_name = "MARLHF"
+    _checkpoint_progress_kind = "marlhf"
 
     def __init__(
         self,
@@ -205,27 +216,17 @@ class MARLHFTrainer(MADPOTrainer):
         checkpoint_total_limit=None,
         **kwargs,
     ):
-        if (
-            isinstance(checkpoint_interval, bool)
-            or not isinstance(checkpoint_interval, numbers.Integral)
-            or checkpoint_interval < 1
-        ):
-            raise ValueError("checkpoint_interval must be a positive integer.")
-        if (
-            resume_from_checkpoint is not None
-            or checkpoint_dir is not None
-            or checkpoint_interval != 1
-            or checkpoint_total_limit is not None
-        ):
-            with self._checkpoint_context(
-                resume_from_checkpoint=resume_from_checkpoint,
-                checkpoint_dir=checkpoint_dir,
-                checkpoint_interval=checkpoint_interval,
-                checkpoint_total_limit=checkpoint_total_limit,
-            ):
+        checkpointing = self._checkpoint_arguments(
+            resume_from_checkpoint,
+            checkpoint_dir,
+            checkpoint_interval,
+            checkpoint_total_limit,
+        )
+        if checkpointing is not None:
+            with self._checkpoint_context(**checkpointing):
                 return self._train_marlhf_checkpointed(**kwargs)
 
-        self._checkpoint_untracked_preference = True
+        self._checkpoint_untracked = True
         if int(self.args.num_turns) != 1:
             raise ValueError("MARLHF currently supports num_turns=1 only.")
 
@@ -240,11 +241,6 @@ class MARLHFTrainer(MADPOTrainer):
         self._reward_model_active = True
         self._train_online_rl(**kwargs)
 
-    def _checkpoint_validate_progress(self, state):
-        from .checkpointing import validate_preference_progress
-
-        validate_preference_progress(self, state, "marlhf")
-
     def _checkpoint_validate_extra_state(self, state, checkpoint_dir):
         super()._checkpoint_validate_extra_state(state, checkpoint_dir)
         child_state = state.get("actor_critic")
@@ -252,12 +248,6 @@ class MARLHFTrainer(MADPOTrainer):
             return
         if self.args.rl_algorithm not in _ACTOR_CRITIC_ALGORITHMS:
             raise ValueError("Unexpected MARLHF actor-critic checkpoint state.")
-
-        from comlrl.utils.checkpoint import (
-            _validate_state,
-            capture_rng_state,
-            restore_rng_state,
-        )
 
         # AC constructors can move supplied models and attach heads. A meta
         # probe checks their structure without allocating another set of LLM
@@ -371,10 +361,8 @@ class MARLHFTrainer(MADPOTrainer):
 
     def _checkpoint_prepare_meta_critics(self):
         """Construct identifier-based critics from configuration, without weights."""
-        from transformers import AutoConfig, GenerationConfig
         from ..actor_critic.iac import IACTrainer as BuiltinIACTrainer
         from ..actor_critic.maac import MAACTrainer as BuiltinMAACTrainer
-        from comlrl.utils.model_loading import resolve_model_kwargs
 
         # Replacement factories keep their original inputs and CPU fallback.
         # The built-in factory accepts these same preloaded model objects.
@@ -410,9 +398,6 @@ class MARLHFTrainer(MADPOTrainer):
 
     def _checkpoint_actor_critic_device_plan(self, child, args):
         """Resolve the online child's real placement, not its probe devices."""
-        from comlrl.schedulers import DeviceScheduler
-        from comlrl.schedulers.device_scheduler import normalize_parallel_training
-
         if normalize_parallel_training(args.parallel_training) == "mp":
             if self.args.rl_algorithm == "maac":
                 agent_devices = DeviceScheduler.resolve_devices(
@@ -595,8 +580,6 @@ class MARLHFTrainer(MADPOTrainer):
             and getattr(self, "_checkpoint_pending_ac_state", None) is not None
         )
         if restoring_child:
-            from comlrl.utils.checkpoint import capture_rng_state, restore_rng_state
-
             rng_before_init = capture_rng_state()
         ac_trainer = self._create_actor_critic_trainer()
         if _checkpoint_commit is None:
@@ -604,8 +587,6 @@ class MARLHFTrainer(MADPOTrainer):
         else:
             self._checkpoint_ac_trainer = ac_trainer
             if restoring_child:
-                from comlrl.utils.checkpoint import restore_trainer_state
-
                 restore_trainer_state(
                     ac_trainer,
                     self._checkpoint_pending_ac_state,

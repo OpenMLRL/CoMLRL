@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from comlrl.utils import (
+    DistributedContext,
     RewardProcessors,
     build_formatters,
     call_reward_function,
@@ -158,7 +159,7 @@ def test_wandb_init_kwargs_keeps_every_config_section():
     }
 
 
-def test_local_context_defaults_to_single_process():
-    ctx = local_context(torch.device("cpu"))
-    assert ctx.is_main is True
-    assert ctx.device == torch.device("cpu")
+def test_local_context_is_a_deprecated_single_process_context():
+    with pytest.warns(DeprecationWarning, match="deprecated"):
+        ctx = local_context(torch.device("cpu"))
+    assert ctx == DistributedContext(is_main=True, device=torch.device("cpu"))
