@@ -1,5 +1,4 @@
 from collections import defaultdict
-import numbers
 from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -536,24 +535,14 @@ class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
         checkpoint_total_limit=None,
     ) -> None:
         """Train with optional resume and checkpointing at complete epoch boundaries."""
-        if (
-            isinstance(checkpoint_interval, bool)
-            or not isinstance(checkpoint_interval, numbers.Integral)
-            or checkpoint_interval < 1
-        ):
-            raise ValueError("checkpoint_interval must be a positive integer.")
-        if (
-            resume_from_checkpoint is not None
-            or checkpoint_dir is not None
-            or checkpoint_interval != 1
-            or checkpoint_total_limit is not None
-        ):
-            with self._checkpoint_context(
-                resume_from_checkpoint=resume_from_checkpoint,
-                checkpoint_dir=checkpoint_dir,
-                checkpoint_interval=checkpoint_interval,
-                checkpoint_total_limit=checkpoint_total_limit,
-            ):
+        checkpointing = self._checkpoint_arguments(
+            resume_from_checkpoint,
+            checkpoint_dir,
+            checkpoint_interval,
+            checkpoint_total_limit,
+        )
+        if checkpointing is not None:
+            with self._checkpoint_context(**checkpointing):
                 return self._train_checkpoint_epochs(
                     self._checkpoint_progress, self._checkpoint_commit
                 )

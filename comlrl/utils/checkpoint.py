@@ -1077,6 +1077,34 @@ def _preflight_checkpoint_directory(checkpoint_dir, metadata=None):
 class TrainingCheckpointMixin:
     """Explicit checkpoint APIs; ordinary training performs no checkpoint I/O."""
 
+    def _checkpoint_arguments(
+        self,
+        resume_from_checkpoint,
+        checkpoint_dir,
+        checkpoint_interval,
+        checkpoint_total_limit,
+    ):
+        """Validate ``train``'s checkpoint arguments; return them when any is set."""
+        if (
+            isinstance(checkpoint_interval, bool)
+            or not isinstance(checkpoint_interval, numbers.Integral)
+            or checkpoint_interval < 1
+        ):
+            raise ValueError("checkpoint_interval must be a positive integer.")
+        if (
+            resume_from_checkpoint is None
+            and checkpoint_dir is None
+            and checkpoint_interval == 1
+            and checkpoint_total_limit is None
+        ):
+            return None
+        return {
+            "resume_from_checkpoint": resume_from_checkpoint,
+            "checkpoint_dir": checkpoint_dir,
+            "checkpoint_interval": checkpoint_interval,
+            "checkpoint_total_limit": checkpoint_total_limit,
+        }
+
     def _checkpoint_init_wandb(self):
         """Initialize resumed logging without advancing training RNG streams."""
         if getattr(self, "wandb_config", None) is None or getattr(
