@@ -121,6 +121,14 @@ def _validate_iterative_config(args: Any) -> None:
         args.comparator_centralized_agent_index = int(
             args.comparator_centralized_agent_index
         )
+    if args.comparator_centralized_max_new_tokens is not None:
+        if int(args.comparator_centralized_max_new_tokens) < 1:
+            raise ValueError(
+                "comparator_centralized_max_new_tokens must be >= 1 or null."
+            )
+        args.comparator_centralized_max_new_tokens = int(
+            args.comparator_centralized_max_new_tokens
+        )
     if args.comparator_num_candidates is not None:
         if int(args.comparator_num_candidates) < 1:
             raise ValueError("comparator_num_candidates must be >= 1 or null.")
@@ -275,6 +283,7 @@ class _IterativePreferenceConfig:
     comparator_policy: str = "current"
     comparator_generation_mode: str = "decentralized"
     comparator_centralized_agent_index: int = 0
+    comparator_centralized_max_new_tokens: Optional[int] = None
     comparator_model_name: Optional[str] = None
     comparator_agents: Optional[Sequence[str]] = None
     comparator_devices: Optional[Union[str, Sequence[str]]] = None
@@ -1913,7 +1922,11 @@ class MADPOIterTrainer(MADPOTrainer):
                 [batch_item],
                 agent_idx=agent_idx,
                 num_return_sequences=num_candidates,
-                max_new_tokens=self.args.max_new_tokens,
+                # One joint answer holds every agent's output.
+                max_new_tokens=(
+                    self.args.comparator_centralized_max_new_tokens
+                    or self.args.max_new_tokens
+                ),
                 prompts_override=[prompt],
                 **kwargs,
             )

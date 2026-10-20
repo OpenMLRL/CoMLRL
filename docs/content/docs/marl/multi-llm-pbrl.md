@@ -143,6 +143,7 @@ The `history` source saves policy checkpoints automatically. The two sides may s
 - `comparator_devices`: Device placement for local comparator models
 - `comparator_generation_mode`: `"decentralized"` (default) or `"centralized"`
 - `comparator_centralized_agent_index`: Role whose actor, checkpoint, or model writes a centralized comparator's joint response; defaults to 0, which a centralized actor requires
+- `comparator_centralized_max_new_tokens`: Token budget of a local centralized comparator's joint response, which holds every agent's output; defaults to `max_new_tokens`
 - `policy_checkpoint_dir`: Optional actor-checkpoint location; setting it also saves checkpoints for the other sources
 {{% /hint %}}
 

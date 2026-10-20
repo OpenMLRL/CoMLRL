@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -53,6 +54,34 @@ def test_iterative_config_allows_generic_centralized_agent_counts():
         comparator_centralized_agent_index=2,
     )
     assert config.num_agents == 3
+
+
+@pytest.mark.parametrize("budget,expected", [(None, 8), (24, 24)])
+def test_centralized_comparator_answer_has_its_own_budget(budget, expected):
+    trainer = MADPOIterTrainer.__new__(MADPOIterTrainer)
+    trainer.num_agents = 2
+    trainer.centralized_comparator_adapter = _StubAdapter()
+    trainer.args = MADPOIterConfig(
+        agent_devices="cpu",
+        max_new_tokens=8,
+        comparator_generation_mode="centralized",
+        comparator_centralized_max_new_tokens=budget,
+    )
+    trainer._comparator_rng = lambda agent, **kwargs: nullcontext()
+    budgets = []
+
+    def generate(agent, batch_items, **kwargs):
+        budgets.append(kwargs["max_new_tokens"])
+        return {"completions": [["joint"]]}
+
+    trainer._generate_completions = generate
+    outputs = trainer._generate_centralized_policy_output_for_agent(
+        "agent", {"id": "item"}, prompt="centralized prompt", num_candidates=1
+    )
+    assert budgets == [expected]
+    assert outputs[1]["completions"] == [["joint-agent-1"]]
+    with pytest.raises(ValueError, match="comparator_centralized_max_new_tokens"):
+        MADPOIterConfig(agent_devices="cpu", comparator_centralized_max_new_tokens=0)
 
 
 def test_centralized_split_preserves_candidate_and_agent_alignment():
