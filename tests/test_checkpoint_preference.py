@@ -386,7 +386,7 @@ def test_plain_preference_training_does_not_retain_checkpoint_data(tmp_path, kin
 def test_extra_state_rejects_arbitrary_attributes():
     trainer = toy_trainer()
     with pytest.raises(ValueError, match="extra-state"):
-        trainer._restore_checkpoint_extra_state({"agents": []}, ".")
+        trainer._checkpoint_restore_extra_state({"agents": []}, ".")
     assert len(trainer.agents) == 1
 
 

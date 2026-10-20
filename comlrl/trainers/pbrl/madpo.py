@@ -347,7 +347,7 @@ class MADPOTrainer(MAGRPOTrainer):
     # Checkpoint hooks looked up by comlrl.utils.checkpoint (see checkpoint_extras).
     _checkpoint_progress_kind = "madpo"
     _checkpoint_extra_state = preference_extra_state
-    _restore_checkpoint_extra_state = restore_preference_extra_state
+    _checkpoint_restore_extra_state = restore_preference_extra_state
     _checkpoint_save_assets = save_preference_assets
     _checkpoint_load_assets = load_preference_assets
     _checkpoint_prune_assets = staticmethod(prune_preference_asset_pool)

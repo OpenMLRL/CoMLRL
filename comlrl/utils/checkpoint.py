@@ -943,7 +943,7 @@ def restore_trainer_state(trainer, state, checkpoint_dir=None, restore_rng=True)
     assets_hook = getattr(trainer, "_checkpoint_load_assets", None)
     if callable(assets_hook) and "assets" in state:
         assets_hook(checkpoint_dir, state["assets"])
-    extra_hook = getattr(trainer, "_restore_checkpoint_extra_state", None)
+    extra_hook = getattr(trainer, "_checkpoint_restore_extra_state", None)
     if callable(extra_hook):
         extra_hook(state["extra"], checkpoint_dir)
     _restore_wandb_identity(trainer, state.get("wandb"))
