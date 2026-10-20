@@ -15,12 +15,11 @@ from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_kwargs, resolve_model_sources
 from comlrl.utils.reference_kl import (
-    _sequence_kl_values,
     clone_reference_models,
     load_reference_models_from_sources,
     reference_kl_coef,
     reference_kl_enabled,
-    reference_kl_for_sequence,
+    reference_kl_values,
     resolve_reference_devices,
     validate_reference_kl_config,
 )
@@ -503,31 +502,7 @@ class MAACTrainer(ActorCriticTrainerBase):
             "completions": completion_texts,
         }
 
-    def _reference_kl_values(
-        self,
-        agent_idx: int,
-        policy_model: CausalLMWithValueHead,
-        sequences: torch.Tensor,
-        attention_mask: torch.Tensor,
-        prompt_len: int,
-        response_lens: Sequence[int],
-    ) -> List[float]:
-        if not reference_kl_enabled(self.args):
-            return []
-        if not getattr(self, "reference_models", None):
-            raise RuntimeError(
-                "Reference KL is enabled but reference models are missing."
-            )
-        reference_model = self.reference_models[agent_idx]
-        return _sequence_kl_values(
-            policy_model,
-            reference_model,
-            sequences,
-            attention_mask,
-            prompt_len,
-            response_lens,
-            sequence_kl=reference_kl_for_sequence,
-        )
+    _reference_kl_values = reference_kl_values
 
     def _collect_rollouts(self, item: Dict[str, Any]) -> List[RolloutSample]:
         num_turns = max(1, int(getattr(self.args, "num_turns", 1)))

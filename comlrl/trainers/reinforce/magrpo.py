@@ -25,12 +25,11 @@ from comlrl.utils.model_loading import (
     resolve_model_sources,
 )
 from comlrl.utils.reference_kl import (
-    _sequence_kl_values,
     clone_reference_models,
     load_reference_models_from_sources,
     reference_kl_coef,
     reference_kl_enabled,
-    reference_kl_for_sequence,
+    reference_kl_values,
     resolve_reference_devices,
     validate_reference_kl_config,
 )
@@ -1431,31 +1430,7 @@ class MAGRPOTrainer(CollaborationModeMixin, TrainingCheckpointMixin):
             "reference_kls": list(completions_data.get("reference_kls") or []),
         }
 
-    def _reference_kl_values(
-        self,
-        agent_idx: int,
-        policy_model: Any,
-        sequences: torch.Tensor,
-        attention_mask: torch.Tensor,
-        prompt_len: int,
-        response_lens: Sequence[int],
-    ) -> List[float]:
-        if not reference_kl_enabled(self.args):
-            return []
-        if not getattr(self, "reference_models", None):
-            raise RuntimeError(
-                "Reference KL is enabled but reference models are missing."
-            )
-        reference_model = self.reference_models[agent_idx]
-        return _sequence_kl_values(
-            policy_model,
-            reference_model,
-            sequences,
-            attention_mask,
-            prompt_len,
-            response_lens,
-            sequence_kl=reference_kl_for_sequence,
-        )
+    _reference_kl_values = reference_kl_values
 
     def _apply_reference_kl_to_returns(
         self, returns_tensor: torch.Tensor, completions_data: Dict[str, Any]

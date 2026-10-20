@@ -1,6 +1,5 @@
 """Reference-model KL penalties for MAGRPO, IAC and MAAC."""
 
-import importlib
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +11,7 @@ from comlrl.trainers.actor_critic.iac import IACConfig
 from comlrl.trainers.actor_critic.maac import MAACConfig, MAACTrainer
 from comlrl.trainers.reinforce import MAGRPOTrainer
 from comlrl.trainers.reinforce.magrpo import MAGRPOConfig
+from comlrl.utils import reference_kl
 from comlrl.utils.reference_kl import (
     reference_kl_for_sequence,
     resolve_reference_devices,
@@ -199,9 +199,7 @@ def test_reference_kl_values_disabled_or_missing_models(trainer_cls):
 
 @pytest.mark.parametrize("trainer_cls", TRAINERS)
 @pytest.mark.parametrize("response_lens", [[], [2], [2, 1, 3]])
-def test_reference_kl_values_keep_order_and_module_hook(
-    trainer_cls, response_lens, monkeypatch
-):
+def test_reference_kl_values_keep_order(trainer_cls, response_lens, monkeypatch):
     trainer = trainer_cls.__new__(trainer_cls)
     trainer.args = SimpleNamespace(reference_kl_enabled=True)
     trainer.reference_models = [object(), object()]
@@ -221,8 +219,7 @@ def test_reference_kl_values_keep_order_and_module_hook(
         calls.append((prompt_len, response_len))
         return torch.tensor([idx + 0.25, 100.0])
 
-    module = importlib.import_module(trainer_cls.__module__)
-    monkeypatch.setattr(module, "reference_kl_for_sequence", sequence_kl)
+    monkeypatch.setattr(reference_kl, "reference_kl_for_sequence", sequence_kl)
     values = trainer._reference_kl_values(1, policy, ids, mask, 2, response_lens)
     count = min(len(ids), len(response_lens))
     assert values == [idx + 0.25 for idx in range(count)]
