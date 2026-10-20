@@ -22,6 +22,16 @@ from ..centralized import (
     joint_sequence_log_prob,
     validate_collaboration_mode,
 )
+from .checkpoint_extras import (
+    load_preference_assets,
+    preference_extra_state,
+    prune_preference_asset_pool,
+    restore_preference_extra_state,
+    save_preference_assets,
+    validate_preference_assets,
+    validate_preference_extra_state,
+    validate_preference_progress,
+)
 
 
 @register_checkpoint_record
@@ -345,45 +355,20 @@ class MADPOTrainer(MAGRPOTrainer):
         if not generated and start_epoch == int(self.args.num_train_epochs):
             commit_epoch(start_epoch, updates_seen)
 
-    def _checkpoint_extra_state(self):
-        from .checkpoint_extras import preference_extra_state
-
-        return preference_extra_state(self)
-
-    def _restore_checkpoint_extra_state(self, state, checkpoint_dir):
-        from .checkpoint_extras import restore_preference_extra_state
-
-        restore_preference_extra_state(self, state, checkpoint_dir)
-
-    def _checkpoint_save_assets(self, checkpoint_dir):
-        from .checkpoint_extras import save_preference_assets
-
-        return save_preference_assets(self, checkpoint_dir)
-
-    def _checkpoint_load_assets(self, checkpoint_dir, assets):
-        from .checkpoint_extras import load_preference_assets
-
-        load_preference_assets(self, checkpoint_dir, assets)
-
-    def _checkpoint_prune_assets(self, checkpoint_root):
-        from .checkpoint_extras import prune_preference_asset_pool
-
-        prune_preference_asset_pool(checkpoint_root)
-
-    def _checkpoint_validate_assets(self, checkpoint_dir, assets):
-        from .checkpoint_extras import validate_preference_assets
-
-        validate_preference_assets(self, checkpoint_dir, assets)
+    # Checkpoint hooks looked up by comlrl.utils.checkpoint (see checkpoint_extras).
+    _checkpoint_progress_kind = "madpo"
+    _checkpoint_extra_state = preference_extra_state
+    _restore_checkpoint_extra_state = restore_preference_extra_state
+    _checkpoint_save_assets = save_preference_assets
+    _checkpoint_load_assets = load_preference_assets
+    _checkpoint_prune_assets = staticmethod(prune_preference_asset_pool)
+    _checkpoint_validate_assets = validate_preference_assets
 
     def _checkpoint_validate_extra_state(self, state, checkpoint_dir):
-        from .checkpoint_extras import validate_preference_extra_state
-
         validate_preference_extra_state(state)
 
     def _checkpoint_validate_progress(self, state):
-        from .checkpoint_extras import validate_preference_progress
-
-        validate_preference_progress(self, state, "madpo")
+        validate_preference_progress(self, state, self._checkpoint_progress_kind)
 
     def _train_preference_pairs(
         self,

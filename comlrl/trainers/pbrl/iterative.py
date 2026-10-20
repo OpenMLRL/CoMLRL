@@ -35,6 +35,7 @@ from .madpo import (
     PreferencePair,
 )
 from ..centralized import CentralizedComparatorAdapter
+from .checkpoint_extras import train_iterations_checkpointed
 from .marlhf import MARLHFConfig, MARLHFTrainer
 from .output_paths import resolve_output_path
 
@@ -348,11 +349,7 @@ class MADPOIterTrainer(MADPOTrainer):
 
     default_config_cls = MADPOIterConfig
     algorithm_name = "MADPOIter"
-
-    def _checkpoint_validate_progress(self, state):
-        from .checkpoint_extras import validate_preference_progress
-
-        validate_preference_progress(self, state, "madpo_iter")
+    _checkpoint_progress_kind = "madpo_iter"
 
     def __init__(
         self,
@@ -625,8 +622,6 @@ class MADPOIterTrainer(MADPOTrainer):
             or checkpoint_interval != 1
             or checkpoint_total_limit is not None
         ):
-            from .checkpoint_extras import train_iterations_checkpointed
-
             with self._checkpoint_context(
                 resume_from_checkpoint=resume_from_checkpoint,
                 checkpoint_dir=checkpoint_dir,
@@ -2860,11 +2855,7 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
 
     default_config_cls = MARLHFIterConfig
     algorithm_name = "MARLHFIter"
-
-    def _checkpoint_validate_progress(self, state):
-        from .checkpoint_extras import validate_preference_progress
-
-        validate_preference_progress(self, state, "marlhf_iter")
+    _checkpoint_progress_kind = "marlhf_iter"
 
     def _preference_scoring_raw_and_processed_rewards(
         self,
@@ -2908,8 +2899,6 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
             or checkpoint_interval != 1
             or checkpoint_total_limit is not None
         ):
-            from .checkpoint_extras import train_iterations_checkpointed
-
             with self._checkpoint_context(
                 resume_from_checkpoint=resume_from_checkpoint,
                 checkpoint_dir=checkpoint_dir,

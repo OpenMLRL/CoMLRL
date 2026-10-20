@@ -11,7 +11,9 @@ import tempfile
 import threading
 
 import torch
+from transformers import AutoTokenizer
 
+from comlrl.utils.checkpoint import capture_trainer_state
 from comlrl.utils.distributed import unwrap_model
 from .output_paths import resolve_output_path
 
@@ -95,7 +97,7 @@ def validate_preference_progress(trainer, state, kind):
         if type(progress[name]) is not int or progress[name] < 0:
             raise ValueError(f"Invalid preference checkpoint counter: {name}")
     if kind == "madpo":
-        from .madpo import PreferencePair
+        from .madpo import PreferencePair  # madpo imports this module
 
         pairs = progress["preference_pairs"]
         if not isinstance(pairs, list) or not all(
@@ -146,8 +148,6 @@ def preference_extra_state(trainer):
             state[name] = getattr(trainer, name)
     child = getattr(trainer, "_checkpoint_ac_trainer", None)
     if child is not None:
-        from comlrl.utils.checkpoint import capture_trainer_state
-
         state["actor_critic"] = capture_trainer_state(child)
     elif getattr(trainer, "_checkpoint_pending_ac_state", None) is not None:
         state["actor_critic"] = trainer._checkpoint_pending_ac_state
@@ -560,7 +560,7 @@ def _copy_restored_asset(source, destination):
 
 def load_preference_assets(trainer, checkpoint_dir, manifest):
     if manifest.get("iterative"):
-        from .iterative import PreferenceReplayShard
+        from .iterative import PreferenceReplayShard  # iterative imports this module
 
         destinations = _preference_resume_destinations(trainer, checkpoint_dir)
         allocated = set()
@@ -596,8 +596,6 @@ def load_preference_assets(trainer, checkpoint_dir, manifest):
             setattr(trainer, name, str(path))
 
     if manifest.get("reward_tokenizer"):
-        from transformers import AutoTokenizer
-
         trainer.reward_tokenizer = AutoTokenizer.from_pretrained(
             str(_asset_path(checkpoint_dir, manifest["reward_tokenizer"]))
         )
