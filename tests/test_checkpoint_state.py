@@ -441,6 +441,22 @@ def test_same_shape_model_metadata_mismatch_precedes_any_mutation(
     assert_nested_equal(capture_trainer_state(target), before)
 
 
+@pytest.mark.parametrize("value,resumes", [(None, True), (4, False)])
+def test_config_field_newer_than_the_checkpoint_resumes_at_its_default(
+    tmp_path, value, resumes
+):
+    state = capture_trainer_state(TinyTrainer())
+    # A checkpoint written before this field existed has no entry for it.
+    del state["config"]["train_batch_size"]
+    target = TinyTrainer()
+    target.args.train_batch_size = value
+    if resumes:
+        restore_trainer_state(target, state, tmp_path)
+    else:
+        with pytest.raises(ValueError, match="does not match: train_batch_size"):
+            restore_trainer_state(target, state, tmp_path)
+
+
 @pytest.mark.parametrize("changed", ["vocab", "chat_template", "eos"])
 def test_tokenizer_metadata_mismatch_precedes_any_mutation(
     tmp_path, tokenizer, changed

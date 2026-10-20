@@ -6,7 +6,7 @@ compatible trainer (including datasets and callbacks), then resume its loop with
 """
 
 from contextlib import contextmanager
-from dataclasses import fields, is_dataclass
+from dataclasses import MISSING, fields, is_dataclass
 import inspect
 import hashlib
 import json
@@ -292,6 +292,26 @@ def _config(trainer):
         and key not in _PORTABLE_CONFIG_FIELDS
         and not key.endswith("_dir")
     }
+
+
+def _config_defaults(trainer):
+    """Encoded config defaults, for fields added after a checkpoint was written."""
+    args = getattr(trainer, "args", None)
+    if not is_dataclass(args):
+        return {}
+    defaults = {}
+    for field in fields(args):
+        if field.default is not MISSING:
+            default = field.default
+        elif field.default_factory is not MISSING:
+            default = field.default_factory()
+        else:
+            continue
+        try:
+            defaults[field.name] = _decode(_encode(default))
+        except TypeError:
+            continue
+    return defaults
 
 
 def _dataset_info(trainer):
@@ -751,11 +771,19 @@ def _validate_state(trainer, state, *, model_config_updates=None):
         for key, value in state["config"].items()
         if key not in _PORTABLE_CONFIG_FIELDS
     }
-    if saved_config != _config(trainer):
+    current_config = _config(trainer)
+    defaults = _config_defaults(trainer)
+    # A field added after the checkpoint was written matches at its default.
+    for key in set(current_config) - set(saved_config):
+        if key in defaults and current_config[key] == defaults[key]:
+            saved_config[key] = current_config[key]
+    if saved_config != current_config:
         changed = sorted(
             key
-            for key in set(saved_config) | set(_config(trainer))
-            if saved_config.get(key) != _config(trainer).get(key)
+            for key in set(saved_config) | set(current_config)
+            if key not in saved_config
+            or key not in current_config
+            or saved_config[key] != current_config[key]
         )
         raise ValueError(
             f"Checkpoint configuration does not match: {', '.join(changed)}"
