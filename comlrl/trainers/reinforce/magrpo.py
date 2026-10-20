@@ -768,39 +768,7 @@ class MAGRPOTrainer(CollaborationModeMixin, TrainingCheckpointMixin):
 
         if self.wandb_config is not None and not self.wandb_initialized:
             self._init_wandb()
-
-        for agent_idx, agent in enumerate(self.agents):
-            agent.to(self.agent_devices[agent_idx])
-            agent.train()
-
-        for epoch in range(0, int(self.args.num_train_epochs)):
-            dl = self.get_train_dataloader()
-            if getattr(self, "verbose", True):
-                it = enumerate(
-                    tqdm(
-                        dl,
-                        total=len(dl),
-                        desc=f"Epoch {epoch+1}/{int(self.args.num_train_epochs)}",
-                    )
-                )
-            else:
-                it = enumerate(dl)
-            for batch_idx, batch in it:
-                if int(self.args.eval_interval) > 0 and (
-                    batch_idx % int(self.args.eval_interval) == 0
-                ):
-                    _ = self.evaluate(num_eval_samples=int(self.args.eval_num_samples))
-
-                # Process single batch item (batch_size=1 enforced)
-                batch_item = batch[0]
-                self._train_step_returns(batch_item, **kwargs)
-
-            ready_agents = [
-                agent_idx
-                for agent_idx, buffer in enumerate(self.rollout_buffers)
-                if buffer
-            ]
-            self._drain_ready_buffers(ready_agents)
+        self._run_epochs(0, None, kwargs)
 
         if not getattr(self, "_checkpoint_context_active", False):
             self._checkpoint_progress = {
@@ -860,7 +828,6 @@ class MAGRPOTrainer(CollaborationModeMixin, TrainingCheckpointMixin):
 
     def _train_checkpoint_epochs(self, progress, commit, **kwargs):
         """Run complete RL epochs, optionally inside a parent trainer's context."""
-        total_epochs = int(self.args.num_train_epochs)
         # Preference subclasses have an outer cursor validator; this loop uses RL epochs.
         start_epoch = MAGRPOTrainer._checkpoint_validate_progress(
             self,
@@ -869,10 +836,13 @@ class MAGRPOTrainer(CollaborationModeMixin, TrainingCheckpointMixin):
                 "runtime": {"rollout_buffers": self.rollout_buffers},
             },
         )
-        self._on_checkpoint_train_start(start_epoch, total_epochs)
-
+        self._on_checkpoint_train_start(start_epoch, int(self.args.num_train_epochs))
         self._checkpoint_init_wandb()
+        self._run_epochs(start_epoch, commit, kwargs)
 
+    def _run_epochs(self, start_epoch, commit, generation_kwargs):
+        """Train epochs ``start_epoch`` onward; ``commit`` (if given) follows each epoch."""
+        total_epochs = int(self.args.num_train_epochs)
         for agent_idx, agent in enumerate(self.agents):
             agent.to(self.agent_devices[agent_idx])
             agent.train()
@@ -895,8 +865,9 @@ class MAGRPOTrainer(CollaborationModeMixin, TrainingCheckpointMixin):
                 ):
                     _ = self.evaluate(num_eval_samples=int(self.args.eval_num_samples))
 
+                # Process single batch item (batch_size=1 enforced)
                 batch_item = batch[0]
-                self._train_step_returns(batch_item, **kwargs)
+                self._train_step_returns(batch_item, **generation_kwargs)
 
             ready_agents = [
                 agent_idx
@@ -904,10 +875,11 @@ class MAGRPOTrainer(CollaborationModeMixin, TrainingCheckpointMixin):
                 if buffer
             ]
             self._drain_ready_buffers(ready_agents)
-            commit(
-                {"kind": "magrpo", "epoch": epoch + 1},
-                force=epoch + 1 == total_epochs,
-            )
+            if commit is not None:
+                commit(
+                    {"kind": "magrpo", "epoch": epoch + 1},
+                    force=epoch + 1 == total_epochs,
+                )
 
     def _train_step_returns(
         self,

@@ -615,34 +615,63 @@ class MADPOIterTrainer(MADPOTrainer):
             checkpoint_interval,
             checkpoint_total_limit,
         )
+        reward_model = isinstance(self, MARLHFTrainer)
         if checkpointing is not None:
             with self._checkpoint_context(**checkpointing):
-                return train_iterations_checkpointed(self, reward_model=False, **kwargs)
+                return train_iterations_checkpointed(
+                    self, reward_model=reward_model, **kwargs
+                )
 
         self._checkpoint_untracked = True
+        name = "MARLHFIter" if reward_model else "MADPOIter"
         if int(self.args.num_turns) != 1:
-            raise ValueError("MADPOIter currently supports num_turns=1 only.")
+            raise ValueError(f"{name} currently supports num_turns=1 only.")
 
         if self.wandb_config is not None and not self.wandb_initialized:
             self._init_wandb()
+        self._train_iterations(kwargs, reward_model=reward_model)
 
-        for agent_idx, agent in enumerate(self.agents):
-            agent.to(self.agent_devices[agent_idx])
-            agent.train()
+    def _train_iterations(
+        self,
+        generation_kwargs,
+        *,
+        reward_model,
+        start=0,
+        updates_seen=0,
+        total_pairs=0,
+        commit=None,
+    ):
+        """Refresh preferences and train, from iteration ``start`` to the last.
+
+        MARLHFIter (``reward_model``) retrains its reward model and then runs
+        online RL; MADPOIter runs DPO on the selected pairs. ``commit`` receives
+        the next iteration and both counters after every iteration.
+        """
+        name = "MARLHFIter" if reward_model else "MADPOIter"
+        total_iterations = int(self.args.num_iterations)
+        if not reward_model:
+            for agent_idx, agent in enumerate(self.agents):
+                agent.to(self.agent_devices[agent_idx])
+                agent.train()
 
         self._maybe_save_initial_policy_checkpoint()
-        updates_seen = 0
-        total_pairs = 0
-        for iteration_idx in range(int(self.args.num_iterations)):
+        for iteration_idx in range(start, total_iterations):
+            if reward_model:
+                self._reward_model_active = False
+                self._evaluating_with_task_reward = False
+                if self.args.preference_scoring_reward != "reward_model":
+                    self._clear_reward_model()
             self._reset_iteration_reward_distribution()
             self._prepare_iteration_current_copy_comparator()
             try:
                 preference_pairs = self._build_preference_dataset(
                     iteration_idx=iteration_idx,
-                    **kwargs,
+                    **generation_kwargs,
                 )
             finally:
                 self._clear_iteration_current_copy_comparator()
+                if reward_model:
+                    self._clear_iteration_model_comparator()
             current_pair_count = len(preference_pairs)
             train_pairs = self._select_iteration_preference_pairs(
                 preference_pairs,
@@ -659,25 +688,34 @@ class MADPOIterTrainer(MADPOTrainer):
             if not train_pairs:
                 if self.verbose:
                     print(
-                        "MADPOIter: no replay preference pairs were available "
+                        f"{name}: no replay preference pairs were available "
                         f"for iteration {iteration_idx + 1} "
                         f"(current generated {current_pair_count})."
                     )
                 self._maybe_save_iteration_policy_checkpoint(iteration_idx)
-                continue
+            elif reward_model:
+                self._clear_reward_model()
+                self._init_reward_model()
+                self._train_reward_model(train_pairs)
+                self._reward_model_active = True
+                self._train_online_rl(**generation_kwargs)
+                self._maybe_save_iteration_policy_checkpoint(iteration_idx)
+                if self.args.preference_scoring_reward != "reward_model":
+                    self._clear_reward_model()
+            else:
+                updates_seen = self._train_preference_pairs(
+                    train_pairs,
+                    updates_seen=updates_seen,
+                    desc=f"{name} iteration {iteration_idx + 1}/{total_iterations}",
+                )
+                self._maybe_save_iteration_policy_checkpoint(iteration_idx)
+            if commit is not None:
+                commit(iteration_idx + 1, updates_seen, total_pairs)
 
-            updates_seen = self._train_preference_pairs(
-                train_pairs,
-                updates_seen=updates_seen,
-                desc=(
-                    f"MADPOIter iteration {iteration_idx + 1}/"
-                    f"{int(self.args.num_iterations)}"
-                ),
-            )
-            self._maybe_save_iteration_policy_checkpoint(iteration_idx)
-
+        if commit is not None and start == total_iterations:
+            commit(start, updates_seen, total_pairs)
         if total_pairs == 0 and self.verbose:
-            print("MADPOIter: no non-tied preference pairs were generated.")
+            print(f"{name}: no non-tied preference pairs were generated.")
 
     def _select_iteration_preference_pairs(
         self,
@@ -2867,81 +2905,3 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
             batch_items=batch_items,
         )
         return list(scores), list(scores)
-
-    def train(
-        self,
-        resume_from_checkpoint=None,
-        checkpoint_dir=None,
-        checkpoint_interval=1,
-        checkpoint_total_limit=None,
-        **kwargs,
-    ):
-        checkpointing = self._checkpoint_arguments(
-            resume_from_checkpoint,
-            checkpoint_dir,
-            checkpoint_interval,
-            checkpoint_total_limit,
-        )
-        if checkpointing is not None:
-            with self._checkpoint_context(**checkpointing):
-                return train_iterations_checkpointed(self, reward_model=True, **kwargs)
-
-        self._checkpoint_untracked = True
-        if int(self.args.num_turns) != 1:
-            raise ValueError("MARLHFIter currently supports num_turns=1 only.")
-
-        if self.wandb_config is not None and not self.wandb_initialized:
-            self._init_wandb()
-
-        self._maybe_save_initial_policy_checkpoint()
-        total_pairs = 0
-        for iteration_idx in range(int(self.args.num_iterations)):
-            self._reward_model_active = False
-            self._evaluating_with_task_reward = False
-            if self.args.preference_scoring_reward != "reward_model":
-                self._clear_reward_model()
-            self._reset_iteration_reward_distribution()
-            self._prepare_iteration_current_copy_comparator()
-            try:
-                preference_pairs = self._build_preference_dataset(
-                    iteration_idx=iteration_idx,
-                    **kwargs,
-                )
-            finally:
-                self._clear_iteration_current_copy_comparator()
-                self._clear_iteration_model_comparator()
-            current_pair_count = len(preference_pairs)
-            train_pairs = self._select_iteration_preference_pairs(
-                preference_pairs,
-                iteration_idx=iteration_idx,
-            )
-            total_pairs += len(train_pairs)
-            self._log_iteration_replay(
-                iteration_idx,
-                train_pairs=train_pairs,
-                current_pair_count=current_pair_count,
-                train_pair_count=len(train_pairs),
-            )
-            preference_pairs.clear()
-            if not train_pairs:
-                if self.verbose:
-                    print(
-                        "MARLHFIter: no replay preference pairs were available "
-                        f"for iteration {iteration_idx + 1} "
-                        f"(current generated {current_pair_count})."
-                    )
-                self._maybe_save_iteration_policy_checkpoint(iteration_idx)
-                continue
-
-            self._clear_reward_model()
-            self._init_reward_model()
-            self._train_reward_model(train_pairs)
-            self._reward_model_active = True
-
-            self._train_online_rl(**kwargs)
-            self._maybe_save_iteration_policy_checkpoint(iteration_idx)
-            if self.args.preference_scoring_reward != "reward_model":
-                self._clear_reward_model()
-
-        if total_pairs == 0 and self.verbose:
-            print("MARLHFIter: no non-tied preference pairs were generated.")

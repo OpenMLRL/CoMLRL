@@ -549,29 +549,12 @@ class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
 
         if not getattr(self, "_checkpoint_context_active", False):
             self._checkpoint_save_blocked = True
-
-        total_epochs = self.args.num_train_epochs
-
-        for epoch in range(total_epochs):
-            epoch_metrics = defaultdict(list)
-            dataloader = self.get_train_dataloader()
-            it = self._iter_dataloader(dataloader, epoch, total_epochs)
-            for batch_idx, batch in it:
-                if (
-                    self.eval_dataset is not None
-                    and self.args.eval_interval > 0
-                    and batch_idx % int(self.args.eval_interval) == 0
-                ):
-                    self.evaluate()
-                self._run_batch(batch, epoch_metrics)
-
-            self._flush_buffers(epoch_metrics)
-            self._on_epoch_end(epoch, total_epochs, epoch_metrics)
+        self._run_epochs(0, None)
 
         if not getattr(self, "_checkpoint_context_active", False):
             self._checkpoint_progress = {
                 "kind": "actor_critic",
-                "epoch": total_epochs,
+                "epoch": self.args.num_train_epochs,
             }
             self._checkpoint_save_blocked = False
 
@@ -612,7 +595,6 @@ class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
 
     def _train_checkpoint_epochs(self, progress, commit) -> None:
         """Run complete RL epochs, optionally inside a parent trainer's context."""
-        total_epochs = self.args.num_train_epochs
         start_epoch = ActorCriticTrainerBase._checkpoint_validate_progress(
             self,
             {
@@ -620,9 +602,13 @@ class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
                 "runtime": {"rollout_buffers": self.rollout_buffers},
             },
         )
-        self._on_checkpoint_train_start(start_epoch, total_epochs)
+        self._on_checkpoint_train_start(start_epoch, self.args.num_train_epochs)
         self._checkpoint_init_wandb()
+        self._run_epochs(start_epoch, commit)
 
+    def _run_epochs(self, start_epoch, commit) -> None:
+        """Train epochs ``start_epoch`` onward; ``commit`` (if given) follows each epoch."""
+        total_epochs = self.args.num_train_epochs
         for epoch in range(start_epoch, total_epochs):
             epoch_metrics = defaultdict(list)
             dataloader = self.get_train_dataloader()
@@ -638,7 +624,8 @@ class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
 
             self._flush_buffers(epoch_metrics)
             self._on_epoch_end(epoch, total_epochs, epoch_metrics)
-            commit(
-                {"kind": "actor_critic", "epoch": epoch + 1},
-                force=epoch + 1 == total_epochs,
-            )
+            if commit is not None:
+                commit(
+                    {"kind": "actor_critic", "epoch": epoch + 1},
+                    force=epoch + 1 == total_epochs,
+                )
