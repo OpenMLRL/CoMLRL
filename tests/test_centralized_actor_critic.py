@@ -121,6 +121,22 @@ def test_metrics_callback_receives_role_outputs(kind, tokenizer):
     assert result["eval/samples"] == 2.0
 
 
+@pytest.mark.parametrize("kind", ["iac", "maac"])
+def test_subclasses_can_add_generate_arguments(kind, tokenizer):
+    seen = []
+    trainer = _trainer(kind, tokenizer)
+    generate = trainer.agents[0].generate
+
+    def record(**kwargs):
+        seen.append(kwargs.get("stop_strings"))
+        return generate(**kwargs)
+
+    trainer.agents[0].generate = record
+    trainer._generation_kwargs = lambda agent_idx: {"stop_strings": ["</main>"]}
+    trainer.evaluate()
+    assert seen and all(stops == ["</main>"] for stops in seen)
+
+
 @pytest.mark.parametrize("critic_type", ["v", "q"])
 def test_maac_critic_reads_each_role_like_the_decentralized_critic(
     critic_type, tokenizer

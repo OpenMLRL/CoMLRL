@@ -191,6 +191,10 @@ class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
             modified_item, agent_idx, external_prompts=external_prompt
         )
 
+    def _generation_kwargs(self, agent_idx: int) -> Dict[str, Any]:
+        """Extra ``generate`` keyword arguments, such as stop strings; none by default."""
+        return {}
+
     def _get_tokenizer(self, agent_idx: Optional[int] = None):
         tokenizers = getattr(self, "tokenizers", None)
         if isinstance(tokenizers, list) and tokenizers:

@@ -463,6 +463,7 @@ class IACTrainer(ActorCriticTrainerBase):
         }
         if self.args.top_k is not None:
             generation_kwargs["top_k"] = self.args.top_k
+        generation_kwargs.update(self._generation_kwargs(agent_idx))
 
         generation_model = unwrap_model(agent_model)
         sequences = generation_model.generate(**generation_kwargs)
