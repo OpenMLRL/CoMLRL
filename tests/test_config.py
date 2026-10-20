@@ -40,10 +40,17 @@ INVALID = [
                 "rollout_buffer_size",
                 "train_batch_size",
                 "num_agents",
-                "num_generations",
                 "num_turns",
                 "eval_batch_size",
                 "logging_steps",
+            ),
+            # Single-turn, so the lower bound is checked rather than the multi-turn rule.
+            *_invalid(
+                config_cls,
+                0,
+                "num_generations",
+                match="num_generations must be >= 1",
+                num_turns=1,
             ),
             *_invalid(config_cls, -1, "eval_interval", "eval_num_samples"),
             *_invalid(config_cls, "x", "critic_type"),
@@ -109,7 +116,6 @@ VALID = [
         for config_cls in ACTOR_CRITIC
         for options in [
             {},
-            {"parallel_training": "none"},
             {"parallel_training": "null"},
             {
                 "parallel_training": "mp",
@@ -117,7 +123,6 @@ VALID = [
                 "critic_devices": "cpu",
             },
             {"agent_devices": "cpu", "critic_devices": "cpu"},
-            {"num_turns": 2, "num_generations": 1},
             {"critic_type": "q"},
         ]
     ],
@@ -125,7 +130,6 @@ VALID = [
         (MAGRPOConfig, options)
         for options in [
             {},
-            {"parallel_training": "none"},
             {"parallel_training": "null"},
             {"parallel_training": "mp", "agent_devices": "cpu"},
             {"agent_devices": "cpu"},

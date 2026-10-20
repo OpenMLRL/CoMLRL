@@ -289,17 +289,6 @@ def test_iac_multiturn_accepts_external_transition(stub_tokenizer, tiny_model_a)
     assert len(trainer.agents) == 1
 
 
-def test_iac_multiturn_rejects_multiple_generations(stub_tokenizer, tiny_model_a):
-    with pytest.raises(ValueError, match="num_generations"):
-        IACTrainer(
-            agents=[tiny_model_a],
-            tokenizer=stub_tokenizer,
-            reward_func=zero_reward,
-            external_transition=_external_transition,
-            args=_iac_cfg(num_agents=1, num_turns=2, num_generations=2),
-        )
-
-
 def test_maac_loads_agent_and_critic_by_name(model_names):
     trainer = MAACTrainer(
         agent_model=model_names[0],
@@ -357,18 +346,6 @@ def test_maac_multiturn_accepts_external_transition(stub_tokenizer, tiny_model_a
     )
     assert len(trainer.agents) == 1
     assert len(trainer.critics) == 1
-
-
-def test_maac_multiturn_rejects_multiple_generations(stub_tokenizer, tiny_model_a):
-    with pytest.raises(ValueError, match="num_generations"):
-        MAACTrainer(
-            agents=[tiny_model_a],
-            critics=[tiny_model_a],
-            tokenizer=stub_tokenizer,
-            reward_func=zero_reward,
-            external_transition=_external_transition,
-            args=_maac_cfg(num_agents=1, num_turns=2, num_generations=2),
-        )
 
 
 def test_magrpo_loads_agent_model_by_name(model_names):

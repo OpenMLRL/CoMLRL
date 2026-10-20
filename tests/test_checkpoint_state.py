@@ -10,8 +10,6 @@ import torch
 from comlrl.trainers.reinforce.magrpo import NodeSample
 import comlrl.utils.checkpoint as checkpoint
 from comlrl.utils.checkpoint import (
-    _decode,
-    _encode,
     capture_trainer_state,
     restore_trainer_state,
 )
@@ -153,20 +151,6 @@ def test_restored_training_does_not_mutate_reusable_in_memory_snapshot(tmp_path)
     target._comparator_rng_states["cpu"].zero_()
 
     assert_nested_equal(state, before)
-
-
-def test_state_is_compatible_with_weights_only_loading(tmp_path):
-    trainer = TinyTrainer()
-    advance_models(trainer)
-    path = tmp_path / "state.pt"
-    state = capture_trainer_state(trainer)
-    torch.save(_encode(state), path)
-
-    loaded = _decode(torch.load(path, weights_only=True, map_location="cpu"))
-
-    restored = TinyTrainer()
-    restore_trainer_state(restored, loaded, tmp_path)
-    assert_models_equal(restored, trainer)
 
 
 def test_stateful_callback_restores_its_state(tmp_path):

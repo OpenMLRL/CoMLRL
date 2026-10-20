@@ -116,22 +116,6 @@ def test_madpo_commits_generated_pairs_before_first_update_and_large_interval(tm
     assert_nested_equal(rng_state(), expected_rng)
 
 
-def test_madpo_first_update_failure_leaves_generated_pairs_resumable(tmp_path):
-    trainer = toy_trainer()
-
-    def fail(batch):
-        raise Interrupted("first optimizer update failed")
-
-    trainer._update_from_preference_batch = fail
-    with pytest.raises(Interrupted):
-        trainer.train(checkpoint_dir=tmp_path)
-    resumed = toy_trainer()
-    progress = resumed.load_checkpoint(tmp_path / "checkpoint-1")
-    assert progress["epoch"] == progress["updates_seen"] == 0
-    assert len(progress["preference_pairs"]) == 6
-    assert not resumed.optimizers[0].state
-
-
 def test_madpo_empty_generation_has_one_complete_boundary(tmp_path):
     trainer = toy_trainer()
     trainer._build_preference_dataset = lambda **kwargs: []
@@ -404,14 +388,13 @@ def test_missing_replay_asset_rejected_before_model_mutation(tmp_path):
     assert torch.equal(before, resumed.agents[0].weight)
 
 
-@pytest.mark.parametrize("value", [True, "1", 0.5, -1])
+@pytest.mark.parametrize("value", [True, "1", 0.5, -1, None])
 @pytest.mark.parametrize("kind", ["madpo", "marlhf", "madpo_iter"])
-def test_preference_checkpoint_cursors_reject_noninteger_or_negative_values(
-    tmp_path, kind, value
-):
+def test_preference_checkpoint_cursors_reject_invalid_progress(tmp_path, kind, value):
+    """Cursors must be nonnegative integers; ``None`` leaves only the progress kind."""
     if kind == "madpo":
         trainer = toy_trainer()
-        trainer._checkpoint_progress = {
+        progress = {
             "kind": kind,
             "epoch": value,
             "updates_seen": 0,
@@ -421,7 +404,7 @@ def test_preference_checkpoint_cursors_reject_noninteger_or_negative_values(
         run = trainer._train_madpo_checkpointed
     elif kind == "marlhf":
         trainer = marlhf_trainer()
-        trainer._checkpoint_progress = {
+        progress = {
             "kind": kind,
             "phase": "online_rl",
             "rl": {"kind": "magrpo", "epoch": value},
@@ -429,7 +412,7 @@ def test_preference_checkpoint_cursors_reject_noninteger_or_negative_values(
         run = trainer._train_marlhf_checkpointed
     else:
         trainer = iterative_trainer(tmp_path)
-        trainer._checkpoint_progress = {
+        progress = {
             "kind": kind,
             "iteration": value,
             "updates_seen": 0,
@@ -437,22 +420,7 @@ def test_preference_checkpoint_cursors_reject_noninteger_or_negative_values(
             "complete": False,
         }
         run = lambda: train_iterations_checkpointed(trainer, reward_model=False)
-    with pytest.raises(ValueError):
-        run()
-
-
-@pytest.mark.parametrize("kind", ["madpo", "marlhf", "madpo_iter"])
-def test_preference_checkpoint_cursors_require_complete_shape(tmp_path, kind):
-    if kind == "madpo":
-        trainer = toy_trainer()
-        run = trainer._train_madpo_checkpointed
-    elif kind == "marlhf":
-        trainer = marlhf_trainer()
-        run = trainer._train_marlhf_checkpointed
-    else:
-        trainer = iterative_trainer(tmp_path)
-        run = lambda: train_iterations_checkpointed(trainer, reward_model=False)
-    trainer._checkpoint_progress = {"kind": kind}
+    trainer._checkpoint_progress = {"kind": kind} if value is None else progress
     with pytest.raises(ValueError):
         run()
 

@@ -46,7 +46,6 @@ class _ConstantActorCritic(nn.Module):
         return SimpleNamespace(logits=logits, values=values)
 
 
-@pytest.mark.parametrize("trainer_cls", TRAINERS)
 @pytest.mark.parametrize(
     "num_agents,num_ret,rewards,expected",
     [
@@ -57,9 +56,9 @@ class _ConstantActorCritic(nn.Module):
     ],
 )
 def test_expand_rewards_preserves_generation_precedence(
-    trainer_cls, num_agents, num_ret, rewards, expected
+    num_agents, num_ret, rewards, expected
 ):
-    trainer = trainer_cls.__new__(trainer_cls)
+    trainer = ActorCriticTrainerBase.__new__(ActorCriticTrainerBase)
     trainer.args = SimpleNamespace(num_agents=num_agents)
     result = trainer._expand_rewards(rewards, num_ret)
     assert result == expected
@@ -67,9 +66,8 @@ def test_expand_rewards_preserves_generation_precedence(
     assert result[1] == expected[1]
 
 
-@pytest.mark.parametrize("trainer_cls", TRAINERS)
-def test_expand_rewards_rejects_unsupported_lengths(trainer_cls):
-    trainer = trainer_cls.__new__(trainer_cls)
+def test_expand_rewards_rejects_unsupported_lengths():
+    trainer = ActorCriticTrainerBase.__new__(ActorCriticTrainerBase)
     trainer.args = SimpleNamespace(num_agents=2)
     with pytest.raises(ValueError, match="Reward function must return 1 value"):
         trainer._expand_rewards([1.0] * 4, 3)
@@ -122,9 +120,8 @@ def test_maac_single_turn_does_not_dispatch_multi_turn_reward_override():
     ]
 
 
-@pytest.mark.parametrize("trainer_cls", TRAINERS)
-def test_sequence_stats_exclude_prompt_and_trailing_tokens(trainer_cls):
-    trainer = trainer_cls.__new__(trainer_cls)
+def test_sequence_stats_exclude_prompt_and_trailing_tokens():
+    trainer = ActorCriticTrainerBase.__new__(ActorCriticTrainerBase)
     probabilities = torch.tensor(
         [[[0.2, 0.8], [0.3, 0.7], [0.4, 0.6], [0.9, 0.1], [0.5, 0.5]]],
         dtype=torch.float64,

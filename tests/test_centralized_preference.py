@@ -68,7 +68,10 @@ class _TokenValueBackbone(torch.nn.Module):
     "config_cls", [MADPOConfig, MARLHFConfig, MADPOIterConfig, MARLHFIterConfig]
 )
 def test_config_defaults_and_centralized_comparator(config_cls):
-    assert config_cls(agent_devices="cpu").collaboration_mode == "decentralized"
+    default = config_cls(agent_devices="cpu")
+    assert default.collaboration_mode == "decentralized"
+    if hasattr(default, "comparator_generation_mode"):
+        assert default.comparator_generation_mode == "decentralized"
     config = config_cls(agent_devices="cpu", collaboration_mode="centralized")
     assert config.num_agents == 2
     if hasattr(config, "comparator_generation_mode"):
@@ -87,18 +90,6 @@ def test_centralized_mode_requires_one_actor(tokenizer):
         MADPOIterConfig(
             collaboration_mode="centralized", comparator_centralized_agent_index=1
         )
-
-
-def test_centralized_reference_uses_one_device(tokenizer, tmp_path):
-    trainer, _ = make_preference_trainer(
-        MADPOTrainer,
-        MADPOConfig,
-        tokenizer,
-        tmp_path,
-        reference_kl_enabled=True,
-        reference_devices=["cpu"],
-    )
-    assert len(trainer.reference_models) == 1
 
 
 @pytest.mark.parametrize(

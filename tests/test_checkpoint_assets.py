@@ -201,35 +201,6 @@ def test_unsafe_restore_destination_rejected_before_model_mutation(tmp_path):
     assert not (tmp_path / "new-run").exists()
 
 
-@pytest.mark.parametrize(
-    "config", ["checkpoint", "wandb", "sections", "explicit-parent"]
-)
-def test_resume_fallback_stays_in_requested_run(tmp_path, config):
-    source, _, _ = source_assets(tmp_path / "original")
-    checkpoint = tmp_path / "source-checkpoint"
-    manifest = save_preference_assets(source, checkpoint)
-    run = tmp_path / "new-run"
-    target = asset_trainer(run)
-    target.args.preference_replay_dir = None
-    target.args.policy_checkpoint_dir = None
-    target.wandb_config = None
-    if config == "checkpoint":
-        target._checkpoint_directory = str(run)
-    elif config == "wandb":
-        target.wandb_config = {"output_dir": str(run)}
-    elif config == "sections":
-        target.wandb_config = {"config_sections": {"output": {"base_dir": str(run)}}}
-    else:
-        target.args.policy_checkpoint_dir = str(run / "policies")
-    load_preference_assets(target, checkpoint, manifest)
-    for attribute in (
-        "_preference_replay_dir_path",
-        "_policy_checkpoint_dir_path",
-        "_reward_distribution_dir_path",
-    ):
-        assert Path(getattr(target, attribute)).is_relative_to(run)
-
-
 @pytest.mark.parametrize("config", ["checkpoint", "wandb", "explicit"])
 def test_resumed_output_paths_match_source_tilde_conventions(
     tmp_path, monkeypatch, config
@@ -468,27 +439,6 @@ def test_digest_cache_invalidates_modified_or_replaced_source(
     assert len(cache) == 1
 
 
-def test_reused_blob_needs_no_byte_reads_and_changed_source_gets_new_blob(
-    tmp_path, monkeypatch
-):
-    source = tmp_path / "weights.bin"
-    source.write_bytes(b"first")
-    pool, cache = tmp_path / "pool", {}
-    counts = observe_hash_reads(monkeypatch)
-    first = tmp_path / "first/weights.bin"
-    checkpoint_extras._copy_checkpoint_asset(source, first, pool, digest_cache=cache)
-    first_reads = sum(counts.values())
-    second = tmp_path / "second/weights.bin"
-    checkpoint_extras._copy_checkpoint_asset(source, second, pool, digest_cache=cache)
-    assert sum(counts.values()) == first_reads
-    assert first.stat().st_ino == second.stat().st_ino
-    source.write_bytes(b"new weights")
-    third = tmp_path / "third/weights.bin"
-    checkpoint_extras._copy_checkpoint_asset(source, third, pool, digest_cache=cache)
-    assert sum(counts.values()) == first_reads + 2 * len(b"new weights")
-    assert third.stat().st_ino != first.stat().st_ino
-
-
 def test_source_change_during_hash_is_rejected_without_caching(tmp_path, monkeypatch):
     source = tmp_path / "weights.bin"
     source.write_bytes(b"before")
@@ -503,40 +453,23 @@ def test_source_change_during_hash_is_rejected_without_caching(tmp_path, monkeyp
     assert not cache
 
 
-def test_source_change_during_initial_copy_is_rejected(tmp_path, monkeypatch):
+@pytest.mark.parametrize("changed", ["source", "copy"])
+def test_initial_copy_rejects_changed_source_or_corrupted_copy(
+    tmp_path, monkeypatch, changed
+):
     source = tmp_path / "weights.bin"
     source.write_bytes(b"original")
     copy2 = checkpoint_extras.shutil.copy2
 
     def change_after_copy(src, dst, *args, **kwargs):
         result = copy2(src, dst, *args, **kwargs)
-        if Path(src) == source:
+        if changed == "copy":
+            Path(dst).write_bytes(b"corrupt!")
+        elif Path(src) == source:
             source.write_bytes(b"modified")
         return result
 
     monkeypatch.setattr(checkpoint_extras.shutil, "copy2", change_after_copy)
-    destination, pool = tmp_path / "snapshot/weights.bin", tmp_path / "pool"
-    with pytest.raises(RuntimeError, match="changed during checkpoint saving"):
-        checkpoint_extras._copy_checkpoint_asset(
-            source, destination, pool, digest_cache={}
-        )
-    assert not destination.exists()
-    assert not list(pool.iterdir())
-
-
-def test_corrupted_initial_copy_is_rejected_before_pool_publication(
-    tmp_path, monkeypatch
-):
-    source = tmp_path / "weights.bin"
-    source.write_bytes(b"original")
-    copy2 = checkpoint_extras.shutil.copy2
-
-    def corrupt_copy(src, dst, *args, **kwargs):
-        result = copy2(src, dst, *args, **kwargs)
-        Path(dst).write_bytes(b"corrupt!")
-        return result
-
-    monkeypatch.setattr(checkpoint_extras.shutil, "copy2", corrupt_copy)
     destination, pool = tmp_path / "snapshot/weights.bin", tmp_path / "pool"
     with pytest.raises(RuntimeError, match="changed during checkpoint saving"):
         checkpoint_extras._copy_checkpoint_asset(

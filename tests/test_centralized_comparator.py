@@ -55,11 +55,6 @@ def test_iterative_config_allows_generic_centralized_agent_counts():
     assert config.num_agents == 3
 
 
-def test_iterative_config_keeps_decentralized_as_default():
-    config = MADPOIterConfig(agent_devices="cpu")
-    assert config.comparator_generation_mode == "decentralized"
-
-
 def test_centralized_split_preserves_candidate_and_agent_alignment():
     trainer = MADPOIterTrainer.__new__(MADPOIterTrainer)
     trainer.num_agents = 2

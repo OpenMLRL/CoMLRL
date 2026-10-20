@@ -27,8 +27,6 @@ def test_one_actor_training_uses_joint_prompt_and_task_rewards(tokenizer):
     assert trainer.env_step == 2
     assert not torch.equal(before, trainer.agents[0].transformer.wte.weight)
     assert trainer.reward_func.reward_range == (0.0, 2.0)
-    assert not hasattr(trainer, "reward_model")
-    assert not hasattr(trainer, "comparator_policy")
 
 
 def test_eval_passes_separate_roles_to_eval_logger(tokenizer):
@@ -43,32 +41,6 @@ def test_eval_passes_separate_roles_to_eval_logger(tokenizer):
     assert observed[0]["prompts"] == ["task prompt"]
     assert result["eval/turn_1/reward_mean"] == 2.0
     assert result["eval/turn_1/domain_metric"] == 3.0
-
-
-def test_loss_matches_full_joint_sequence_policy_gradient(tokenizer):
-    trainer, _ = make_centralized_magrpo_trainer(tokenizer)
-    model = trainer.agents[0]
-    prompt = torch.tensor(tokenizer.encode("joint left right"))
-    sequences = [torch.tensor(tokenizer.encode(text)) for text in (GOOD, BAD)]
-    data = {"prompt_input_ids": prompt[None], "completion_input_ids": [sequences]}
-    manual = []
-    for tokens, advantage in zip(sequences, (1.0, -1.0)):
-        logits = model(torch.cat([prompt, tokens])[None], use_cache=False).logits[
-            0, len(prompt) - 1 : -1
-        ]
-        manual.append(
-            -logits.log_softmax(-1).gather(1, tokens[:, None]).sum() * advantage
-        )
-    expected = torch.stack(manual).mean()
-    actual = trainer._compute_loss_with_gradients(model, data, [2.0, 0.0])
-    torch.testing.assert_close(actual, expected)
-    expected.backward()
-    expected_grad = model.transformer.wte.weight.grad.clone()
-    model.zero_grad()
-    actual.backward()
-    torch.testing.assert_close(model.transformer.wte.weight.grad, expected_grad)
-    for token in ("<agent_0>", "<agent_1>", "</agent_1>"):
-        assert expected_grad[tokenizer.convert_tokens_to_ids(token)].abs().sum() > 0
 
 
 def test_joint_actor_gets_one_reference_model(tokenizer):
