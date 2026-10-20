@@ -35,9 +35,6 @@ from ..actor_critic import IACConfig, IACTrainer, MAACConfig, MAACTrainer
 from ..reinforce.magrpo import MAGRPOTrainer
 
 
-_RL_ALGORITHM_ALIASES = {
-    "mareforce": "mareinforce",
-}
 _MAGRPO_ADVANTAGE_MODES = {
     "magrpo": "mean",
     "mareinforce": "raw",
@@ -48,8 +45,7 @@ _ACTOR_CRITIC_ALGORITHMS = {"maac", "iac"}
 
 
 def _normalize_rl_algorithm(name: Optional[str]) -> str:
-    algorithm = str(name or "magrpo").strip().lower()
-    return _RL_ALGORITHM_ALIASES.get(algorithm, algorithm)
+    return str(name or "magrpo").strip().lower()
 
 
 def _apply_magrpo_family_args(args: Any) -> None:

@@ -164,7 +164,10 @@ def test_replay_stores_raw_joint_text_and_current_comparator_uses_same_prompt(
     assert len(pairs[0].agent_tensors) == 1
     torch.testing.assert_close(calls[0], calls[1])
     shard = trainer._write_iteration_preference_pairs(0, pairs)
-    loaded = trainer._load_replay_shard(shard)
+    loaded = [
+        trainer._preference_pair_from_record(record)
+        for record in trainer._load_replay_records(shard)
+    ]
     assert loaded[0].winner_completions == [GOOD]
     torch.testing.assert_close(
         loaded[0].agent_tensors[0].winner_completion_ids,

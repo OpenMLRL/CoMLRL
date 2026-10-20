@@ -1357,17 +1357,6 @@ class MADPOIterTrainer(MADPOTrainer):
             ),
         }
 
-    def _load_replay_shard(
-        self,
-        shard: Optional[PreferenceReplayShard],
-    ) -> List[PreferencePair]:
-        if shard is None:
-            return []
-        return [
-            self._preference_pair_from_record(record)
-            for record in self._load_replay_records(shard)
-        ]
-
     @staticmethod
     def _load_replay_records(shard: PreferenceReplayShard) -> List[Dict[str, Any]]:
         with open(shard.path, "r", encoding="utf-8") as handle:
