@@ -1,13 +1,14 @@
 """In-memory trainer state capture/restore; failures never partially mutate."""
 
 import copy
+from dataclasses import dataclass, field
 
 import numpy as np
 import pytest
 from tokenizers.models import WordLevel
 import torch
 
-from comlrl.trainers.reinforce.magrpo import NodeSample
+from comlrl.trainers.reinforce.magrpo import MAGRPOConfig, NodeSample
 import comlrl.utils.checkpoint as checkpoint
 from comlrl.utils.checkpoint import (
     capture_trainer_state,
@@ -455,6 +456,35 @@ def test_config_field_newer_than_the_checkpoint_resumes_at_its_default(
     else:
         with pytest.raises(ValueError, match="does not match: train_batch_size"):
             restore_trainer_state(target, state, tmp_path)
+
+
+def test_config_defaults_are_built_only_for_fields_the_checkpoint_lacks(tmp_path):
+    calls = []
+
+    def factory():
+        calls.append(torch.rand(1))  # draws from the global RNG
+        return []
+
+    @dataclass
+    class FactoryConfig(MAGRPOConfig):
+        extra_items: list = field(default_factory=factory)
+
+    def trainer():
+        target = TinyTrainer()
+        target.args = FactoryConfig(num_agents=2, num_turns=1, agent_devices="cpu")
+        return target
+
+    state = capture_trainer_state(trainer())
+    target = trainer()  # building the config itself runs the factory
+    calls.clear()
+    restore_trainer_state(target, state, tmp_path, restore_rng=False)
+    assert calls == []
+    del state["config"]["extra_items"]
+    target = trainer()
+    calls.clear()
+    before = torch.get_rng_state()
+    restore_trainer_state(target, state, tmp_path, restore_rng=False)
+    assert len(calls) == 1 and torch.equal(torch.get_rng_state(), before)
 
 
 @pytest.mark.parametrize("changed", ["vocab", "chat_template", "eos"])

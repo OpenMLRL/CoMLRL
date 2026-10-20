@@ -294,17 +294,24 @@ def _config(trainer):
     }
 
 
-def _config_defaults(trainer):
-    """Encoded config defaults, for fields added after a checkpoint was written."""
+def _config_defaults(trainer, names):
+    """Encoded defaults of the config fields ``names`` that a checkpoint lacks."""
     args = getattr(trainer, "args", None)
-    if not is_dataclass(args):
+    if not names or not is_dataclass(args):
         return {}
     defaults = {}
     for field in fields(args):
+        if field.name not in names:
+            continue
         if field.default is not MISSING:
             default = field.default
         elif field.default_factory is not MISSING:
-            default = field.default_factory()
+            # A factory may draw random numbers; validation must not move the RNG.
+            rng = capture_rng_state()
+            try:
+                default = field.default_factory()
+            finally:
+                restore_rng_state(rng)
         else:
             continue
         try:
@@ -772,9 +779,10 @@ def _validate_state(trainer, state, *, model_config_updates=None):
         if key not in _PORTABLE_CONFIG_FIELDS
     }
     current_config = _config(trainer)
-    defaults = _config_defaults(trainer)
+    missing = set(current_config) - set(saved_config)
+    defaults = _config_defaults(trainer, missing)
     # A field added after the checkpoint was written matches at its default.
-    for key in set(current_config) - set(saved_config):
+    for key in missing:
         if key in defaults and current_config[key] == defaults[key]:
             saved_config[key] = current_config[key]
     if saved_config != current_config:
