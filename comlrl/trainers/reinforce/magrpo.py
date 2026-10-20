@@ -17,7 +17,7 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 from comlrl.schedulers import DeviceScheduler
 from comlrl.schedulers.device_scheduler import normalize_parallel_training
 from comlrl.utils.checkpoint import TrainingCheckpointMixin, register_checkpoint_record
-from comlrl.utils.distributed import local_context, unwrap_model
+from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import (
     infer_model_name,
@@ -284,7 +284,6 @@ class MAGRPOTrainer(CollaborationModeMixin, TrainingCheckpointMixin):
             )
             self.agent_devices = [single_device] * self.num_agents
         self.device = self.agent_devices[0]
-        self.dist_env = local_context(self.device)
         model_kwargs = resolve_model_kwargs(self.model_config)
         if actor_sources and all(isinstance(src, str) for src in actor_sources):
             from transformers import AutoModelForCausalLM
@@ -376,7 +375,7 @@ class MAGRPOTrainer(CollaborationModeMixin, TrainingCheckpointMixin):
 
         self.wandb_config = wandb_config
         self.wandb_initialized = False
-        if self.wandb_config is not None and self.dist_env.is_main:
+        if self.wandb_config is not None:
             self._init_wandb()
 
         self.verbose = verbose_from_wandb_config(self.wandb_config)
@@ -462,8 +461,6 @@ class MAGRPOTrainer(CollaborationModeMixin, TrainingCheckpointMixin):
 
     def _init_wandb(self):
         """Initialize Weights & Biases for tracking with multi-turn config."""
-        if not self.dist_env.is_main:
-            return
         if not self.wandb_initialized:
             if self.wandb_config is None:
                 self.wandb_config = {}

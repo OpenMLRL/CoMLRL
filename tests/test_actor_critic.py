@@ -12,7 +12,6 @@ from comlrl.trainers.actor_critic import IACTrainer, MAACTrainer, RolloutSample
 from comlrl.trainers.actor_critic.ac_base import ActorCriticTrainerBase
 from comlrl.trainers.actor_critic.iac import IACConfig
 from comlrl.trainers.actor_critic.maac import MAACConfig
-from comlrl.utils.distributed import DistributedContext
 
 from helpers import tiny_gpt2, zero_reward
 
@@ -45,10 +44,6 @@ class _ConstantActorCritic(nn.Module):
         logits = torch.stack([self.policy, -self.policy]).expand(*input_ids.shape, 2)
         values = self.value.expand(input_ids.shape) if output_values else None
         return SimpleNamespace(logits=logits, values=values)
-
-
-def _cpu_context():
-    return DistributedContext(is_main=True, device=torch.device("cpu"))
 
 
 @pytest.mark.parametrize("trainer_cls", TRAINERS)
@@ -334,7 +329,6 @@ def test_ac_step_matches_analytic_gradients(trainer_cls, separate, critic_type):
 
 def test_log_metrics_logs_each_call_directly(monkeypatch):
     trainer = ActorCriticTrainerBase()
-    trainer.dist_env = _cpu_context()
     trainer.wandb_initialized = True
     trainer.env_step = 5
     trainer.args = SimpleNamespace(logging_steps=1)
@@ -356,7 +350,6 @@ def test_evaluate_collects_rollouts_in_eval_mode():
             self.args = SimpleNamespace(eval_batch_size=1, eval_num_samples=1)
             self.wandb_initialized = False
             self.env_step = 0
-            self.dist_env = _cpu_context()
             self.verbose = False
             self.eval_flags = []
 

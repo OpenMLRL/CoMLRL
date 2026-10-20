@@ -284,9 +284,7 @@ class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
         return metrics
 
     def _iter_dataloader(self, dataloader, epoch: int, total_epochs: int):
-        dist_env = getattr(self, "dist_env", None)
-        is_main = bool(getattr(dist_env, "is_main", True))
-        if getattr(self, "verbose", True) and is_main:
+        if getattr(self, "verbose", True):
             return enumerate(
                 tqdm(
                     dataloader,
@@ -312,12 +310,7 @@ class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
         epoch_metrics: Dict[str, List[float]],
     ) -> None:
         summary = self._summarize_epoch_metrics(epoch_metrics)
-        dist_env = getattr(self, "dist_env", None)
-        if (
-            summary
-            and getattr(self, "verbose", True)
-            and getattr(dist_env, "is_main", True)
-        ):
+        if summary and getattr(self, "verbose", True):
             print(f"Epoch {epoch + 1}/{total_epochs} metrics: {summary}")
 
     def _tag_metrics(

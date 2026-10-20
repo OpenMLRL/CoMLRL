@@ -16,11 +16,7 @@ from .reward_utils import (
     resolve_reward_range,
     set_reward_range,
 )
-from .distributed import (
-    DistributedContext,
-    local_context,
-    unwrap_model,
-)
+from .distributed import unwrap_model
 from .tokenizer_utils import (
     apply_tokenizer_specials,
     ensure_pad_token,
@@ -50,7 +46,5 @@ __all__ = [
     "normalize_reward_lengths",
     "resolve_reward_range",
     "set_reward_range",
-    "DistributedContext",
-    "local_context",
     "unwrap_model",
 ]

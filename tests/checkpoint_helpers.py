@@ -110,7 +110,6 @@ class TinyTrainer(TrainingCheckpointMixin):
             [],
         ]
         self.reward_func = StatefulReward()
-        self.dist_env = SimpleNamespace(is_main=True)
         self._checkpoint_progress = {"epoch": 1, "next_item": 0}
 
 

@@ -12,7 +12,7 @@ from comlrl.models.actor_critic import CausalLMWithValueHead
 from comlrl.schedulers import DeviceScheduler
 from comlrl.schedulers.device_scheduler import normalize_parallel_training
 from comlrl.utils.checkpoint import register_checkpoint_record
-from comlrl.utils.distributed import local_context, unwrap_model
+from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.formatters import build_formatters
 from comlrl.utils.model_loading import resolve_model_kwargs, resolve_model_sources
 from comlrl.utils.reference_kl import (
@@ -231,7 +231,6 @@ class IACTrainer(ActorCriticTrainerBase):
             self.agent_devices = [single_device] * self.num_agents
             self.critic_devices = [single_device] * self.num_agents
         self.device = self.agent_devices[0]
-        self.dist_env = local_context(self.device)
 
         self.agents: List[CausalLMWithValueHead] = []
         self.critics: List[CausalLMWithValueHead] = []
@@ -392,7 +391,7 @@ class IACTrainer(ActorCriticTrainerBase):
         self.wandb_config = wandb_config
         self.wandb_initialized = False
         self._last_train_log_step = -1
-        if wandb_config is not None and self.dist_env.is_main:
+        if wandb_config is not None:
             self._init_wandb()
         self.verbose = verbose_from_wandb_config(self.wandb_config)
 
@@ -402,8 +401,6 @@ class IACTrainer(ActorCriticTrainerBase):
         return self.agent_devices[agent_idx]
 
     def _init_wandb(self) -> None:
-        if not self.dist_env.is_main:
-            return
         if self.wandb_initialized:
             return
         if self.wandb_config is None:
@@ -1065,8 +1062,6 @@ class IACTrainer(ActorCriticTrainerBase):
         return averaged
 
     def save_model(self, output_dir: str) -> None:
-        if not self.dist_env.is_main:
-            return
         os.makedirs(output_dir, exist_ok=True)
         if self.num_agents == 1:
             actor = unwrap_model(self.agents[0])
