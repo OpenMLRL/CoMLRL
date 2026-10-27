@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 
 from comlrl.models.actor_critic import CausalLMWithValueHead
 from comlrl.utils.checkpoint import TrainingCheckpointMixin
+from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.reference_kl import reference_kl_coef, reference_kl_enabled
 
 from ..centralized import CollaborationModeMixin
@@ -209,6 +210,22 @@ class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
     def _generation_kwargs(self, agent_idx: int) -> Dict[str, Any]:
         """Extra ``generate`` keyword arguments, such as stop strings; none by default."""
         return {}
+
+    def _generate_in_eval_mode(
+        self, agent_model, generation_kwargs: Dict[str, Any]
+    ) -> torch.Tensor:
+        """Sample in eval mode, then restore the actor's mode.
+
+        In training mode HF would apply dropout and, with gradient checkpointing
+        on, generate without its KV cache.
+        """
+        model = unwrap_model(agent_model)
+        training = model.training
+        model.eval()
+        try:
+            return model.generate(**generation_kwargs)
+        finally:
+            model.train(training)
 
     def _get_tokenizer(self, agent_idx: Optional[int] = None):
         tokenizers = getattr(self, "tokenizers", None)
@@ -620,6 +637,9 @@ class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
 
     def _run_epochs(self, start_epoch, commit) -> None:
         """Train epochs ``start_epoch`` onward; ``commit`` (if given) follows each epoch."""
+        # from_pretrained returns eval mode, in which HF skips gradient checkpointing.
+        for model in [*self.agents, *self.critics]:
+            model.train()
         total_epochs = self.args.num_train_epochs
         for epoch in range(start_epoch, total_epochs):
             epoch_metrics = defaultdict(list)

@@ -7,13 +7,14 @@ import pytest
 import torch
 from torch import nn
 import wandb
+from datasets import Dataset
 
 from comlrl.trainers.actor_critic import IACTrainer, MAACTrainer, RolloutSample
 from comlrl.trainers.actor_critic.ac_base import ActorCriticTrainerBase
 from comlrl.trainers.actor_critic.iac import IACConfig
 from comlrl.trainers.actor_critic.maac import MAACConfig
 
-from helpers import tiny_gpt2, zero_reward
+from helpers import model_for, tiny_gpt2, zero_reward
 
 TRAINERS = [IACTrainer, MAACTrainer]
 
@@ -396,6 +397,57 @@ def test_evaluate_collects_rollouts_in_eval_mode():
     assert trainer.eval_flags == [True]
     assert trainer._in_eval is False
     assert "eval/turn_1/reward_mean" in metrics
+
+
+@pytest.mark.parametrize("trainer_cls", TRAINERS)
+def test_training_updates_in_train_mode_and_samples_in_eval_mode(
+    trainer_cls, tokenizer
+):
+    # Models from from_pretrained start in eval mode, where HF skips gradient
+    # checkpointing; the critic never samples, so only training sets its mode.
+    actor, critic = model_for(tokenizer).eval(), model_for(tokenizer).eval()
+    sampling, updates = [], {actor: [], critic: []}
+
+    def sample(*, input_ids, num_return_sequences=1, **_kwargs):
+        sampling.append(actor.training)
+        tail = torch.tensor(tokenizer.encode("good"))
+        return torch.cat([input_ids[0], tail]).repeat(num_return_sequences, 1)
+
+    def record(module, _args):
+        if torch.is_grad_enabled():
+            updates[module].append(module.training)
+
+    actor.generate = sample
+    actor.register_forward_pre_hook(record)
+    critic.register_forward_pre_hook(record)
+    options = dict(
+        num_agents=1,
+        num_turns=1,
+        agent_devices="cpu",
+        critic_devices="cpu",
+        num_train_epochs=1,
+        num_generations=2,
+        rollout_buffer_size=2,
+        max_new_tokens=4,
+        eval_interval=0,
+    )
+    if trainer_cls is IACTrainer:
+        args = IACConfig(use_separate_critic=True, **options)
+    else:
+        args = MAACConfig(**options)
+    trainer = trainer_cls(
+        agents=[actor],
+        critics=[critic],
+        tokenizer=tokenizer,
+        reward_func=zero_reward,
+        formatters=[lambda _: "left"],
+        args=args,
+        train_dataset=Dataset.from_list([{"prompt": "left"}]),
+    )
+    trainer.train()
+    assert sampling and not any(sampling)
+    assert updates[actor] and all(updates[actor])
+    assert updates[critic] and all(updates[critic])
 
 
 @pytest.mark.parametrize("trainer_cls", TRAINERS)
