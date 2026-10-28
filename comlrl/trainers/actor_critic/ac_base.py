@@ -1,5 +1,4 @@
 from collections import defaultdict
-import numbers
 from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -11,11 +10,26 @@ from torch.utils.data import DataLoader
 
 from comlrl.models.actor_critic import CausalLMWithValueHead
 from comlrl.utils.checkpoint import TrainingCheckpointMixin
+from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.reference_kl import reference_kl_coef, reference_kl_enabled
 
+from ..centralized import CollaborationModeMixin
 
-class ActorCriticTrainerBase(TrainingCheckpointMixin):
+
+class ActorCriticTrainerBase(CollaborationModeMixin, TrainingCheckpointMixin):
     """Shared training utilities for actor-critic style trainers."""
+
+    @property
+    def num_agents(self) -> int:
+        """Actor models trained: ``args.num_agents``, or one joint actor when centralized."""
+        actors = self.__dict__.get("_num_actors")
+        if actors is None:
+            actors = getattr(getattr(self, "args", None), "num_agents", 0)
+        return int(actors or 0)
+
+    @num_agents.setter
+    def num_agents(self, value: int) -> None:
+        self._num_actors = int(value)
 
     def _kl_shaped_reward(
         self, reward: float, data: Dict[str, Any], index: int
@@ -34,7 +48,7 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
         }
 
     def _expand_rewards(self, rewards: List[float], num_ret: int) -> List[List[float]]:
-        num_agents = self.args.num_agents
+        num_agents = self.num_agents
         if len(rewards) == 1:
             return [[rewards[0]] * num_ret for _ in range(num_agents)]
         if len(rewards) == num_ret:
@@ -44,6 +58,21 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
         raise ValueError(
             "Reward function must return 1 value, num_generations values, or num_agents values."
         )
+
+    def _sample_loss_shares(self, policy_loss, value_error, batch_size: int):
+        """One sample's share of a mini-batch's mean actor and weighted value losses.
+
+        Backpropagating each share as soon as it is computed keeps one sample's
+        activations in memory. The summed gradients are mathematically those of the
+        batch means; floating-point sums may differ slightly. Dividing before weighting
+        keeps every share within the range of the batch total, so low-precision losses
+        do not overflow where the batch mean would not.
+        """
+        actor_share = policy_loss.mean() / batch_size
+        value_share = value_error.mean() / batch_size * self.args.value_loss_coef
+        if not torch.isfinite(actor_share) or not torch.isfinite(value_share):
+            raise FloatingPointError("Non-finite loss detected.")
+        return actor_share, value_share
 
     def _value_on_prompt_only(
         self,
@@ -105,7 +134,7 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
     def _parallel_agent_mode_enabled(self) -> bool:
         if str(getattr(self, "parallel_training", "")).lower() != "mp":
             return False
-        num_agents = int(getattr(getattr(self, "args", None), "num_agents", 0) or 0)
+        num_agents = self.num_agents
         if num_agents <= 1:
             return False
         devices = getattr(self, "agent_devices", None)
@@ -121,7 +150,7 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
         agent_indices: Optional[List[int]] = None,
         parallel: Optional[bool] = None,
     ) -> List[Any]:
-        num_agents = int(getattr(getattr(self, "args", None), "num_agents", 0) or 0)
+        num_agents = self.num_agents
         indices = (
             list(agent_indices)
             if agent_indices is not None
@@ -177,6 +206,26 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
         return self._format_prompt(
             modified_item, agent_idx, external_prompts=external_prompt
         )
+
+    def _generation_kwargs(self, agent_idx: int) -> Dict[str, Any]:
+        """Extra ``generate`` keyword arguments, such as stop strings; none by default."""
+        return {}
+
+    def _generate_in_eval_mode(
+        self, agent_model, generation_kwargs: Dict[str, Any]
+    ) -> torch.Tensor:
+        """Sample in eval mode, then restore the actor's mode.
+
+        In training mode HF would apply dropout and, with gradient checkpointing
+        on, generate without its KV cache.
+        """
+        model = unwrap_model(agent_model)
+        training = model.training
+        model.eval()
+        try:
+            return model.generate(**generation_kwargs)
+        finally:
+            model.train(training)
 
     def _get_tokenizer(self, agent_idx: Optional[int] = None):
         tokenizers = getattr(self, "tokenizers", None)
@@ -271,9 +320,7 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
         return metrics
 
     def _iter_dataloader(self, dataloader, epoch: int, total_epochs: int):
-        dist_env = getattr(self, "dist_env", None)
-        is_main = bool(getattr(dist_env, "is_main", True))
-        if getattr(self, "verbose", True) and is_main:
+        if getattr(self, "verbose", True):
             return enumerate(
                 tqdm(
                     dataloader,
@@ -299,12 +346,7 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
         epoch_metrics: Dict[str, List[float]],
     ) -> None:
         summary = self._summarize_epoch_metrics(epoch_metrics)
-        dist_env = getattr(self, "dist_env", None)
-        if (
-            summary
-            and getattr(self, "verbose", True)
-            and getattr(dist_env, "is_main", True)
-        ):
+        if summary and getattr(self, "verbose", True):
             print(f"Epoch {epoch + 1}/{total_epochs} metrics: {summary}")
 
     def _tag_metrics(
@@ -425,9 +467,9 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
     def _run_batch(self, batch, epoch_metrics: Dict[str, List[float]]) -> None:
         for item in batch:
             rollouts = self._collect_rollouts(item)
-            if self.args.num_agents > 0:
+            if self.num_agents > 0:
                 # Count joint-action reward evaluations (one per agent group).
-                self.env_step += len(rollouts) // self.args.num_agents
+                self.env_step += len(rollouts) // self.num_agents
             self._log_domain_metrics(rollouts)
 
             ready_agents: List[int] = []
@@ -522,53 +564,26 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
         checkpoint_total_limit=None,
     ) -> None:
         """Train with optional resume and checkpointing at complete epoch boundaries."""
-        if (
-            isinstance(checkpoint_interval, bool)
-            or not isinstance(checkpoint_interval, numbers.Integral)
-            or checkpoint_interval < 1
-        ):
-            raise ValueError("checkpoint_interval must be a positive integer.")
-        if (
-            resume_from_checkpoint is not None
-            or checkpoint_dir is not None
-            or checkpoint_interval != 1
-            or checkpoint_total_limit is not None
-        ):
-            with self._checkpoint_context(
-                resume_from_checkpoint=resume_from_checkpoint,
-                checkpoint_dir=checkpoint_dir,
-                checkpoint_interval=checkpoint_interval,
-                checkpoint_total_limit=checkpoint_total_limit,
-            ):
+        checkpointing = self._checkpoint_arguments(
+            resume_from_checkpoint,
+            checkpoint_dir,
+            checkpoint_interval,
+            checkpoint_total_limit,
+        )
+        if checkpointing is not None:
+            with self._checkpoint_context(**checkpointing):
                 return self._train_checkpoint_epochs(
                     self._checkpoint_progress, self._checkpoint_commit
                 )
 
         if not getattr(self, "_checkpoint_context_active", False):
             self._checkpoint_save_blocked = True
-
-        total_epochs = self.args.num_train_epochs
-
-        for epoch in range(total_epochs):
-            epoch_metrics = defaultdict(list)
-            dataloader = self.get_train_dataloader()
-            it = self._iter_dataloader(dataloader, epoch, total_epochs)
-            for batch_idx, batch in it:
-                if (
-                    self.eval_dataset is not None
-                    and self.args.eval_interval > 0
-                    and batch_idx % int(self.args.eval_interval) == 0
-                ):
-                    self.evaluate()
-                self._run_batch(batch, epoch_metrics)
-
-            self._flush_buffers(epoch_metrics)
-            self._on_epoch_end(epoch, total_epochs, epoch_metrics)
+        self._run_epochs(0, None)
 
         if not getattr(self, "_checkpoint_context_active", False):
             self._checkpoint_progress = {
                 "kind": "actor_critic",
-                "epoch": total_epochs,
+                "epoch": self.args.num_train_epochs,
             }
             self._checkpoint_save_blocked = False
 
@@ -609,7 +624,6 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
 
     def _train_checkpoint_epochs(self, progress, commit) -> None:
         """Run complete RL epochs, optionally inside a parent trainer's context."""
-        total_epochs = self.args.num_train_epochs
         start_epoch = ActorCriticTrainerBase._checkpoint_validate_progress(
             self,
             {
@@ -617,9 +631,16 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
                 "runtime": {"rollout_buffers": self.rollout_buffers},
             },
         )
-        self._on_checkpoint_train_start(start_epoch, total_epochs)
+        self._on_checkpoint_train_start(start_epoch, self.args.num_train_epochs)
         self._checkpoint_init_wandb()
+        self._run_epochs(start_epoch, commit)
 
+    def _run_epochs(self, start_epoch, commit) -> None:
+        """Train epochs ``start_epoch`` onward; ``commit`` (if given) follows each epoch."""
+        # from_pretrained returns eval mode, in which HF skips gradient checkpointing.
+        for model in [*self.agents, *self.critics]:
+            model.train()
+        total_epochs = self.args.num_train_epochs
         for epoch in range(start_epoch, total_epochs):
             epoch_metrics = defaultdict(list)
             dataloader = self.get_train_dataloader()
@@ -635,7 +656,8 @@ class ActorCriticTrainerBase(TrainingCheckpointMixin):
 
             self._flush_buffers(epoch_metrics)
             self._on_epoch_end(epoch, total_epochs, epoch_metrics)
-            commit(
-                {"kind": "actor_critic", "epoch": epoch + 1},
-                force=epoch + 1 == total_epochs,
-            )
+            if commit is not None:
+                commit(
+                    {"kind": "actor_critic", "epoch": epoch + 1},
+                    force=epoch + 1 == total_epochs,
+                )

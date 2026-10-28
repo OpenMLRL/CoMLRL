@@ -1,17 +1,17 @@
 """Reference-model KL penalties for MAGRPO, IAC and MAAC."""
 
-import importlib
 from types import SimpleNamespace
 
 import pytest
 import torch
 from transformers import GPT2LMHeadModel
 
-from comlrl.trainers.actor_critic import IACTrainer
+from comlrl.trainers.actor_critic import ActorCriticTrainerBase, IACTrainer
 from comlrl.trainers.actor_critic.iac import IACConfig
 from comlrl.trainers.actor_critic.maac import MAACConfig, MAACTrainer
 from comlrl.trainers.reinforce import MAGRPOTrainer
 from comlrl.trainers.reinforce.magrpo import MAGRPOConfig
+from comlrl.utils import reference_kl
 from comlrl.utils.reference_kl import (
     reference_kl_for_sequence,
     resolve_reference_devices,
@@ -21,24 +21,6 @@ from helpers import tiny_gpt2, zero_reward
 
 CONFIGS = [MAGRPOConfig, IACConfig, MAACConfig]
 TRAINERS = [IACTrainer, MAACTrainer, MAGRPOTrainer]
-
-
-def _actor_critic_trainer(trainer_cls, tokenizer, **options):
-    options.update(num_agents=1, num_turns=1, agent_devices="cpu", critic_devices="cpu")
-    if trainer_cls is IACTrainer:
-        return IACTrainer(
-            agents=[tiny_gpt2()],
-            tokenizer=tokenizer,
-            reward_func=zero_reward,
-            args=IACConfig(use_separate_critic=False, **options),
-        )
-    return MAACTrainer(
-        agents=[tiny_gpt2()],
-        critics=[tiny_gpt2()],
-        tokenizer=tokenizer,
-        reward_func=zero_reward,
-        args=MAACConfig(**options),
-    )
 
 
 @pytest.mark.parametrize("config_cls", CONFIGS)
@@ -136,29 +118,18 @@ def test_reference_kl_for_identical_model_is_zero():
     assert torch.allclose(kl, torch.zeros_like(kl), atol=1e-6)
 
 
-@pytest.mark.parametrize("trainer_cls", [IACTrainer, MAACTrainer])
-def test_actor_critic_kl_shaping_is_noop_when_disabled(trainer_cls, stub_tokenizer):
-    trainer = _actor_critic_trainer(trainer_cls, stub_tokenizer)
+@pytest.mark.parametrize("enabled", [False, True])
+def test_actor_critic_kl_shaping(enabled):
+    # IAC and MAAC both use the base-class method.
+    trainer = ActorCriticTrainerBase.__new__(ActorCriticTrainerBase)
+    trainer.args = SimpleNamespace(reference_kl_enabled=enabled, reference_kl_coef=0.25)
     shaped_reward, metadata = trainer._kl_shaped_reward(
         1.0, {"reference_kls": [0.4]}, 0
     )
-    assert shaped_reward == pytest.approx(1.0)
-    assert metadata == {}
-
-
-@pytest.mark.parametrize("trainer_cls", [IACTrainer, MAACTrainer])
-def test_actor_critic_kl_shaping_penalizes_reward(trainer_cls, stub_tokenizer):
-    trainer = _actor_critic_trainer(
-        trainer_cls,
-        stub_tokenizer,
-        reference_kl_enabled=True,
-        reference_kl_coef=0.25,
-    )
-
-    shaped_reward, metadata = trainer._kl_shaped_reward(
-        1.0, {"reference_kls": [0.4]}, 0
-    )
-
+    if not enabled:
+        assert shaped_reward == pytest.approx(1.0)
+        assert metadata == {}
+        return
     assert shaped_reward == pytest.approx(0.9)
     assert metadata["reference_kl"] == pytest.approx(0.4)
     assert metadata["reference_kl_penalty"] == pytest.approx(0.1)
@@ -187,24 +158,26 @@ def test_magrpo_applies_reference_kl_to_returns(stub_tokenizer):
     assert torch.allclose(adjusted, torch.tensor([0.9, 1.8]))
 
 
-@pytest.mark.parametrize("trainer_cls", TRAINERS)
-def test_reference_kl_values_disabled_or_missing_models(trainer_cls):
-    trainer = trainer_cls.__new__(trainer_cls)
-    trainer.args = SimpleNamespace(reference_kl_enabled=False)
-    assert trainer._reference_kl_values(0, None, None, None, 2, []) == []
+def test_trainers_share_one_reference_kl_helper():
+    assert all(
+        cls._reference_kl_values is reference_kl.reference_kl_values for cls in TRAINERS
+    )
+
+
+def test_reference_kl_values_disabled_or_missing_models():
+    trainer = SimpleNamespace(args=SimpleNamespace(reference_kl_enabled=False))
+    assert reference_kl.reference_kl_values(trainer, 0, None, None, None, 2, []) == []
     trainer.args.reference_kl_enabled = True
     with pytest.raises(RuntimeError, match="reference models are missing"):
-        trainer._reference_kl_values(0, None, None, None, 2, [])
+        reference_kl.reference_kl_values(trainer, 0, None, None, None, 2, [])
 
 
-@pytest.mark.parametrize("trainer_cls", TRAINERS)
 @pytest.mark.parametrize("response_lens", [[], [2], [2, 1, 3]])
-def test_reference_kl_values_keep_order_and_module_hook(
-    trainer_cls, response_lens, monkeypatch
-):
-    trainer = trainer_cls.__new__(trainer_cls)
-    trainer.args = SimpleNamespace(reference_kl_enabled=True)
-    trainer.reference_models = [object(), object()]
+def test_reference_kl_values_keep_order(response_lens, monkeypatch):
+    trainer = SimpleNamespace(
+        args=SimpleNamespace(reference_kl_enabled=True),
+        reference_models=[object(), object()],
+    )
     policy = object()
     ids = torch.tensor([[2, 3, 4, 5], [6, 7, 8, 9]])
     mask = torch.tensor([[1, 1, 1, 1], [1, 1, 1, 0]])
@@ -221,28 +194,28 @@ def test_reference_kl_values_keep_order_and_module_hook(
         calls.append((prompt_len, response_len))
         return torch.tensor([idx + 0.25, 100.0])
 
-    module = importlib.import_module(trainer_cls.__module__)
-    monkeypatch.setattr(module, "reference_kl_for_sequence", sequence_kl)
-    values = trainer._reference_kl_values(1, policy, ids, mask, 2, response_lens)
+    monkeypatch.setattr(reference_kl, "reference_kl_for_sequence", sequence_kl)
+    values = reference_kl.reference_kl_values(
+        trainer, 1, policy, ids, mask, 2, response_lens
+    )
     count = min(len(ids), len(response_lens))
     assert values == [idx + 0.25 for idx in range(count)]
     assert calls == [(2, length) for length in response_lens[:count]]
 
 
-@pytest.mark.parametrize("trainer_cls", TRAINERS)
-def test_reference_kl_values_restore_training_modes_and_rng(trainer_cls):
-    trainer = trainer_cls.__new__(trainer_cls)
-    trainer.args = SimpleNamespace(reference_kl_enabled=True)
+def test_reference_kl_values_restore_training_modes_and_rng():
     policy, reference = tiny_gpt2(), tiny_gpt2()
     policy.train()
     reference.eval()
-    trainer.reference_models = [reference]
+    trainer = SimpleNamespace(
+        args=SimpleNamespace(reference_kl_enabled=True), reference_models=[reference]
+    )
     ids = torch.tensor([[2, 3, 4, 5], [6, 7, 8, 9]])
     mask = torch.ones_like(ids)
     rng_before = torch.get_rng_state().clone()
 
-    first = trainer._reference_kl_values(0, policy, ids, mask, 2, [2, 1])
-    second = trainer._reference_kl_values(0, policy, ids, mask, 2, [2, 1])
+    first = reference_kl.reference_kl_values(trainer, 0, policy, ids, mask, 2, [2, 1])
+    second = reference_kl.reference_kl_values(trainer, 0, policy, ids, mask, 2, [2, 1])
 
     assert first == second
     assert len(first) == 2 and all(value >= 0.0 for value in first)

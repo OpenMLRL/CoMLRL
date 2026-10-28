@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Callable, Mapping, List, Sequence
+from typing import Any, Mapping, List, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -108,19 +108,28 @@ def response_token_logprobs(
     return token_log_probs[:, start_index:end_index]
 
 
-def _sequence_kl_values(
+def reference_kl_values(
+    trainer: Any,
+    agent_idx: int,
     policy_model: Any,
-    reference_model: Any,
     sequences: torch.Tensor,
     attention_mask: torch.Tensor,
     prompt_len: int,
     response_lens: Sequence[int],
-    *,
-    sequence_kl: Callable[..., torch.Tensor],
 ) -> List[float]:
+    """One KL estimate per sampled sequence against ``trainer``'s frozen reference.
+
+    Trainers bind this as ``_reference_kl_values``; it returns ``[]`` while
+    reference KL is disabled.
+    """
+    if not reference_kl_enabled(trainer.args):
+        return []
+    if not getattr(trainer, "reference_models", None):
+        raise RuntimeError("Reference KL is enabled but reference models are missing.")
+    reference_model = trainer.reference_models[agent_idx]
     values: List[float] = []
     for seq, attn, response_len in zip(sequences, attention_mask, response_lens):
-        kl_value = sequence_kl(
+        kl_value = reference_kl_for_sequence(
             policy_model,
             reference_model,
             seq.unsqueeze(0),

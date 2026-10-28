@@ -41,6 +41,16 @@ length. The examples leave W&B logging disabled by default; enable it explicitly
 python examples/story-len-ratio.py --wandb
 ```
 
+Two more examples cover other trainers and tasks. `leetcode-func-print.py` trains a
+function-writing agent and a test-writing agent with MAGRPO, rewarding runnable code
+and correct test prints. `tldr-len-ratio.py` trains two IAC agents to summarize Reddit
+posts, the second TL;DR about 2–3 times longer than the first.
+
+```bash
+python examples/leetcode-func-print.py
+python examples/tldr-len-ratio.py
+```
+
 For use in your own Python programs, CoMLRL is also available via PyPI or conda-forge:
 
 ```bash
@@ -55,10 +65,12 @@ conda install -c conda-forge comlrl
   - **_Multi-Agent REINFORCE_:** Critic-free policy gradient methods, including [MAREINFORCE](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/mareinforce.py), [MAGRPO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/magrpo.py), [MARLOO](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/marloo.py), [MAREMAX](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/reinforce/maremax.py).
     - Aligned individual response joint with `joint_mode='aligned'`.
     - Cartesian-product joint responses with `joint_mode='cross'`.
+    - Decentralized actors or a centralized actor with `collaboration_mode='centralized'`.
   - **_Multi-Agent Actor-Critic:_** Actor-Critic methods, including [IAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/iac.py) and [MAAC](https://github.com/OpenMLRL/CoMLRL/blob/main/comlrl/trainers/actor_critic/maac.py).
     - Independent actor-critic (separate critic or value-head over LLM backbone).
     - Centralized critic over joint prompts with separate actors.
-  - **_Multi-Agent Preference Learning:_** [MADPO](comlrl/trainers/preference/madpo.py), [MARLHF](comlrl/trainers/preference/marlhf.py), and their [iterative variants](comlrl/trainers/preference/iterative.py).
+    - Decentralized actors or a centralized actor with `collaboration_mode='centralized'`.
+  - **_Multi-Agent Preference Learning:_** [MADPO](comlrl/trainers/pbrl/madpo.py), [MARLHF](comlrl/trainers/pbrl/marlhf.py), and their [iterative variants](comlrl/trainers/pbrl/iterative.py).
     - Direct joint preference optimization or learned joint rewards followed by RL.
     - Decentralized actors or a centralized actor generating a complete joint response.
 
