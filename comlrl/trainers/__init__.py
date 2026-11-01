@@ -1,3 +1,8 @@
+"""Trainers by family: reinforce (MAGRPO and its baselines), pbrl (preference-based RL) and
+actor_critic. Every trainer runs in ``collaboration_mode="decentralized"`` (one actor per
+agent) or ``"centralized"`` (one joint actor answering for all agents; see ``centralized``).
+"""
+
 from .actor_critic import (
     ActorCriticTrainerBase,
     IACConfig,
@@ -5,11 +10,21 @@ from .actor_critic import (
     MAACConfig,
     MAACTrainer,
 )
-from .preference import (
+from .centralized import (
+    CentralizedCollaboration,
+    CentralizedComparatorAdapter,
+    CentralizedComparatorParseError,
+    TaggedCentralizedComparatorAdapter,
+)
+from .pbrl import (
     JointRewardModel,
     MADPOConfig,
+    MADPOIterConfig,
+    MADPOIterTrainer,
     MADPOTrainer,
     MARLHFConfig,
+    MARLHFIterConfig,
+    MARLHFIterTrainer,
     MARLHFTrainer,
 )
 from .reinforce import (
@@ -29,13 +44,21 @@ __all__ = [
     "IACTrainer",
     "MAACConfig",
     "MAACTrainer",
-    "MAGRPOConfig",
-    "MAGRPOTrainer",
+    "CentralizedCollaboration",
+    "CentralizedComparatorAdapter",
+    "CentralizedComparatorParseError",
+    "TaggedCentralizedComparatorAdapter",
+    "JointRewardModel",
     "MADPOConfig",
+    "MADPOIterConfig",
+    "MADPOIterTrainer",
     "MADPOTrainer",
     "MARLHFConfig",
+    "MARLHFIterConfig",
+    "MARLHFIterTrainer",
     "MARLHFTrainer",
-    "JointRewardModel",
+    "MAGRPOConfig",
+    "MAGRPOTrainer",
     "MAREINFORCEConfig",
     "MAREINFORCETrainer",
     "MAReMaxConfig",

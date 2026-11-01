@@ -6,10 +6,12 @@ from datasets import Dataset
 import pytest
 import torch
 
-from comlrl.trainers.preference import MARLHFConfig, MARLHFTrainer
-from comlrl.trainers.preference.centralized import TaggedCentralizedComparatorAdapter
-from comlrl.trainers.preference.collaboration import joint_sequence_log_prob
-from comlrl.trainers.reinforce import CentralizedMAGRPOConfig, CentralizedMAGRPOTrainer
+from comlrl.trainers.pbrl import MARLHFConfig, MARLHFTrainer
+from comlrl.trainers.centralized import (
+    TaggedCentralizedComparatorAdapter,
+    joint_sequence_log_prob,
+)
+from comlrl.trainers.reinforce import MAGRPOConfig, MAGRPOTrainer
 
 from helpers import (
     BAD,
@@ -205,11 +207,13 @@ def test_joint_actor_trains_and_evaluates_with_variable_role_counts(
 
     observed = []
     dataset = Dataset.from_list([{"prompt": "task"}])
-    trainer = CentralizedMAGRPOTrainer(
+    trainer = MAGRPOTrainer(
         agents=[model],
         num_agents=num_roles,
         tokenizer=tokenizer,
-        args=CentralizedMAGRPOConfig(
+        args=MAGRPOConfig(
+            collaboration_mode="centralized",
+            num_turns=1,
             num_agents=num_roles,
             agent_devices="cpu",
             num_train_epochs=1,

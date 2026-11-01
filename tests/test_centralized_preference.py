@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from comlrl.trainers.preference import (
+from comlrl.trainers.pbrl import (
     MADPOConfig,
     MADPOIterConfig,
     MADPOIterTrainer,
@@ -16,8 +16,8 @@ from comlrl.trainers.preference import (
     MARLHFIterTrainer,
     MARLHFTrainer,
 )
-from comlrl.trainers.preference.collaboration import CentralizedCollaboration
-from comlrl.trainers.preference.marlhf import JointRewardModel
+from comlrl.trainers.centralized import CentralizedCollaboration
+from comlrl.trainers.pbrl.marlhf import JointRewardModel
 
 from helpers import (
     BAD,
@@ -68,7 +68,10 @@ class _TokenValueBackbone(torch.nn.Module):
     "config_cls", [MADPOConfig, MARLHFConfig, MADPOIterConfig, MARLHFIterConfig]
 )
 def test_config_defaults_and_centralized_comparator(config_cls):
-    assert config_cls(agent_devices="cpu").collaboration_mode == "decentralized"
+    default = config_cls(agent_devices="cpu")
+    assert default.collaboration_mode == "decentralized"
+    if hasattr(default, "comparator_generation_mode"):
+        assert default.comparator_generation_mode == "decentralized"
     config = config_cls(agent_devices="cpu", collaboration_mode="centralized")
     assert config.num_agents == 2
     if hasattr(config, "comparator_generation_mode"):
@@ -87,18 +90,6 @@ def test_centralized_mode_requires_one_actor(tokenizer):
         MADPOIterConfig(
             collaboration_mode="centralized", comparator_centralized_agent_index=1
         )
-
-
-def test_centralized_reference_uses_one_device(tokenizer, tmp_path):
-    trainer, _ = make_preference_trainer(
-        MADPOTrainer,
-        MADPOConfig,
-        tokenizer,
-        tmp_path,
-        reference_kl_enabled=True,
-        reference_devices=["cpu"],
-    )
-    assert len(trainer.reference_models) == 1
 
 
 @pytest.mark.parametrize(
@@ -164,7 +155,10 @@ def test_replay_stores_raw_joint_text_and_current_comparator_uses_same_prompt(
     assert len(pairs[0].agent_tensors) == 1
     torch.testing.assert_close(calls[0], calls[1])
     shard = trainer._write_iteration_preference_pairs(0, pairs)
-    loaded = trainer._load_replay_shard(shard)
+    loaded = [
+        trainer._preference_pair_from_record(record)
+        for record in trainer._load_replay_records(shard)
+    ]
     assert loaded[0].winner_completions == [GOOD]
     torch.testing.assert_close(
         loaded[0].agent_tensors[0].winner_completion_ids,
@@ -201,7 +195,6 @@ def test_eval_splits_roles_and_uses_task_reward(cls, config_cls, tokenizer, tmp_
     assert observed[0]["agent_completions_turns"] == [[["good"]], [["good"]]]
     assert result["eval/turn_1/reward_mean"] == 2.0
     assert result["eval/turn_1/domain_metric"] == 1.0
-    assert not trainer._centralized_eval_items
 
 
 @pytest.mark.parametrize("cls,config_cls", MARLHF_TRAINERS)

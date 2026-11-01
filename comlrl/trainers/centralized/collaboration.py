@@ -11,7 +11,7 @@ from comlrl.utils.formatters import build_formatters
 from comlrl.utils.reward_utils import call_reward_function, resolve_reward_range
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials
 
-from .centralized import CentralizedComparatorParseError
+from .adapters import CentralizedComparatorParseError
 
 
 def joint_sequence_log_prob(agent, tokenizer, prompt_ids, completion_ids):

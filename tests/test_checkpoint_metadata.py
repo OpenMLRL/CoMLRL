@@ -100,11 +100,9 @@ def test_metadata_reads_only_public_fields_without_restoring(
     monkeypatch.setattr(
         wandb, "init", lambda **kwargs: pytest.fail("metadata initialized W&B")
     )
-    # No training records, callbacks or model classes need decoding/importing.
+    # Metadata needs only primitives, so no training state is decoded.
     monkeypatch.setattr(
-        checkpoint.importlib,
-        "import_module",
-        lambda *a: pytest.fail("decoded training record"),
+        checkpoint, "_decode", lambda *a: pytest.fail("decoded training state")
     )
     metadata = read_checkpoint_metadata(state_path if file_path else path)
     assert metadata == {

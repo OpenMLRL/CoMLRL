@@ -6,8 +6,7 @@ compatible trainer (including datasets and callbacks), then resume its loop with
 """
 
 from contextlib import contextmanager
-from dataclasses import fields, is_dataclass
-import importlib
+from dataclasses import MISSING, fields, is_dataclass
 import inspect
 import hashlib
 import json
@@ -29,13 +28,8 @@ from comlrl.utils.distributed import unwrap_model
 CHECKPOINT_VERSION = 1
 STATE_FILENAME = "training_state.pt"
 _OWNER_FILENAME = "checkpoint_owner.json"
-_DATACLASSES = {
-    "comlrl.trainers.reinforce.magrpo.NodeSample",
-    "comlrl.trainers.actor_critic.iac.RolloutSample",
-    "comlrl.trainers.preference.madpo.PreferencePair",
-    "comlrl.trainers.preference.madpo.AgentPreferenceTensors",
-    "comlrl.trainers.preference.iterative.PreferenceReplayShard",
-}
+# Trainer dataclasses allowed in checkpoints; see register_checkpoint_record.
+_RECORDS = {}
 _MODEL_FIELDS = ("agents", "critics", "reference_models", "reward_model")
 _OPTIMIZER_FIELDS = (
     "optimizers",
@@ -172,6 +166,14 @@ def _class_name(value):
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
+def register_checkpoint_record(cls):
+    """Allow instances of a trainer dataclass in training checkpoints."""
+    if not isinstance(cls, type) or not is_dataclass(cls):
+        raise TypeError("Checkpoint records must be dataclass types.")
+    _RECORDS[f"{cls.__module__}.{cls.__qualname__}"] = cls
+    return cls
+
+
 def _encode(value, *, copy_tensors=True):
     """Copy tensors to CPU and encode known records using safe built-in types."""
     if value is None or type(value) in (bool, int, float, str, bytes):
@@ -193,7 +195,7 @@ def _encode(value, *, copy_tensors=True):
         return {"__kind__": "text", "value": str(value)}
     if is_dataclass(value) and not isinstance(value, type):
         name = _class_name(value)
-        if name not in _DATACLASSES:
+        if name not in _RECORDS:
             raise TypeError(f"Unsupported checkpoint record: {name}")
         return {
             "__kind__": "record",
@@ -242,10 +244,9 @@ def _decode(value):
         return np.frombuffer(value["data"], dtype=dtype).reshape(value["shape"]).copy()
     if kind == "record":
         name = value["class"]
-        if name not in _DATACLASSES:
+        if name not in _RECORDS:
             raise ValueError(f"Unsupported checkpoint record: {name}")
-        module, _, attr = name.rpartition(".")
-        cls = getattr(importlib.import_module(module), attr)
+        cls = _RECORDS[name]
         return cls(**{key: _decode(item) for key, item in value["fields"].items()})
     raise ValueError("Invalid checkpoint value encoding.")
 
@@ -291,6 +292,33 @@ def _config(trainer):
         and key not in _PORTABLE_CONFIG_FIELDS
         and not key.endswith("_dir")
     }
+
+
+def _config_defaults(trainer, names):
+    """Encoded defaults of the config fields ``names`` that a checkpoint lacks."""
+    args = getattr(trainer, "args", None)
+    if not names or not is_dataclass(args):
+        return {}
+    defaults = {}
+    for field in fields(args):
+        if field.name not in names:
+            continue
+        if field.default is not MISSING:
+            default = field.default
+        elif field.default_factory is not MISSING:
+            # A factory may draw random numbers; validation must not move the RNG.
+            rng = capture_rng_state()
+            try:
+                default = field.default_factory()
+            finally:
+                restore_rng_state(rng)
+        else:
+            continue
+        try:
+            defaults[field.name] = _decode(_encode(default))
+        except TypeError:
+            continue
+    return defaults
 
 
 def _dataset_info(trainer):
@@ -750,11 +778,20 @@ def _validate_state(trainer, state, *, model_config_updates=None):
         for key, value in state["config"].items()
         if key not in _PORTABLE_CONFIG_FIELDS
     }
-    if saved_config != _config(trainer):
+    current_config = _config(trainer)
+    missing = set(current_config) - set(saved_config)
+    defaults = _config_defaults(trainer, missing)
+    # A field added after the checkpoint was written matches at its default.
+    for key in missing:
+        if key in defaults and current_config[key] == defaults[key]:
+            saved_config[key] = current_config[key]
+    if saved_config != current_config:
         changed = sorted(
             key
-            for key in set(saved_config) | set(_config(trainer))
-            if saved_config.get(key) != _config(trainer).get(key)
+            for key in set(saved_config) | set(current_config)
+            if key not in saved_config
+            or key not in current_config
+            or saved_config[key] != current_config[key]
         )
         raise ValueError(
             f"Checkpoint configuration does not match: {', '.join(changed)}"
@@ -942,14 +979,14 @@ def restore_trainer_state(trainer, state, checkpoint_dir=None, restore_rng=True)
     assets_hook = getattr(trainer, "_checkpoint_load_assets", None)
     if callable(assets_hook) and "assets" in state:
         assets_hook(checkpoint_dir, state["assets"])
-    extra_hook = getattr(trainer, "_restore_checkpoint_extra_state", None)
+    extra_hook = getattr(trainer, "_checkpoint_restore_extra_state", None)
     if callable(extra_hook):
         extra_hook(state["extra"], checkpoint_dir)
     _restore_wandb_identity(trainer, state.get("wandb"))
     if restore_rng:
         _restore_trainer_rng(trainer, state, additional_devices)
     trainer._checkpoint_save_blocked = False
-    trainer._checkpoint_untracked_preference = False
+    trainer._checkpoint_untracked = False
 
 
 def _fsync_directory(directory):
@@ -1076,6 +1113,34 @@ def _preflight_checkpoint_directory(checkpoint_dir, metadata=None):
 class TrainingCheckpointMixin:
     """Explicit checkpoint APIs; ordinary training performs no checkpoint I/O."""
 
+    def _checkpoint_arguments(
+        self,
+        resume_from_checkpoint,
+        checkpoint_dir,
+        checkpoint_interval,
+        checkpoint_total_limit,
+    ):
+        """Validate ``train``'s checkpoint arguments; return them when any is set."""
+        if (
+            isinstance(checkpoint_interval, bool)
+            or not isinstance(checkpoint_interval, numbers.Integral)
+            or checkpoint_interval < 1
+        ):
+            raise ValueError("checkpoint_interval must be a positive integer.")
+        if (
+            resume_from_checkpoint is None
+            and checkpoint_dir is None
+            and checkpoint_interval == 1
+            and checkpoint_total_limit is None
+        ):
+            return None
+        return {
+            "resume_from_checkpoint": resume_from_checkpoint,
+            "checkpoint_dir": checkpoint_dir,
+            "checkpoint_interval": checkpoint_interval,
+            "checkpoint_total_limit": checkpoint_total_limit,
+        }
+
     def _checkpoint_init_wandb(self):
         """Initialize resumed logging without advancing training RNG streams."""
         if getattr(self, "wandb_config", None) is None or getattr(
@@ -1113,9 +1178,9 @@ class TrainingCheckpointMixin:
             raise RuntimeError(
                 "Training did not reach a completed checkpoint boundary; resume the last saved checkpoint."
             )
-        if getattr(self, "_checkpoint_untracked_preference", False):
+        if getattr(self, "_checkpoint_untracked", False):
             raise RuntimeError(
-                "Preference checkpoint tracking was not enabled. Use train(checkpoint_dir=...) to retain resumable state."
+                "Checkpoint tracking was not enabled. Use train(checkpoint_dir=...) to retain resumable state."
             )
         target = Path(output_dir).expanduser().absolute()
         if target.is_symlink() or (
@@ -1228,7 +1293,7 @@ class TrainingCheckpointMixin:
         self._checkpoint_context_active = True
         self._checkpoint_safe_to_save = False
         self._checkpoint_save_blocked = True
-        self._checkpoint_untracked_preference = False
+        self._checkpoint_untracked = False
         try:
             yield self._checkpoint_progress
         except BaseException:
@@ -1293,9 +1358,6 @@ class TrainingCheckpointMixin:
         for _, path in older[max(0, int(limit) - 1) :]:
             shutil.rmtree(path)
         _fsync_directory(root)
-        if callable(getattr(self, "_checkpoint_save_assets", None)):
-            from comlrl.trainers.preference.checkpointing import (
-                prune_preference_asset_pool,
-            )
-
-            prune_preference_asset_pool(root)
+        prune_assets = getattr(self, "_checkpoint_prune_assets", None)
+        if callable(prune_assets):
+            prune_assets(root)

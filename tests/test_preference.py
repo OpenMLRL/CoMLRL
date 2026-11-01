@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from comlrl.trainers.preference import (
+from comlrl.trainers.pbrl import (
     MADPOConfig,
     MADPOIterTrainer,
     MADPOTrainer,

@@ -224,3 +224,26 @@ def test_compute_rewards_wraps_completions_in_place():
     ) == [2.0]
     assert completions == [["0:0:0"], ["0:1:1"]]
     assert completions[1] is second
+
+
+@pytest.mark.parametrize("skip", [False, True])
+def test_zero_gradient_updates_can_skip_the_optimizer_step(tokenizer, skip):
+    from comlrl.trainers.reinforce.magrpo import NodeSample
+    from helpers import make_centralized_magrpo_trainer
+
+    trainer, _ = make_centralized_magrpo_trainer(tokenizer, skip_zero_grad_steps=skip)
+    weights = trainer.agents[0].transformer.wte.weight
+    optimizer = trainer.optimizers[0]
+    steps = []
+    original_step = optimizer.step
+    optimizer.step = lambda *args, **kwargs: steps.append(1) or original_step()
+    sample = NodeSample(0, 0, {}, [1.0, 1.0], 1.0, 1.0, 2)
+    # Equal returns leave every advantage, and so every gradient, at zero.
+    trainer._compute_loss_with_gradients = (
+        lambda agent, data, returns: weights.sum() * 0
+    )
+    trainer._update_from_samples(0, [sample])
+    assert steps == ([] if skip else [1])
+    trainer._compute_loss_with_gradients = lambda agent, data, returns: weights.sum()
+    trainer._update_from_samples(0, [sample])
+    assert steps == ([1] if skip else [1, 1])

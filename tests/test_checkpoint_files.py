@@ -85,21 +85,21 @@ def test_public_save_preserves_rng_and_load_restores_state(tmp_path):
     assert_nested_equal(actual_random, expected_random)
 
 
-@pytest.mark.parametrize("failure", ["write", "publish"])
+@pytest.mark.parametrize("failure", ["write", "sync", "publish"])
 def test_failed_checkpoint_write_keeps_existing_checkpoint_loadable(
     tmp_path, monkeypatch, failure
 ):
     source = TinyTrainer()
     advance_models(source)
-    checkpoint = tmp_path / "checkpoint"
-    source.save_checkpoint(checkpoint)
+    destination = tmp_path / "checkpoint"
+    source.save_checkpoint(destination)
     saved_files = {
-        path.relative_to(checkpoint): path.read_bytes()
-        for path in checkpoint.rglob("*")
+        path.relative_to(destination): path.read_bytes()
+        for path in destination.rglob("*")
         if path.is_file()
     }
     expected = TinyTrainer()
-    expected.load_checkpoint(checkpoint)
+    expected.load_checkpoint(destination)
     advance_models(source)
 
     def fail_save(*args, **kwargs):
@@ -110,7 +110,7 @@ def test_failed_checkpoint_write_keeps_existing_checkpoint_loadable(
 
     def fail_publish(source_path, target_path):
         nonlocal publish_failed
-        if Path(target_path) == checkpoint and not publish_failed:
+        if Path(target_path) == destination and not publish_failed:
             publish_failed = True
             raise OSError("simulated storage failure")
         return original_replace(source_path, target_path)
@@ -118,18 +118,21 @@ def test_failed_checkpoint_write_keeps_existing_checkpoint_loadable(
     with monkeypatch.context() as patch:
         if failure == "write":
             patch.setattr(torch, "save", fail_save)
+        elif failure == "sync":
+            patch.setattr(checkpoint, "_fsync_tree", fail_save)
         else:
             patch.setattr(os, "replace", fail_publish)
         with pytest.raises(OSError, match="simulated storage failure"):
-            source.save_checkpoint(checkpoint)
+            source.save_checkpoint(destination)
 
     assert {
-        path.relative_to(checkpoint): path.read_bytes()
-        for path in checkpoint.rglob("*")
+        path.relative_to(destination): path.read_bytes()
+        for path in destination.rglob("*")
         if path.is_file()
     } == saved_files
+    assert not list(tmp_path.glob(".checkpoint-*"))
     restored = TinyTrainer()
-    restored.load_checkpoint(checkpoint)
+    restored.load_checkpoint(destination)
     assert_models_equal(restored, expected)
 
 
@@ -167,23 +170,6 @@ def test_all_assets_fsynced_before_publish_and_parent_after(tmp_path, monkeypatc
     assert events[-1] == ("sync", tmp_path.stat().st_ino)
 
 
-def test_asset_sync_failure_does_not_replace_previous_checkpoint(tmp_path, monkeypatch):
-    trainer = TinyTrainer()
-    destination = tmp_path / "checkpoint"
-    trainer.save_checkpoint(destination)
-    previous = (destination / checkpoint.STATE_FILENAME).read_bytes()
-    monkeypatch.setattr(
-        checkpoint,
-        "_fsync_tree",
-        lambda root: (_ for _ in ()).throw(OSError("sync failed")),
-    )
-    trainer.env_step += 1
-    with pytest.raises(OSError, match="sync failed"):
-        trainer.save_checkpoint(destination)
-    assert (destination / checkpoint.STATE_FILENAME).read_bytes() == previous
-    assert not list(tmp_path.glob(".checkpoint-*"))
-
-
 def test_public_load_rejects_unallowlisted_pickle_without_mutation(tmp_path):
     target = TinyTrainer()
     before = capture_trainer_state(target)
@@ -196,7 +182,7 @@ def test_public_load_rejects_unallowlisted_pickle_without_mutation(tmp_path):
     assert_nested_equal(capture_trainer_state(target), before)
 
 
-def test_public_load_rejects_unallowlisted_record_without_mutation(tmp_path):
+def test_public_load_rejects_unregistered_record_without_mutation(tmp_path):
     target = TinyTrainer()
     before = capture_trainer_state(target)
     path = tmp_path / "unknown-record.pt"
@@ -260,19 +246,6 @@ def test_invalid_retention_limit_rejected_before_training(tmp_path, limit):
     assert_nested_equal(capture_trainer_state(trainer), before)
 
 
-def test_automatic_save_does_not_overwrite_foreign_run(tmp_path):
-    first, second = TinyTrainer(), TinyTrainer()
-    with first._checkpoint_context(checkpoint_dir=tmp_path):
-        first._checkpoint_commit({"epoch": 1})
-    saved = (tmp_path / "checkpoint-1" / checkpoint.STATE_FILENAME).read_bytes()
-    with pytest.raises(FileExistsError, match="another run"):
-        with second._checkpoint_context(
-            checkpoint_dir=tmp_path, checkpoint_total_limit=1
-        ):
-            second._checkpoint_commit({"epoch": 1})
-    assert (tmp_path / "checkpoint-1" / checkpoint.STATE_FILENAME).read_bytes() == saved
-
-
 def test_automatic_save_expands_user_directory(tmp_path, monkeypatch):
     original = Path.expanduser
     monkeypatch.setattr(
@@ -301,10 +274,19 @@ def test_new_run_rejects_any_existing_snapshot_before_mutation(tmp_path, kind):
 
 
 @pytest.mark.parametrize(
-    "kind", ["foreign", "legacy", "bad-sequence", "file", "symlink"]
+    "kind, match",
+    [
+        ("foreign", "another run"),
+        ("legacy", "Legacy or unowned.*ownership metadata"),
+        ("bad-sequence", "inconsistent ownership metadata"),
+        ("file", "not a checkpoint directory"),
+        ("symlink", "not a checkpoint directory"),
+    ],
 )
 @pytest.mark.parametrize("source_is_file", [False, True])
-def test_resume_rejects_future_conflicts_before_loading(tmp_path, kind, source_is_file):
+def test_resume_rejects_future_conflicts_before_loading(
+    tmp_path, kind, match, source_is_file
+):
     source_root = tmp_path / "source"
     source = _save_run(source_root)
     output = tmp_path / "output"
@@ -314,25 +296,11 @@ def test_resume_rejects_future_conflicts_before_loading(tmp_path, kind, source_i
     if source_is_file:
         path = path / checkpoint.STATE_FILENAME
     trainer, attributes, state = _untouched_trainer()
-    with pytest.raises(FileExistsError):
+    with pytest.raises(FileExistsError, match=match):
         with trainer._checkpoint_context(
             resume_from_checkpoint=path, checkpoint_dir=output
         ):
             pytest.fail("training started despite a future conflict")
-    _assert_untouched(trainer, attributes, state)
-
-
-def test_legacy_destination_reports_missing_ownership_before_restore(tmp_path):
-    source_root = tmp_path / "source"
-    _save_run(source_root)
-    output = tmp_path / "output"
-    _snapshot(output, 2, kind="legacy")
-    trainer, attributes, state = _untouched_trainer()
-    with pytest.raises(FileExistsError, match="Legacy or unowned.*ownership metadata"):
-        with trainer._checkpoint_context(
-            resume_from_checkpoint=source_root / "checkpoint-1", checkpoint_dir=output
-        ):
-            pytest.fail("legacy destination was not rejected")
     _assert_untouched(trainer, attributes, state)
 
 

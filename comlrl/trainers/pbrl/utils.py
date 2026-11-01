@@ -1,4 +1,8 @@
-"""Preference-specific state and portable assets for safe-boundary checkpoints."""
+"""Helpers shared by the PbRL trainers.
+
+Side-effect-free output path selection, shared by training and resume, and the
+preference-specific state and portable assets of safe-boundary checkpoints.
+"""
 
 import errno
 import hashlib
@@ -11,9 +15,40 @@ import tempfile
 import threading
 
 import torch
+from transformers import AutoTokenizer
 
+from comlrl.utils.checkpoint import capture_trainer_state
 from comlrl.utils.distributed import unwrap_model
-from .output_paths import resolve_output_path
+
+
+def resolve_output_path(
+    directory,
+    *,
+    cached=None,
+    configured=None,
+    wandb_config=None,
+    default_base=None,
+):
+    """Keep cached paths verbatim; normalize new paths without expanding ``~``.
+
+    A missing source returns ``None`` unless ``default_base`` is supplied, so
+    resume can apply its additional checkpoint-directory fallback.
+    """
+    if cached:
+        return cached
+    path = configured
+    if not path and isinstance(wandb_config, dict):
+        base = wandb_config.get("output_dir")
+        if not base:
+            sections = wandb_config.get("config_sections") or {}
+            output = sections.get("output") if isinstance(sections, dict) else {}
+            base = output.get("base_dir") if isinstance(output, dict) else None
+            base = base or wandb_config.get("dir")
+        if base:
+            path = os.path.join(str(base), directory)
+    if not path and default_base:
+        path = os.path.join(str(default_base), directory)
+    return os.path.abspath(str(path)) if path else None
 
 
 _EXTRA_FIELDS = {
@@ -95,7 +130,7 @@ def validate_preference_progress(trainer, state, kind):
         if type(progress[name]) is not int or progress[name] < 0:
             raise ValueError(f"Invalid preference checkpoint counter: {name}")
     if kind == "madpo":
-        from .madpo import PreferencePair
+        from .madpo import PreferencePair  # madpo imports this module
 
         pairs = progress["preference_pairs"]
         if not isinstance(pairs, list) or not all(
@@ -146,8 +181,6 @@ def preference_extra_state(trainer):
             state[name] = getattr(trainer, name)
     child = getattr(trainer, "_checkpoint_ac_trainer", None)
     if child is not None:
-        from comlrl.utils.checkpoint import capture_trainer_state
-
         state["actor_critic"] = capture_trainer_state(child)
     elif getattr(trainer, "_checkpoint_pending_ac_state", None) is not None:
         state["actor_critic"] = trainer._checkpoint_pending_ac_state
@@ -560,7 +593,7 @@ def _copy_restored_asset(source, destination):
 
 def load_preference_assets(trainer, checkpoint_dir, manifest):
     if manifest.get("iterative"):
-        from .iterative import PreferenceReplayShard
+        from .iterative import PreferenceReplayShard  # iterative imports this module
 
         destinations = _preference_resume_destinations(trainer, checkpoint_dir)
         allocated = set()
@@ -596,8 +629,6 @@ def load_preference_assets(trainer, checkpoint_dir, manifest):
             setattr(trainer, name, str(path))
 
     if manifest.get("reward_tokenizer"):
-        from transformers import AutoTokenizer
-
         trainer.reward_tokenizer = AutoTokenizer.from_pretrained(
             str(_asset_path(checkpoint_dir, manifest["reward_tokenizer"]))
         )
@@ -643,15 +674,8 @@ def train_iterations_checkpointed(trainer, *, reward_model, **kwargs):
     if progress.get("complete") and start == total_iterations:
         return
     trainer._checkpoint_init_wandb()
-    if not reward_model:
-        for index, agent in enumerate(trainer.agents):
-            agent.to(trainer.agent_devices[index])
-            agent.train()
-    trainer._maybe_save_initial_policy_checkpoint()
-    updates_seen = progress.get("updates_seen", 0)
-    total_pairs = progress.get("total_pairs", 0)
 
-    def commit(next_iteration):
+    def commit(next_iteration, updates_seen, total_pairs):
         complete = next_iteration == total_iterations
         trainer._checkpoint_commit(
             {
@@ -664,60 +688,11 @@ def train_iterations_checkpointed(trainer, *, reward_model, **kwargs):
             force=complete,
         )
 
-    for iteration in range(start, total_iterations):
-        if reward_model:
-            trainer._reward_model_active = False
-            trainer._evaluating_with_task_reward = False
-            if trainer.args.preference_scoring_reward != "reward_model":
-                trainer._clear_reward_model()
-        trainer._reset_iteration_reward_distribution()
-        trainer._prepare_iteration_current_copy_comparator()
-        try:
-            pairs = trainer._build_preference_dataset(iteration_idx=iteration, **kwargs)
-        finally:
-            trainer._clear_iteration_current_copy_comparator()
-            if reward_model:
-                trainer._clear_iteration_model_comparator()
-        current_pair_count = len(pairs)
-        train_pairs = trainer._select_iteration_preference_pairs(
-            pairs, iteration_idx=iteration
-        )
-        total_pairs += len(train_pairs)
-        trainer._log_iteration_replay(
-            iteration,
-            train_pairs=train_pairs,
-            current_pair_count=current_pair_count,
-            train_pair_count=len(train_pairs),
-        )
-        pairs.clear()
-        if not train_pairs:
-            if trainer.verbose:
-                print(
-                    f"{name}: no replay preference pairs were available "
-                    f"for iteration {iteration + 1} "
-                    f"(current generated {current_pair_count})."
-                )
-            trainer._maybe_save_iteration_policy_checkpoint(iteration)
-            commit(iteration + 1)
-            continue
-        if reward_model:
-            trainer._clear_reward_model()
-            trainer._init_reward_model()
-            trainer._train_reward_model(train_pairs)
-            trainer._reward_model_active = True
-            trainer._train_online_rl(**kwargs)
-        else:
-            updates_seen = trainer._train_preference_pairs(
-                train_pairs,
-                updates_seen=updates_seen,
-                desc=f"{name} iteration {iteration + 1}/{total_iterations}",
-            )
-        trainer._maybe_save_iteration_policy_checkpoint(iteration)
-        if reward_model and trainer.args.preference_scoring_reward != "reward_model":
-            trainer._clear_reward_model()
-        commit(iteration + 1)
-
-    if start == total_iterations:
-        commit(start)
-    if total_pairs == 0 and trainer.verbose:
-        print(f"{name}: no non-tied preference pairs were generated.")
+    trainer._train_iterations(
+        kwargs,
+        reward_model=reward_model,
+        start=start,
+        updates_seen=progress.get("updates_seen", 0),
+        total_pairs=progress.get("total_pairs", 0),
+        commit=commit,
+    )

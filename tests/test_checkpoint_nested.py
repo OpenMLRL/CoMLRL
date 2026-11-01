@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import torch
 
-from comlrl.trainers.preference import marlhf
+from comlrl.trainers.pbrl import marlhf
 from comlrl.utils.checkpoint import (
     STATE_FILENAME,
     _decode,

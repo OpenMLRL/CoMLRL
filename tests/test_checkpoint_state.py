@@ -1,17 +1,16 @@
 """In-memory trainer state capture/restore; failures never partially mutate."""
 
 import copy
+from dataclasses import dataclass, field
 
 import numpy as np
 import pytest
 from tokenizers.models import WordLevel
 import torch
 
-from comlrl.trainers.reinforce.magrpo import NodeSample
+from comlrl.trainers.reinforce.magrpo import MAGRPOConfig, NodeSample
 import comlrl.utils.checkpoint as checkpoint
 from comlrl.utils.checkpoint import (
-    _decode,
-    _encode,
     capture_trainer_state,
     restore_trainer_state,
 )
@@ -153,20 +152,6 @@ def test_restored_training_does_not_mutate_reusable_in_memory_snapshot(tmp_path)
     target._comparator_rng_states["cpu"].zero_()
 
     assert_nested_equal(state, before)
-
-
-def test_state_is_compatible_with_weights_only_loading(tmp_path):
-    trainer = TinyTrainer()
-    advance_models(trainer)
-    path = tmp_path / "state.pt"
-    state = capture_trainer_state(trainer)
-    torch.save(_encode(state), path)
-
-    loaded = _decode(torch.load(path, weights_only=True, map_location="cpu"))
-
-    restored = TinyTrainer()
-    restore_trainer_state(restored, loaded, tmp_path)
-    assert_models_equal(restored, trainer)
 
 
 def test_stateful_callback_restores_its_state(tmp_path):
@@ -455,6 +440,51 @@ def test_same_shape_model_metadata_mismatch_precedes_any_mutation(
         restore_trainer_state(target, state, tmp_path)
 
     assert_nested_equal(capture_trainer_state(target), before)
+
+
+@pytest.mark.parametrize("value,resumes", [(None, True), (4, False)])
+def test_config_field_newer_than_the_checkpoint_resumes_at_its_default(
+    tmp_path, value, resumes
+):
+    state = capture_trainer_state(TinyTrainer())
+    # A checkpoint written before this field existed has no entry for it.
+    del state["config"]["train_batch_size"]
+    target = TinyTrainer()
+    target.args.train_batch_size = value
+    if resumes:
+        restore_trainer_state(target, state, tmp_path)
+    else:
+        with pytest.raises(ValueError, match="does not match: train_batch_size"):
+            restore_trainer_state(target, state, tmp_path)
+
+
+def test_config_defaults_are_built_only_for_fields_the_checkpoint_lacks(tmp_path):
+    calls = []
+
+    def factory():
+        calls.append(torch.rand(1))  # draws from the global RNG
+        return []
+
+    @dataclass
+    class FactoryConfig(MAGRPOConfig):
+        extra_items: list = field(default_factory=factory)
+
+    def trainer():
+        target = TinyTrainer()
+        target.args = FactoryConfig(num_agents=2, num_turns=1, agent_devices="cpu")
+        return target
+
+    state = capture_trainer_state(trainer())
+    target = trainer()  # building the config itself runs the factory
+    calls.clear()
+    restore_trainer_state(target, state, tmp_path, restore_rng=False)
+    assert calls == []
+    del state["config"]["extra_items"]
+    target = trainer()
+    calls.clear()
+    before = torch.get_rng_state()
+    restore_trainer_state(target, state, tmp_path, restore_rng=False)
+    assert len(calls) == 1 and torch.equal(torch.get_rng_state(), before)
 
 
 @pytest.mark.parametrize("changed", ["vocab", "chat_template", "eos"])

@@ -146,7 +146,7 @@ In PbRL, [MARLHF]({{< relref "/docs/marl/multi-llm-pbrl#marlhf" >}}) learns a jo
 The following example loads a _Qwen/Qwen2.5-Coder-7B_ reward model for two _Qwen/Qwen2.5-Coder-3B_ agents:
 
 ```python
-from comlrl.trainers.preference import MARLHFConfig, MARLHFTrainer
+from comlrl.trainers.pbrl import MARLHFConfig, MARLHFTrainer
 
 trainer = MARLHFTrainer(
     agent_model="Qwen/Qwen2.5-Coder-3B",
