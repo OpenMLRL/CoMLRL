@@ -21,7 +21,7 @@ from ..centralized import (
     joint_sequence_log_prob,
     validate_collaboration_mode,
 )
-from .checkpoint_extras import (
+from .utils import (
     load_preference_assets,
     preference_extra_state,
     prune_preference_asset_pool,
@@ -344,7 +344,7 @@ class MADPOTrainer(MAGRPOTrainer):
         if not generated and start_epoch == int(self.args.num_train_epochs):
             commit_epoch(start_epoch, updates_seen)
 
-    # Checkpoint hooks looked up by comlrl.utils.checkpoint (see checkpoint_extras).
+    # Checkpoint hooks looked up by comlrl.utils.checkpoint (defined in pbrl/utils.py).
     _checkpoint_progress_kind = "madpo"
     _checkpoint_extra_state = preference_extra_state
     _checkpoint_restore_extra_state = restore_preference_extra_state

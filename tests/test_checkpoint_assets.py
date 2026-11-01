@@ -15,18 +15,18 @@ import torch
 from comlrl.trainers.pbrl import (
     MADPOIterTrainer,
     MARLHFIterTrainer,
-    checkpoint_extras,
+    utils as pbrl_utils,
 )
-from comlrl.trainers.pbrl.checkpoint_extras import (
+from comlrl.trainers.pbrl.iterative import PreferenceReplayShard
+from comlrl.trainers.pbrl.utils import (
     _preference_resume_destinations,
     _resume_output_path,
     load_preference_assets,
     prune_preference_asset_pool,
+    resolve_output_path,
     save_preference_assets,
     validate_preference_assets,
 )
-from comlrl.trainers.pbrl.iterative import PreferenceReplayShard
-from comlrl.trainers.pbrl.output_paths import resolve_output_path
 from comlrl.utils.checkpoint import STATE_FILENAME
 
 from checkpoint_helpers import (
@@ -369,14 +369,14 @@ def test_history_hash_and_copy_bytes_grow_only_with_new_assets(tmp_path, monkeyp
     trainer, replay, initial = source_assets(tmp_path / "run")
     counts = observe_hash_reads(monkeypatch)
     copy_bytes = 0
-    copy2 = checkpoint_extras.shutil.copy2
+    copy2 = pbrl_utils.shutil.copy2
 
     def counted_copy(source, destination, *args, **kwargs):
         nonlocal copy_bytes
         copy_bytes += Path(source).stat().st_size
         return copy2(source, destination, *args, **kwargs)
 
-    monkeypatch.setattr(checkpoint_extras.shutil, "copy2", counted_copy)
+    monkeypatch.setattr(pbrl_utils.shutil, "copy2", counted_copy)
     unique_bytes = replay.stat().st_size + initial.stat().st_size
     for index in range(6):
         policy = initial.parents[2] / f"iteration_{index:04d}/agent_0/weights.bin"
@@ -384,14 +384,14 @@ def test_history_hash_and_copy_bytes_grow_only_with_new_assets(tmp_path, monkeyp
         payload = bytes([index]) * (128 * 1024)
         policy.write_bytes(payload)
         unique_bytes += len(payload)
-        checkpoint_extras.save_preference_assets(
+        pbrl_utils.save_preference_assets(
             trainer, tmp_path / "checkpoints" / f"checkpoint-{index}"
         )
         # One source hash and one verification hash per newly copied file.
         assert sum(counts.values()) == 2 * unique_bytes
         assert copy_bytes == unique_bytes
     before_reads, before_copies = sum(counts.values()), copy_bytes
-    checkpoint_extras.save_preference_assets(
+    pbrl_utils.save_preference_assets(
         trainer, tmp_path / "checkpoints" / "checkpoint-unchanged"
     )
     assert sum(counts.values()) == before_reads
@@ -410,11 +410,11 @@ def test_digest_cache_invalidates_modified_or_replaced_source(
     cache = {}
     counts = observe_hash_reads(monkeypatch)
     assert (
-        checkpoint_extras._asset_digest(path, cache=cache)
+        pbrl_utils._asset_digest(path, cache=cache)
         == hashlib.sha256(original).hexdigest()
     )
     assert (
-        checkpoint_extras._asset_digest(path, cache=cache)
+        pbrl_utils._asset_digest(path, cache=cache)
         == hashlib.sha256(original).hexdigest()
     )
     assert sum(counts.values()) == len(original)
@@ -428,11 +428,11 @@ def test_digest_cache_invalidates_modified_or_replaced_source(
         path.write_bytes(modified)
         if change == "same_size_restored_mtime":
             os.utime(path, ns=(previous.st_atime_ns, previous.st_mtime_ns))
-    assert checkpoint_extras._asset_stat_key(
-        path.stat()
-    ) != checkpoint_extras._asset_stat_key(previous)
+    assert pbrl_utils._asset_stat_key(path.stat()) != pbrl_utils._asset_stat_key(
+        previous
+    )
     assert (
-        checkpoint_extras._asset_digest(path, cache=cache)
+        pbrl_utils._asset_digest(path, cache=cache)
         == hashlib.sha256(modified).hexdigest()
     )
     assert sum(counts.values()) == len(original) + len(modified)
@@ -449,7 +449,7 @@ def test_source_change_during_hash_is_rejected_without_caching(tmp_path, monkeyp
         after_read=lambda: source.write_bytes(b"after!"),
     )
     with pytest.raises(RuntimeError, match="changed during checkpoint saving"):
-        checkpoint_extras._asset_digest(source, cache=cache)
+        pbrl_utils._asset_digest(source, cache=cache)
     assert not cache
 
 
@@ -459,7 +459,7 @@ def test_initial_copy_rejects_changed_source_or_corrupted_copy(
 ):
     source = tmp_path / "weights.bin"
     source.write_bytes(b"original")
-    copy2 = checkpoint_extras.shutil.copy2
+    copy2 = pbrl_utils.shutil.copy2
 
     def change_after_copy(src, dst, *args, **kwargs):
         result = copy2(src, dst, *args, **kwargs)
@@ -469,12 +469,10 @@ def test_initial_copy_rejects_changed_source_or_corrupted_copy(
             source.write_bytes(b"modified")
         return result
 
-    monkeypatch.setattr(checkpoint_extras.shutil, "copy2", change_after_copy)
+    monkeypatch.setattr(pbrl_utils.shutil, "copy2", change_after_copy)
     destination, pool = tmp_path / "snapshot/weights.bin", tmp_path / "pool"
     with pytest.raises(RuntimeError, match="changed during checkpoint saving"):
-        checkpoint_extras._copy_checkpoint_asset(
-            source, destination, pool, digest_cache={}
-        )
+        pbrl_utils._copy_checkpoint_asset(source, destination, pool, digest_cache={})
     assert not destination.exists()
     assert not list(pool.iterdir())
 
@@ -483,7 +481,7 @@ def test_cached_source_change_during_link_is_rejected(tmp_path, monkeypatch):
     source = tmp_path / "weights.bin"
     source.write_bytes(b"original")
     cache, pool = {}, tmp_path / "pool"
-    checkpoint_extras._copy_checkpoint_asset(
+    pbrl_utils._copy_checkpoint_asset(
         source, tmp_path / "first/weights.bin", pool, digest_cache=cache
     )
     destination = tmp_path / "second/weights.bin"
@@ -497,9 +495,7 @@ def test_cached_source_change_during_link_is_rejected(tmp_path, monkeypatch):
 
     monkeypatch.setattr(os, "link", change_during_link)
     with pytest.raises(RuntimeError, match="changed during checkpoint saving"):
-        checkpoint_extras._copy_checkpoint_asset(
-            source, destination, pool, digest_cache=cache
-        )
+        pbrl_utils._copy_checkpoint_asset(source, destination, pool, digest_cache=cache)
     assert not destination.exists()
 
 
@@ -508,7 +504,7 @@ def test_existing_blob_size_and_readonly_guards_remain(tmp_path, damage):
     source = tmp_path / "weights.bin"
     source.write_bytes(b"original")
     cache, pool = {}, tmp_path / "pool"
-    checkpoint_extras._copy_checkpoint_asset(
+    pbrl_utils._copy_checkpoint_asset(
         source, tmp_path / "first/weights.bin", pool, digest_cache=cache
     )
     blob = pool / hashlib.sha256(b"original").hexdigest()
@@ -517,7 +513,7 @@ def test_existing_blob_size_and_readonly_guards_remain(tmp_path, damage):
         blob.write_bytes(b"short")
         blob.chmod(0o444)
     with pytest.raises(ValueError, match="damaged blob"):
-        checkpoint_extras._copy_checkpoint_asset(
+        pbrl_utils._copy_checkpoint_asset(
             source, tmp_path / "second/weights.bin", pool, digest_cache=cache
         )
 

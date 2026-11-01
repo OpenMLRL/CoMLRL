@@ -34,9 +34,8 @@ from .madpo import (
     PreferencePair,
 )
 from ..centralized import CentralizedComparatorAdapter
-from .checkpoint_extras import train_iterations_checkpointed
 from .marlhf import MARLHFConfig, MARLHFTrainer
-from .output_paths import resolve_output_path
+from .utils import resolve_output_path, train_iterations_checkpointed
 
 
 _REWARD_DISTRIBUTION_BINS = 16

@@ -14,7 +14,7 @@ from comlrl.trainers.pbrl import (
     MARLHFTrainer,
     marlhf,
 )
-from comlrl.trainers.pbrl.checkpoint_extras import train_iterations_checkpointed
+from comlrl.trainers.pbrl.utils import train_iterations_checkpointed
 
 from checkpoint_helpers import (
     Interrupted,
