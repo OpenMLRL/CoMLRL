@@ -21,42 +21,16 @@
 
 <img src="docs/assets/demo.gif" width="500px;" alt=""/>
 
-## Installation and first run
+## Installation
 
-Install a PyTorch build compatible with your machine, then run an example directly
-with Python. No job scheduler or W&B account is required.
+CoMLRL can be installed from PyPI, conda-forge, or source and supports Python 3.10 or later. Users should also install a PyTorch build compatible with their device.
 
 ```bash
 git clone https://github.com/OpenMLRL/CoMLRL.git
 cd CoMLRL
-pip install -e .
-python examples/story-len-ratio.py
-```
-
-Memory requirements depend on the model, number of agents, batch size, and response
-length. The examples leave W&B logging disabled by default; enable it explicitly
-(add `--wandb-project` or `--wandb-entity` to choose where runs are logged):
-
-```bash
-python examples/story-len-ratio.py --wandb
-```
-
-Two more examples cover other trainers and tasks. `leetcode-func-print.py` trains a
-function-writing agent and a test-writing agent with MAGRPO, rewarding runnable code
-and correct test prints. `tldr-len-ratio.py` trains two IAC agents to summarize Reddit
-posts, the second TL;DR about 2–3 times longer than the first.
-
-```bash
-python examples/leetcode-func-print.py
-python examples/tldr-len-ratio.py
-```
-
-For use in your own Python programs, CoMLRL is also available via PyPI or conda-forge:
-
-```bash
-pip install comlrl
-# Or:
-conda install -c conda-forge comlrl
+pip install comlrl # install from PyPI
+conda install -c conda-forge comlrl # install from conda-forge
+pip install -e . # install from source in editable mode
 ```
 
 ## Features
