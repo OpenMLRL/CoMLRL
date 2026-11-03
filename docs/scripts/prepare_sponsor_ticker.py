@@ -9,8 +9,8 @@ Amazon Science and CloudBank artwork, normalize their optical sizes, and compose
 a restrained monochrome marquee. All artwork is local; no fonts, downloads, or
 runtime dependencies are needed to view the README.
 
-The borderless ticker exports at 720 x 54, three quarters of its layout width,
-with tighter vertical padding and logos balanced by their visible ink area.
+The borderless ticker exports at 480 x 36, half of its layout width,
+with tighter vertical padding and optically balanced logo silhouettes.
 """
 
 import argparse
@@ -25,29 +25,30 @@ OUTPUT = DOCS / "assets" / "sponsors"
 AMAZON_SOURCE = OUTPUT / "sources" / "amazon-science.png"
 CLOUDBANK_SOURCE = OUTPUT / "sources" / "cloudbank.png"
 WIDTH, HEIGHT, SCALE = 960, 72, 2
-OUTPUT_SIZE = (WIDTH * 3 // 4, HEIGHT * 3 // 4)
+OUTPUT_SIZE = (WIDTH // 2, HEIGHT // 2)
 GAP = 88
 STEP = 4  # Physical pixels per frame; constant speed across the loop boundary.
 FRAME_MS = 50
 COLORS = 32
 
 # Source bounds separate the original logos; None uses the entire source image.
-# Optical boxes keep visible ink areas similar while preserving aspect ratios.
-# Sizes are layout pixels, before the three-quarter output scale.
+# Match visible silhouette heights, then compensate for thin or heavy lettering.
+# Equal ink area makes compact marks (AWS) and tall emblems (Vast.ai) too large.
+# Sizes are layout pixels, before the half-size output scale.
 SPONSORS = (
     (
         "Northeastern University Research Computing",
         SOURCE,
         (0, 0, 1400, 330),
-        (208, 44),
+        (164, 34),
     ),
-    ("Amazon Science", AMAZON_SOURCE, None, (188, 38)),
-    ("Amazon Web Services", SOURCE, (1600, 0, 2270, 390), (96, 58)),
-    ("CloudBank", CLOUDBANK_SOURCE, None, (212, 46)),
-    ("NCSA", SOURCE, (2530, 0, 3890, 330), (144, 34)),
-    ("Lambda", SOURCE, (60, 520, 1260, 806), (152, 34)),
-    ("Vast.ai", SOURCE, (1410, 520, 2470, 806), (184, 50)),
-    ("MGHPCC", SOURCE, (2610, 520, 3950, 806), (184, 36)),
+    ("Amazon Science", AMAZON_SOURCE, None, (188, 36)),
+    ("Amazon Web Services", SOURCE, (1600, 0, 2270, 390), (64, 38)),
+    ("CloudBank", CLOUDBANK_SOURCE, None, (180, 38)),
+    ("NCSA", SOURCE, (2530, 0, 3890, 330), (160, 36)),
+    ("Lambda", SOURCE, (60, 520, 1260, 806), (170, 36)),
+    ("Vast.ai", SOURCE, (1410, 520, 2470, 806), (144, 38)),
+    ("MGHPCC", SOURCE, (2610, 520, 3950, 806), (204, 38)),
 )
 THEMES = {
     "light": {"paper": (255, 255, 255), "ink": (91, 96, 110)},
