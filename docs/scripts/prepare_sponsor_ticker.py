@@ -8,6 +8,9 @@ The original collage stays unchanged. Combine its six logos with the supplied
 Amazon Science and CloudBank artwork, normalize their optical sizes, and compose
 a restrained monochrome marquee. All artwork is local; no fonts, downloads, or
 runtime dependencies are needed to view the README.
+
+The borderless ticker exports at 720 x 54, three quarters of its layout width,
+with tighter vertical padding and logos balanced by their visible ink area.
 """
 
 import argparse
@@ -21,28 +24,30 @@ SOURCE = DOCS / "assets" / "sponsors.png"
 OUTPUT = DOCS / "assets" / "sponsors"
 AMAZON_SOURCE = OUTPUT / "sources" / "amazon-science.png"
 CLOUDBANK_SOURCE = OUTPUT / "sources" / "cloudbank.png"
-WIDTH, HEIGHT, SCALE = 960, 96, 2
+WIDTH, HEIGHT, SCALE = 960, 72, 2
+OUTPUT_SIZE = (WIDTH * 3 // 4, HEIGHT * 3 // 4)
 GAP = 88
 STEP = 4  # Physical pixels per frame; constant speed across the loop boundary.
 FRAME_MS = 50
 COLORS = 32
 
 # Source bounds separate the original logos; None uses the entire source image.
-# Each size is an optical bounding box in CSS pixels, not a forced aspect ratio.
+# Optical boxes keep visible ink areas similar while preserving aspect ratios.
+# Sizes are layout pixels, before the three-quarter output scale.
 SPONSORS = (
     (
         "Northeastern University Research Computing",
         SOURCE,
         (0, 0, 1400, 330),
-        (240, 50),
+        (208, 44),
     ),
-    ("Amazon Science", AMAZON_SOURCE, None, (200, 40)),
-    ("Amazon Web Services", SOURCE, (1600, 0, 2270, 390), (76, 46)),
-    ("CloudBank", CLOUDBANK_SOURCE, None, (200, 42)),
-    ("NCSA", SOURCE, (2530, 0, 3890, 330), (160, 40)),
-    ("Lambda", SOURCE, (60, 520, 1260, 806), (144, 34)),
-    ("Vast.ai", SOURCE, (1410, 520, 2470, 806), (128, 38)),
-    ("MGHPCC", SOURCE, (2610, 520, 3950, 806), (164, 36)),
+    ("Amazon Science", AMAZON_SOURCE, None, (188, 38)),
+    ("Amazon Web Services", SOURCE, (1600, 0, 2270, 390), (96, 58)),
+    ("CloudBank", CLOUDBANK_SOURCE, None, (212, 46)),
+    ("NCSA", SOURCE, (2530, 0, 3890, 330), (144, 34)),
+    ("Lambda", SOURCE, (60, 520, 1260, 806), (152, 34)),
+    ("Vast.ai", SOURCE, (1410, 520, 2470, 806), (184, 50)),
+    ("MGHPCC", SOURCE, (2610, 520, 3950, 806), (184, 36)),
 )
 THEMES = {
     "light": {"paper": (255, 255, 255), "ink": (91, 96, 110)},
@@ -151,27 +156,22 @@ def static_mask(masks):
     return result
 
 
-def add_rules(mask):
-    draw = ImageDraw.Draw(mask)
-    for y in (0, mask.height - SCALE):
-        draw.rectangle((0, y, mask.width, y + SCALE - 1), fill=32)
-    return mask
-
-
 def build(output):
     output.mkdir(parents=True, exist_ok=True)
     masks = logo_masks()
     track, period = make_track(masks)
     fade = edge_fade()
-    still = add_rules(static_mask(masks))
+    still = static_mask(masks).resize(
+        tuple(value * SCALE for value in OUTPUT_SIZE), Image.Resampling.LANCZOS
+    )
     for name, theme in THEMES.items():
         colors = palette(theme)
         indexed(still, colors).save(output / f"ticker-{name}-static.png", optimize=True)
         frames = []
         for offset in range(0, period, STEP):
             viewport = track.crop((offset, 0, offset + WIDTH * SCALE, HEIGHT * SCALE))
-            viewport = add_rules(ImageChops.multiply(viewport, fade))
-            viewport = viewport.resize((WIDTH, HEIGHT), Image.Resampling.LANCZOS)
+            viewport = ImageChops.multiply(viewport, fade)
+            viewport = viewport.resize(OUTPUT_SIZE, Image.Resampling.LANCZOS)
             frames.append(indexed(viewport, colors))
         destination = output / f"ticker-{name}.gif"
         frames[0].save(
@@ -192,7 +192,7 @@ def build(output):
         )
         # Check actual encoded metadata, including all frame intervals.
         with Image.open(destination) as encoded:
-            assert encoded.size == (WIDTH, HEIGHT)
+            assert encoded.size == OUTPUT_SIZE
             assert encoded.n_frames == len(frames)
             assert encoded.info.get("loop") == 0
             for frame in range(encoded.n_frames):
