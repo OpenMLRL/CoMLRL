@@ -1,0 +1,59 @@
+{
+  "retrieved": "2026-11-02",
+  "note": "Brand artwork remains the property of its respective owners. Sources are used to identify project sponsors. The ticker renders monochrome silhouettes while preserving aspect ratios.",
+  "assets": {
+    "northeastern.png": {
+      "name": "Northeastern University Research Computing",
+      "page": "https://rc.northeastern.edu/",
+      "download": "https://rc.northeastern.edu/files/2025/08/Research-Computing-Wordmark.png",
+      "format": "PNG, 1501 x 601; transparent original"
+    },
+    "amazon-science.svg": {
+      "name": "Amazon Science",
+      "page": "https://www.amazon.science/",
+      "download": "https://cdn.amazon.science/fb/1c/07d25693486eb3d6b49091864af7/amazonscience-squidink.svg",
+      "format": "SVG, vector paths"
+    },
+    "aws.svg": {
+      "name": "Amazon Web Services",
+      "page": "https://commons.wikimedia.org/wiki/File:Amazon_Web_Services_Logo.svg",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/9/93/Amazon_Web_Services_Logo.svg",
+      "format": "SVG, vector paths",
+      "attribution": "Amazon.com Inc.; original Amazon artwork mirrored by Wikimedia Commons",
+      "license": "Apache-2.0 according to source page; trademark rights remain with Amazon",
+      "license_file": "AWS-LICENSE.txt"
+    },
+    "cloudbank.png": {
+      "name": "CloudBank",
+      "page": "https://www.cloudbank.org/",
+      "download": "https://www.cloudbank.org/sites/default/files/file_fields/logo.png",
+      "format": "PNG, 411 x 88; transparent original",
+      "note": "Native source exceeds the rendered 216px logo width; larger PDF raster was softer."
+    },
+    "ncsa.png": {
+      "name": "NCSA",
+      "page": "https://www.ncsa.illinois.edu/news-events/press-room/",
+      "download": "https://ncsa.illinois.edu/wp-content/uploads/2025/10/NCSA_wordmarks.zip",
+      "archive_path": "NCSA_wordmarks/Digital/BlockI-NCSA-Limited-Use-Black.png",
+      "format": "PNG, 1297 x 449; transparent original"
+    },
+    "lambda.svg": {
+      "name": "Lambda",
+      "page": "https://lambda.ai/brand-guidelines",
+      "download": "https://lambda.ai/hubfs/raw_assets/Lambda%20Marketing%20Website/152/js_client_assets/assets/logo-dark-D3dycUaW.svg",
+      "format": "SVG, vector paths"
+    },
+    "vast.svg": {
+      "name": "Vast.ai",
+      "page": "https://vast.ai/press-kit",
+      "download": "https://vast.ai/vast_logo_dark.svg",
+      "format": "SVG, vector paths"
+    },
+    "mghpcc.gif": {
+      "name": "MGHPCC",
+      "page": "https://mghpcc.org/",
+      "download": "https://mghpcc.org/wp-content/uploads/2021/11/mghpcc-logo-onwhite.gif",
+      "format": "GIF, 800 x 171; original static wordmark"
+    }
+  }
+}

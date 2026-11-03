@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Build the README sponsor ticker from the existing sponsor artwork.
+"""Build the README sponsor ticker from individual high-resolution logos.
 
-Requires Pillow >= 10. Run from any directory:
+Requires Pillow >= 10 and resvg-py >= 0.5. Run from any directory:
     python3 docs/scripts/prepare_sponsor_ticker.py
 
-The original collage stays unchanged. Combine its six logos with the supplied
-Amazon Science and CloudBank artwork, normalize their optical sizes, and compose
-a restrained monochrome marquee. All artwork is local; no fonts, downloads, or
-runtime dependencies are needed to view the README.
+Vector masters and original raster artwork are stored in assets/sponsors/sources;
+sources.json records their download locations. The old collage is not used.
+All artwork is local; no fonts, downloads, or runtime dependencies are needed to
+view the README.
 
 The borderless ticker displays at 960 x 43, 1.2 times the previous 800 x 36.
 Both GIFs and static PNGs export at 1920 x 86 for 2x pixel density. Every frame
@@ -15,16 +15,18 @@ is rendered from the original artwork, rather than upscaling an existing GIF.
 """
 
 import argparse
+from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps
+import resvg_py
 
 
 DOCS = Path(__file__).resolve().parents[1]
-SOURCE = DOCS / "assets" / "sponsors.png"
 OUTPUT = DOCS / "assets" / "sponsors"
-AMAZON_SOURCE = OUTPUT / "sources" / "amazon-science.png"
-CLOUDBANK_SOURCE = OUTPUT / "sources" / "cloudbank.png"
+SOURCES = OUTPUT / "sources"
+# A new basename avoids GitHub serving the previously cached 480px GIF.
+ASSET_NAME = "ticker-hd"
 WIDTH, HEIGHT, SCALE = 1600, 72, 2
 DISPLAY_SIZE = (round(WIDTH * 0.6), round(HEIGHT * 0.6))
 PIXEL_RATIO = 2
@@ -34,24 +36,23 @@ STEP = 4  # Physical pixels per frame; constant speed across the loop boundary.
 FRAME_MS = 50
 COLORS = 32
 
-# Source bounds separate the original logos; None uses the entire source image.
 # Match visible silhouette heights, then compensate for thin or heavy lettering.
 # Equal ink area makes compact marks (AWS) and tall emblems (Vast.ai) too large.
 # Sizes are layout pixels, before scaling to the display size at 2x density.
 SPONSORS = (
     (
         "Northeastern University Research Computing",
-        SOURCE,
-        (0, 0, 1400, 330),
+        SOURCES / "northeastern.png",
         (164, 34),
     ),
-    ("Amazon Science", AMAZON_SOURCE, None, (188, 36)),
-    ("Amazon Web Services", SOURCE, (1600, 0, 2270, 390), (64, 38)),
-    ("CloudBank", CLOUDBANK_SOURCE, None, (180, 38)),
-    ("NCSA", SOURCE, (2530, 0, 3890, 330), (160, 36)),
-    ("Lambda", SOURCE, (60, 520, 1260, 806), (170, 36)),
-    ("Vast.ai", SOURCE, (1410, 520, 2470, 806), (144, 38)),
-    ("MGHPCC", SOURCE, (2610, 520, 3950, 806), (204, 38)),
+    ("Amazon Science", SOURCES / "amazon-science.svg", (188, 36)),
+    ("Amazon Web Services", SOURCES / "aws.svg", (64, 38)),
+    ("CloudBank", SOURCES / "cloudbank.png", (180, 38)),
+    # The official NCSA lockup has a divider taller than its lettering.
+    ("NCSA", SOURCES / "ncsa.png", (160, 48)),
+    ("Lambda", SOURCES / "lambda.svg", (170, 36)),
+    ("Vast.ai", SOURCES / "vast.svg", (144, 38)),
+    ("MGHPCC", SOURCES / "mghpcc.gif", (204, 38)),
 )
 THEMES = {
     "light": {"paper": (255, 255, 255), "ink": (91, 96, 110)},
@@ -62,10 +63,20 @@ THEMES = {
 def logo_masks():
     """Extract antialiased silhouettes, preserving each original aspect ratio."""
     masks = []
-    for name, path, bounds, size in SPONSORS:
-        with Image.open(path) as source:
-            artwork = source.crop(bounds) if bounds is not None else source
-            artwork = artwork.convert("RGBA")
+    for name, path, size in SPONSORS:
+        # Rasterize true vector paths with enough headroom for antialiasing.
+        if path.suffix == ".svg":
+            source_file = BytesIO(
+                resvg_py.svg_to_bytes(
+                    svg_path=str(path),
+                    width=size[0] * SCALE * 4,
+                    skip_system_fonts=True,
+                )
+            )
+        else:
+            source_file = path
+        with Image.open(source_file) as source:
+            artwork = source.convert("RGBA")
             # Transparent source backgrounds must not become part of the logo.
             paper = Image.new("RGBA", artwork.size, "white")
             red, green, blue = (
@@ -78,23 +89,20 @@ def logo_masks():
             raise ValueError(f"Missing artwork for {name}")
         mask = mask.crop(bbox)
         target = tuple(value * SCALE for value in size)
-        # Small supplied images also need the intended optical size at 2x.
-        if mask.width < target[0] and mask.height < target[1]:
-            mask = ImageOps.contain(mask, target, Image.Resampling.LANCZOS)
-        else:
-            mask.thumbnail(target, Image.Resampling.LANCZOS)
+        # Never enlarge a raster source; supplied masters exceed these targets.
+        mask.thumbnail(target, Image.Resampling.LANCZOS)
         masks.append(mask)
     return masks
 
 
 def make_track(masks):
-    period = sum(size[0] + GAP for _, _, _, size in SPONSORS) * SCALE
+    period = sum(size[0] + GAP for _, _, size in SPONSORS) * SCALE
     if period % STEP:
         raise ValueError("The track must divide evenly into constant-speed steps")
     track = Image.new("L", (period, HEIGHT * SCALE))
     draw = ImageDraw.Draw(track)
     cursor = 0
-    for mask, (_, _, _, size) in zip(masks, SPONSORS):
+    for mask, (_, _, size) in zip(masks, SPONSORS):
         slot = (size[0] + GAP) * SCALE
         track.paste(
             mask,
@@ -172,14 +180,16 @@ def build(output):
     still = static_mask(masks).resize(OUTPUT_SIZE, Image.Resampling.LANCZOS)
     for name, theme in THEMES.items():
         colors = palette(theme)
-        indexed(still, colors).save(output / f"ticker-{name}-static.png", optimize=True)
+        indexed(still, colors).save(
+            output / f"{ASSET_NAME}-{name}-static.png", optimize=True
+        )
         frames = []
         for offset in range(0, period, STEP):
             viewport = track.crop((offset, 0, offset + WIDTH * SCALE, HEIGHT * SCALE))
             viewport = ImageChops.multiply(viewport, fade)
             viewport = viewport.resize(OUTPUT_SIZE, Image.Resampling.LANCZOS)
             frames.append(indexed(viewport, colors))
-        destination = output / f"ticker-{name}.gif"
+        destination = output / f"{ASSET_NAME}-{name}.gif"
         frames[0].save(
             destination,
             save_all=True,
