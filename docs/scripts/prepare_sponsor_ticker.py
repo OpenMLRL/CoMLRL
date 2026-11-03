@@ -9,8 +9,9 @@ Amazon Science and CloudBank artwork, normalize their optical sizes, and compose
 a restrained monochrome marquee. All artwork is local; no fonts, downloads, or
 runtime dependencies are needed to view the README.
 
-The borderless ticker exports at 480 x 36, half of its layout width,
-with tighter vertical padding and optically balanced logo silhouettes.
+The borderless ticker displays at 960 x 43, 1.2 times the previous 800 x 36.
+Both GIFs and static PNGs export at 1920 x 86 for 2x pixel density. Every frame
+is rendered from the original artwork, rather than upscaling an existing GIF.
 """
 
 import argparse
@@ -24,8 +25,10 @@ SOURCE = DOCS / "assets" / "sponsors.png"
 OUTPUT = DOCS / "assets" / "sponsors"
 AMAZON_SOURCE = OUTPUT / "sources" / "amazon-science.png"
 CLOUDBANK_SOURCE = OUTPUT / "sources" / "cloudbank.png"
-WIDTH, HEIGHT, SCALE = 960, 72, 2
-OUTPUT_SIZE = (WIDTH // 2, HEIGHT // 2)
+WIDTH, HEIGHT, SCALE = 1600, 72, 2
+DISPLAY_SIZE = (round(WIDTH * 0.6), round(HEIGHT * 0.6))
+PIXEL_RATIO = 2
+OUTPUT_SIZE = tuple(value * PIXEL_RATIO for value in DISPLAY_SIZE)
 GAP = 88
 STEP = 4  # Physical pixels per frame; constant speed across the loop boundary.
 FRAME_MS = 50
@@ -34,7 +37,7 @@ COLORS = 32
 # Source bounds separate the original logos; None uses the entire source image.
 # Match visible silhouette heights, then compensate for thin or heavy lettering.
 # Equal ink area makes compact marks (AWS) and tall emblems (Vast.ai) too large.
-# Sizes are layout pixels, before the half-size output scale.
+# Sizes are layout pixels, before scaling to the display size at 2x density.
 SPONSORS = (
     (
         "Northeastern University Research Computing",
@@ -145,8 +148,12 @@ def static_mask(masks):
     margin = 20 * SCALE
     available = result.width - 2 * margin
     gap = 24 * SCALE
-    factor = (available - gap * (len(masks) - 1)) / sum(mask.width for mask in masks)
-    cursor = margin
+    factor = min(
+        1, (available - gap * (len(masks) - 1)) / sum(mask.width for mask in masks)
+    )
+    row_width = sum(round(mask.width * factor) for mask in masks)
+    row_width += gap * (len(masks) - 1)
+    cursor = (result.width - row_width) // 2
     for mask in masks:
         resized = mask.resize(
             (round(mask.width * factor), round(mask.height * factor)),
@@ -162,9 +169,7 @@ def build(output):
     masks = logo_masks()
     track, period = make_track(masks)
     fade = edge_fade()
-    still = static_mask(masks).resize(
-        tuple(value * SCALE for value in OUTPUT_SIZE), Image.Resampling.LANCZOS
-    )
+    still = static_mask(masks).resize(OUTPUT_SIZE, Image.Resampling.LANCZOS)
     for name, theme in THEMES.items():
         colors = palette(theme)
         indexed(still, colors).save(output / f"ticker-{name}-static.png", optimize=True)
