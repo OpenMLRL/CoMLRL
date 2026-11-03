@@ -141,7 +141,14 @@ For new contributors, please see [contributing guidelines](./CONTRIBUTING.md) on
 
 CoMLRL was developed using substantial computational resources. Its growth has been made possible by the generous support of the following organizations and institutions.
 
-<p><img src="docs/assets/sponsors.png" width="500px;" alt=""/></p>
+<picture>
+  <source media="(prefers-reduced-motion: reduce) and (prefers-color-scheme: dark)" srcset="docs/assets/sponsors/ticker-dark-static.png" />
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/sponsors/ticker-light-static.png" />
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/sponsors/ticker-dark.gif" />
+  <img src="docs/assets/sponsors/ticker-light.gif" width="960" alt="Supported by Northeastern University Research Computing, Amazon Science, Amazon Web Services, CloudBank, NCSA, Lambda, Vast.ai, and MGHPCC." />
+</picture>
+
+<sub>[View all sponsors](docs/assets/sponsors/ticker-light-static.png)</sub>
 
 We welcome computational sponsorship to support the continued development of CoMLRL. If you are interested in supporting this project, please contact us.
 <a href="mailto:liu.shuo2@northeastern.edu"><img src="docs/assets/email.svg" width="22px" alt="Email"/></a>
