@@ -132,6 +132,13 @@ class CentralizedCollaboration:
             rewards.append(values[0])
         return rewards
 
+    def with_score_func(self, score_func):
+        """The same role split around another joint score, e.g. a preference metric."""
+        wrapped = copy(self)
+        wrapped.reward_func = score_func
+        wrapped.reward_range = resolve_reward_range(score_func)
+        return wrapped
+
     def split_eval(self, joint_turns, items: Sequence[Dict[str, Any]]):
         if len(joint_turns) != 1 or len(joint_turns[0]) != len(items):
             raise ValueError("Centralized evaluation outputs must align with items.")

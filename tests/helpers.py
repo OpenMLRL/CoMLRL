@@ -103,7 +103,9 @@ def task_reward(left, right, *, batch_items, prompts):
 set_reward_range(task_reward, 0, 2)
 
 
-def make_preference_trainer(cls, config_cls, tokenizer, tmp_path, **overrides):
+def make_preference_trainer(
+    cls, config_cls, tokenizer, tmp_path, *, trainer_kwargs=None, **overrides
+):
     """A centralized preference trainer whose actor alternates GOOD/BAD samples."""
     config = dict(
         collaboration_mode="centralized",
@@ -155,6 +157,7 @@ def make_preference_trainer(cls, config_cls, tokenizer, tmp_path, **overrides):
         reward_func=task_reward,
         formatters=[lambda item: "left", lambda item: "right"],
         centralized_comparator_adapter=JointAdapter(),
+        **(trainer_kwargs or {}),
     )
     trainer.verbose = False
     return trainer, calls

@@ -28,7 +28,7 @@ Users provide task items, not preference data. The trainers sample joint respons
 
 ### Oracle Function
 
-The oracle function scores each joint response with one shared value. By default, it is the task reward `reward_func`, after the optional `reward_processor`; it can follow rules or call an LLM reward model, as described in [Training Initialization]({{< relref "/docs/user-guide/training-initialization#rewards" >}}). Both algorithms learn only from which joint response wins, so the score values matter only for choosing pairs. In `MARLHFIterTrainer`, `preference_scoring_reward="reward_model"` makes the most recently fitted reward model the oracle for new comparisons, with the task reward as a fallback until one exists.
+The oracle function scores each joint response with one shared value. By default, it is the task reward `reward_func`, after the optional `reward_processor`; it can follow rules or call an LLM reward model, as described in [Training Initialization]({{< relref "/docs/user-guide/training-initialization#rewards" >}}). Both algorithms learn only from which joint response wins, so the score values matter only for choosing pairs. A `preference_metric_func` passed to the trainer takes the oracle's place: it receives the arguments of `reward_func`, returns one score per joint response, and its scores are compared as they are, without `reward_processor`. The library gives these scores no fixed meaning; the task code decides what they measure. The pairs still record task rewards, so a winner can carry the lower reward, and evaluation still uses `reward_func`. In `MARLHFIterTrainer`, `preference_scoring_reward="reward_model"` makes the most recently fitted reward model the oracle for new comparisons; until a reward model exists, `preference_metric_func` or, without it, the task reward serves as the fallback.
 
 ### Preference Criterion
 
@@ -84,6 +84,7 @@ Evaluation always samples from the current policies and scores them with the tas
 - `eval_dataset`: Optional evaluation dataset
 - `reward_func`: Required callable returning one shared task reward per aligned joint response
 - `reward_processor`: Optional post-processing of task rewards
+- `preference_metric_func`: Optional callable with the arguments of `reward_func`, returning one score per aligned joint response; when given, it decides and ranks the preference pairs in place of the task reward
 - `formatters`: One prompt formatter shared by all roles, or a list of role-specific formatters
 - `args`: The trainer's configuration instance
 - `model_config`: Optional model loading configuration

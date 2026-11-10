@@ -29,6 +29,11 @@ from helpers import (
 )
 
 MARLHF_TRAINERS = [(MARLHFTrainer, MARLHFConfig), (MARLHFIterTrainer, MARLHFIterConfig)]
+PREFERENCE_TRAINERS = [
+    (MADPOTrainer, MADPOConfig),
+    (MADPOIterTrainer, MADPOIterConfig),
+    *MARLHF_TRAINERS,
+]
 
 
 def _record_reward_models(trainer, tokenizer):
@@ -104,6 +109,32 @@ def test_madpo_trains_one_joint_actor(cls, config_cls, tokenizer, tmp_path):
     assert not torch.equal(before, trainer.agents[0].transformer.wte.weight)
     assert trainer.env_step == (4 if cls is MADPOIterTrainer else 2)
     assert trainer.reward_func.reward_range == (0.0, 2.0)
+
+
+@pytest.mark.parametrize("cls,config_cls", PREFERENCE_TRAINERS)
+def test_preference_metric_func_decides_the_winners(
+    cls, config_cls, tokenizer, tmp_path
+):
+    def inverted_reward(left, right, *, batch_items, prompts):
+        rewards = task_reward(left, right, batch_items=batch_items, prompts=prompts)
+        return [2.0 - reward for reward in rewards]
+
+    kwargs = {"iteration_idx": 0} if issubclass(cls, MADPOIterTrainer) else {}
+    for metric, winner_reward_higher in [(None, True), (inverted_reward, False)]:
+        trainer, _ = make_preference_trainer(
+            cls,
+            config_cls,
+            tokenizer,
+            tmp_path / str(winner_reward_higher),
+            trainer_kwargs={"preference_metric_func": metric},
+        )
+        pairs = trainer._build_preference_dataset(**kwargs)
+        # The metric, wrapped like the task reward to score role outputs,
+        # decides the winners; the pairs still record the task rewards.
+        assert pairs and all(
+            (pair.winner_reward > pair.loser_reward) == winner_reward_higher
+            for pair in pairs
+        )
 
 
 def test_joint_logprob_covers_both_roles_and_last_token(tokenizer, tmp_path):

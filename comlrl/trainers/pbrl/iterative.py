@@ -1587,9 +1587,17 @@ class MADPOIterTrainer(MADPOTrainer):
             target_rewards=current_raw_rewards,
             comparator_rewards=comparator_raw_rewards,
         )
+        current_scores, comparator_scores = self._preference_selection_scores(
+            [prompts[0]],
+            current_completions,
+            comparator_completions,
+            batch_item=batch_item,
+            current_rewards=current_rewards,
+            comparator_rewards=comparator_rewards,
+        )
         selected_pairs = self._select_policy_comparison_pairs(
-            current_rewards,
-            comparator_rewards,
+            current_scores,
+            comparator_scores,
         )
         all_rewards = list(current_rewards) + list(comparator_rewards)
         candidate_reward_mean = float(np.mean(all_rewards)) if all_rewards else 0.0
@@ -1748,6 +1756,40 @@ class MADPOIterTrainer(MADPOTrainer):
         min_completions: int,
     ) -> Optional[Tuple[List[float], List[float]]]:
         return None
+
+    def _preference_selection_scores(
+        self,
+        prompts: Sequence[str],
+        current_completions: List[List[str]],
+        comparator_completions: List[List[str]],
+        *,
+        batch_item: Dict[str, Any],
+        current_rewards: Sequence[float],
+        comparator_rewards: Sequence[float],
+    ) -> Tuple[Sequence[float], Sequence[float]]:
+        """Scores that decide and rank the comparisons of one task.
+
+        ``preference_metric_func`` replaces the processed rewards when given,
+        unless a fitted reward model scores the comparisons. The pairs still
+        record the rewards.
+        """
+        if not self._preference_scores_from_reward_model():
+            current_scores = self._preference_metric_scores(
+                prompts,
+                current_completions,
+                batch_items=[batch_item],
+            )
+            if current_scores is not None:
+                comparator_scores = self._preference_metric_scores(
+                    prompts,
+                    comparator_completions,
+                    batch_items=[batch_item],
+                )
+                return current_scores, comparator_scores
+        return current_rewards, comparator_rewards
+
+    def _preference_scores_from_reward_model(self) -> bool:
+        return False
 
     def _generate_comparator_outputs_for_item(
         self,
@@ -2885,6 +2927,12 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
     algorithm_name = "MARLHFIter"
     _checkpoint_progress_kind = "marlhf_iter"
 
+    def _preference_scores_from_reward_model(self) -> bool:
+        return (
+            self.args.preference_scoring_reward == "reward_model"
+            and self.reward_model is not None
+        )
+
     def _preference_scoring_raw_and_processed_rewards(
         self,
         prompts: Sequence[str],
@@ -2893,9 +2941,7 @@ class MARLHFIterTrainer(MADPOIterTrainer, MARLHFTrainer):
         batch_items=None,
         min_completions: int,
     ) -> Optional[Tuple[List[float], List[float]]]:
-        if self.args.preference_scoring_reward != "reward_model":
-            return None
-        if self.reward_model is None:
+        if not self._preference_scores_from_reward_model():
             return None
         if min_completions <= 0:
             return [], []

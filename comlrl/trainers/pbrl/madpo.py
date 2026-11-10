@@ -1,6 +1,7 @@
+import inspect
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -12,6 +13,7 @@ from comlrl.schedulers.device_scheduler import normalize_parallel_training
 from comlrl.utils.checkpoint import register_checkpoint_record
 from comlrl.utils.distributed import unwrap_model
 from comlrl.utils.reference_kl import validate_reference_kl_config
+from comlrl.utils.reward_utils import call_reward_function
 from comlrl.utils.tokenizer_utils import apply_tokenizer_specials
 
 from ..reinforce.magrpo import MAGRPOTrainer
@@ -165,7 +167,8 @@ class MADPOTrainer(MAGRPOTrainer):
     """
     Multi-Agent Direct Preference Optimization.
 
-    Preference labels are generated from a joint scalar reward. The DPO loss is
+    Preference labels are generated from a joint scalar reward, or from
+    ``preference_metric_func`` when one is given. The DPO loss is
     joint-factorized over agents, while each agent receives gradients only
     through its own sequence log-probabilities.
     """
@@ -192,8 +195,13 @@ class MADPOTrainer(MAGRPOTrainer):
         args=None,
         *,
         centralized_comparator_adapter: Optional[CentralizedComparatorAdapter] = None,
+        preference_metric_func: Optional[Callable[..., Any]] = None,
     ):
         config = args if args is not None else self.default_config_cls()
+        if preference_metric_func is not None and not callable(preference_metric_func):
+            raise TypeError("preference_metric_func must be callable.")
+        # Decides and ranks preference pairs in place of the reward when given.
+        self.preference_metric_func = preference_metric_func
         adapter = centralized_comparator_adapter
         if adapter is None:
             adapter = TaggedCentralizedComparatorAdapter()
@@ -222,6 +230,16 @@ class MADPOTrainer(MAGRPOTrainer):
             args=config,
             centralized_adapter=adapter,
         )
+        if (
+            self.preference_metric_func is not None
+            and self.centralized_collaboration is not None
+        ):
+            # Like the task reward, the metric scores each joint response's role outputs.
+            self.preference_metric_func = (
+                self.centralized_collaboration.with_score_func(
+                    self.preference_metric_func
+                )
+            )
 
     def train(
         self,
@@ -454,7 +472,14 @@ class MADPOTrainer(MAGRPOTrainer):
             agent_completions,
             batch_items=[batch_item],
         )
-        selected_pairs = self._select_preference_pair_indices(rewards)
+        metric_scores = self._preference_metric_scores(
+            [prompts[0]],
+            agent_completions,
+            batch_items=[batch_item],
+        )
+        selected_pairs = self._select_preference_pair_indices(
+            rewards if metric_scores is None else metric_scores
+        )
         result: List[PreferencePair] = []
 
         for winner_idx, loser_idx in selected_pairs:
@@ -517,6 +542,48 @@ class MADPOTrainer(MAGRPOTrainer):
         if mode != "all" and limit is not None:
             candidate_pairs = candidate_pairs[: int(limit)]
         return [(winner_idx, loser_idx) for _, winner_idx, loser_idx in candidate_pairs]
+
+    def _preference_metric_scores(
+        self,
+        prompts: Sequence[str],
+        completions_list: Sequence[Any],
+        *,
+        batch_items=None,
+    ) -> Optional[List[float]]:
+        """Score each aligned joint response with ``preference_metric_func``.
+
+        Returns ``None`` without a metric, so the caller keeps its rewards. The
+        metric takes the arguments of ``reward_func``, is called once per joint
+        response, and its scores are compared as they are, without
+        ``reward_processor``.
+        """
+        metric_func = getattr(self, "preference_metric_func", None)
+        if metric_func is None:
+            return None
+        try:
+            signature = inspect.signature(metric_func)
+        except (TypeError, ValueError):
+            signature = None
+        columns = []
+        for agent_idx in range(self.num_agents):
+            completions = completions_list[agent_idx]
+            columns.append(
+                completions if isinstance(completions, list) else [completions]
+            )
+        scores: List[float] = []
+        for completion_idx in range(min(len(column) for column in columns)):
+            values = call_reward_function(
+                metric_func,
+                prompts,
+                [[column[completion_idx]] for column in columns],
+                num_agents=self.num_agents,
+                batch_items=batch_items,
+                signature=signature,
+            )
+            if not values:
+                raise ValueError("preference_metric_func returned no score.")
+            scores.append(float(values[0]))
+        return scores
 
     def _update_from_preference_batch(
         self, batch: List[PreferencePair]

@@ -13,6 +13,7 @@ from comlrl.trainers.pbrl import (
     MADPOConfig,
     MADPOIterTrainer,
     MADPOTrainer,
+    MARLHFIterTrainer,
     iterative,
 )
 
@@ -182,6 +183,66 @@ def test_preference_pairs_and_distribution_use_raw_rewards():
     assert pairs[0].raw_rewards == [3.0, 2.0]
     assert pairs[0].target_raw_reward == 3.0
     assert pairs[0].comparator_raw_reward == 2.0
+
+
+def test_preference_metric_decides_iterative_pairs():
+    trainer = object.__new__(MADPOIterTrainer)
+    trainer.num_agents = 2
+    trainer.agents = [object(), object()]
+    trainer.args = SimpleNamespace(
+        preference_num_candidates=2,
+        comparator_num_candidates=None,
+        joint_mode="aligned",
+        pair_selection="reward_gap",
+        preference_pairs_per_sample=None,
+    )
+
+    def outputs(prefix):
+        return [
+            {
+                "completions": [[f"{prefix}{idx}-{agent}" for idx in range(2)]],
+                "prompts": [f"prompt-{agent}"],
+            }
+            for agent in range(2)
+        ]
+
+    trainer._generate_policy_outputs_for_item = lambda *_a, **_k: outputs("c")
+    trainer._generate_comparator_outputs_for_item = lambda *_a, **_k: outputs("p")
+    # By reward the current side wins both indices.
+    rewards = iter([([2.0, 2.0], [2.0, 2.0]), ([0.0, 0.0], [0.0, 0.0])])
+    trainer._compute_raw_and_processed_rewards = lambda *_a, **_k: next(rewards)
+    trainer._record_iteration_reward_distribution = lambda **_k: None
+    trainer._preference_tensors_from_text = lambda *_a, **_k: SimpleNamespace()
+    # By the metric the comparator wins index 0, and index 1 is a tie.
+    scores = {"c0": 0.1, "p0": 0.9, "c1": 0.5, "p1": 0.5}
+
+    def metric(agent_0, agent_1, *, batch_items):
+        assert batch_items == [{"prompt": "test"}]
+        assert agent_0[0][:2] == agent_1[0][:2]
+        return [scores[agent_0[0][:2]]]
+
+    trainer.preference_metric_func = metric
+    pairs = trainer._generate_preference_pairs_for_item(
+        {"prompt": "test"}, iteration_idx=0
+    )
+
+    assert [pair.winner_completions for pair in pairs] == [["p0-0", "p0-1"]]
+    # The pair keeps the task rewards that the metric overruled.
+    assert (pairs[0].winner_reward, pairs[0].loser_reward) == (0.0, 2.0)
+
+
+def test_fitted_reward_model_scores_before_the_preference_metric():
+    trainer = object.__new__(MARLHFIterTrainer)
+    trainer.num_agents = 2
+    trainer.args = SimpleNamespace(preference_scoring_reward="reward_model")
+    trainer.preference_metric_func = lambda *_completions, batch_items: [5.0]
+    inputs = (["prompt"], [["a"], ["b"]], [["c"], ["d"]])
+    rewards = dict(batch_item={}, current_rewards=[1.0], comparator_rewards=[2.0])
+
+    trainer.reward_model = object()
+    assert trainer._preference_selection_scores(*inputs, **rewards) == ([1.0], [2.0])
+    trainer.reward_model = None
+    assert trainer._preference_selection_scores(*inputs, **rewards) == ([5.0], [5.0])
 
 
 def test_reward_distribution_uses_declared_range_and_counts():
